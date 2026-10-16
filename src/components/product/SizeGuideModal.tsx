@@ -28,13 +28,27 @@ export function SizeGuideModal({
       : SIZE_CHART_REGULAR;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="relative w-full max-w-2xl bg-white border border-neutral-200 shadow-2xl p-6 sm:p-8 animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onClose();
+      }}
+    >
+      <div
+        className="relative w-full max-w-2xl bg-white border border-neutral-200 p-6 sm:p-8 animate-in fade-in duration-200"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="size-guide-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-neutral-200">
           <div className="flex items-center gap-2">
             <Ruler className="w-5 h-5 text-neutral-900" />
-            <h3 className="text-base font-black uppercase tracking-wider font-editorial">
+            <h3 id="size-guide-title" className="text-base font-black uppercase tracking-wider font-editorial">
               T-Shirt Size & Measurement Guide
             </h3>
           </div>

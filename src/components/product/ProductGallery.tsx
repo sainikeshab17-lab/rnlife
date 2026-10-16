@@ -134,7 +134,9 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
           aria-label="Image lightbox"
           aria-modal="true"
           onKeyDown={handleLightboxKey}
-          onClick={() => setIsLightboxOpen(false)}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setIsLightboxOpen(false);
+          }}
           tabIndex={-1}
           ref={(el) => el?.focus()}
         >

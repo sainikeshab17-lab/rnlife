@@ -225,6 +225,9 @@ export function VariantSelector({
             );
           })}
         </div>
+        <p className="text-[10px] text-[#858585]">
+          Size-level inventory is not tracked in this prototype.
+        </p>
 
         {/* Size error */}
         {sizeError && (

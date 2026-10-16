@@ -19,6 +19,7 @@ function ShopContent() {
     fit: "all",
     size: "all",
     color: "all",
+    price: "all",
     sleeve: "all",
     isGraphic: "all",
     sortBy: "featured",
@@ -60,6 +61,10 @@ function ShopContent() {
       );
     }
 
+    if (filters.price === "under-1000") result = result.filter((p) => p.price < 1000);
+    if (filters.price === "1000-1500") result = result.filter((p) => p.price >= 1000 && p.price <= 1500);
+    if (filters.price === "over-1500") result = result.filter((p) => p.price > 1500);
+
     if (filters.sleeve !== "all") {
       result = result.filter((p) => p.sleeve === filters.sleeve);
     }
@@ -91,6 +96,7 @@ function ShopContent() {
       fit: "all",
       size: "all",
       color: "all",
+      price: "all",
       sleeve: "all",
       isGraphic: "all",
       sortBy: "featured",

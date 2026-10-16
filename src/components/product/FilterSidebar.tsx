@@ -9,6 +9,7 @@ export interface FilterState {
   fit: string;
   size: string;
   color: string;
+  price: "all" | "under-1000" | "1000-1500" | "over-1500";
   sleeve: string;
   isGraphic: string; // "all" | "graphic" | "plain"
   sortBy: "featured" | "newest" | "price-asc" | "price-desc";
@@ -61,6 +62,7 @@ export function FilterSidebar({
     filters.fit !== "all" ||
     filters.size !== "all" ||
     filters.color !== "all" ||
+    filters.price !== "all" ||
     filters.sleeve !== "all" ||
     filters.isGraphic !== "all";
 
@@ -151,6 +153,30 @@ export function FilterSidebar({
             >
               {s}
             </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Price */}
+      <div className="space-y-2.5">
+        <p className="text-xs uppercase tracking-wider font-bold text-neutral-800">Price</p>
+        <div className="space-y-1">
+          {[
+            { label: "Any price", value: "all" },
+            { label: "Under ₹1,000", value: "under-1000" },
+            { label: "₹1,000–₹1,500", value: "1000-1500" },
+            { label: "Over ₹1,500", value: "over-1500" },
+          ].map((range) => (
+            <label key={range.value} className="flex items-center gap-2 py-0.5 text-xs text-neutral-600 hover:text-black cursor-pointer">
+              <input
+                type="radio"
+                name="filter-price"
+                checked={filters.price === range.value}
+                onChange={() => onChange({ ...filters, price: range.value as FilterState["price"] })}
+                className="h-3.5 w-3.5 accent-[#FFB900]"
+              />
+              <span>{range.label}</span>
+            </label>
           ))}
         </div>
       </div>
