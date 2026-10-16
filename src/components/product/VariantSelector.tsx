@@ -1,7 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { Heart, ShoppingBag, Zap, Share2, Ruler, AlertCircle } from "lucide-react";
+import {
+  Heart,
+  ShoppingBag,
+  Zap,
+  Share2,
+  Ruler,
+  AlertCircle,
+  CheckCircle2,
+  Package,
+} from "lucide-react";
 import { Product, TShirtSize } from "@/types";
 import { formatINR } from "@/lib/utils";
 import { useCart } from "@/context/cart-context";
@@ -35,6 +44,8 @@ export function VariantSelector({
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
   const isFavorited = isInWishlist(product.id);
 
+  const isInStock = product.stock > 0;
+
   const handleAddToBag = () => {
     if (!selectedSize) {
       setSizeError(true);
@@ -57,6 +68,12 @@ export function VariantSelector({
       image: currentColor.images[0] || product.colors[0].images[0],
       fit: product.fit,
       quantity,
+    });
+
+    toast({
+      type: "success",
+      title: "Added to Bag",
+      message: `${product.name} (${selectedSize}, ${currentColor.name}) added.`,
     });
   };
 
@@ -87,51 +104,75 @@ export function VariantSelector({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Fit & Specifications Pill */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="px-2.5 py-1 bg-[#111111] text-white text-[10px] uppercase tracking-widest font-bold">
+    <div className="space-y-5">
+      {/* Product Tags: Fit, GSM, Sleeve, Neck */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="px-2 py-0.5 bg-[#111111] text-white text-[10px] uppercase tracking-widest font-bold">
           {product.fit} FIT
         </span>
-        <span className="px-2.5 py-1 bg-neutral-100 text-neutral-800 text-[10px] uppercase tracking-wider font-semibold">
+        <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
           {product.gsm} GSM
         </span>
-        <span className="px-2.5 py-1 bg-neutral-100 text-neutral-800 text-[10px] uppercase tracking-wider font-semibold">
+        <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
           {product.sleeve}
         </span>
-        <span className="px-2.5 py-1 bg-neutral-100 text-neutral-800 text-[10px] uppercase tracking-wider font-semibold">
+        <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
           {product.neck}
         </span>
       </div>
 
+      {/* Stock Status */}
+      <div className="flex items-center gap-1.5">
+        {isInStock ? (
+          <>
+            <span className="w-2 h-2 rounded-full bg-[#079447]" />
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#079447]">
+              Available
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="w-2 h-2 rounded-full bg-[#858585]" />
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#858585]">
+              Out of Stock
+            </span>
+          </>
+        )}
+      </div>
+
       {/* Color Selection */}
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="uppercase tracking-wider font-bold text-neutral-900">
-            Color: <span className="font-normal text-neutral-600">{currentColor.name}</span>
+          <span className="uppercase tracking-wider font-bold text-[#111111]">
+            Color:{" "}
+            <span className="font-medium text-[#858585]">{currentColor.name}</span>
           </span>
-          <span className="text-[11px] text-neutral-400 font-mono">
+          <span className="text-[10px] text-[#858585] font-mono">
             {product.colors.length} {product.colors.length === 1 ? "Option" : "Options"}
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {product.colors.map((color, idx) => (
             <button
               key={color.name}
-              onClick={() => onSelectColor(idx)}
-              className={`group flex items-center gap-2 p-1 border transition-all ${
+              onClick={() => {
+                onSelectColor(idx);
+                setSizeError(false);
+              }}
+              className={`chip-morph group relative flex items-center gap-2 px-2 py-1 border transition-all ${
                 selectedColorIdx === idx
-                  ? "border-black ring-1 ring-black"
-                  : "border-neutral-300 hover:border-neutral-500"
+                  ? "border-[#0876A8] ring-2 ring-[#0876A8] ring-offset-1"
+                  : "border-[#E5E5E5] hover:border-[#111111]"
               }`}
               aria-label={`Select ${color.name}`}
+              aria-pressed={selectedColorIdx === idx}
             >
               <span
-                className="w-5 h-5 border border-black/10 inline-block shrink-0"
+                className="w-4 h-4 border border-black/10 inline-block shrink-0"
                 style={{ backgroundColor: color.hex }}
               />
-              <span className="text-xs uppercase font-medium pr-1.5 text-neutral-800 hidden sm:inline">
+              <span className="text-[11px] uppercase font-semibold text-[#111111] hidden sm:inline pr-0.5">
                 {color.name}
               </span>
             </button>
@@ -140,26 +181,27 @@ export function VariantSelector({
       </div>
 
       {/* Size Selection */}
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5">
-            <span className="uppercase tracking-wider font-bold text-neutral-900">Size:</span>
+            <span className="uppercase tracking-wider font-bold text-[#111111]">Size:</span>
             {selectedSize ? (
-              <span className="font-bold text-black">{selectedSize}</span>
+              <span className="font-bold text-[#111111]">{selectedSize}</span>
             ) : (
-              <span className="text-neutral-500">Select your size</span>
+              <span className="text-[#858585]">Select your size</span>
             )}
           </div>
           <button
             onClick={() => setIsSizeGuideOpen(true)}
-            className="flex items-center gap-1 text-xs text-neutral-700 hover:text-black underline font-semibold"
+            className="flex items-center gap-1 text-xs text-[#0876A8] hover:text-[#111111] font-semibold transition-colors underline underline-offset-2"
           >
-            <Ruler className="w-3.5 h-3.5" /> Size Guide
+            <Ruler className="w-3.5 h-3.5" />
+            Size Guide
           </button>
         </div>
 
-        {/* Size Buttons */}
-        <div className="grid grid-cols-6 gap-2">
+        {/* Size Buttons Grid */}
+        <div className="grid grid-cols-6 gap-1.5">
           {product.sizes.map((size) => {
             const isSelected = selectedSize === size;
             return (
@@ -169,12 +211,14 @@ export function VariantSelector({
                   setSelectedSize(size);
                   setSizeError(false);
                 }}
-                className={`py-3 text-xs uppercase font-bold tracking-wider border transition-all ${
+                className={`chip-morph py-3 text-xs uppercase font-bold tracking-wider border transition-all ${
                   isSelected
-                    ? "bg-[#111111] text-white border-black shadow-sm"
-                    : "bg-white text-neutral-900 border-neutral-300 hover:border-black"
+                    ? "bg-[#111111] text-white border-[#111111] -translate-y-0.5 shadow-sm"
+                    : "bg-white text-[#111111] border-[#E5E5E5] hover:border-[#111111]"
                 }`}
+                disabled={!isInStock}
                 aria-label={`Select size ${size}`}
+                aria-pressed={isSelected}
               >
                 {size}
               </button>
@@ -182,67 +226,76 @@ export function VariantSelector({
           })}
         </div>
 
+        {/* Size error */}
         {sizeError && (
-          <div className="flex items-center gap-1.5 text-xs text-red-600 pt-1">
+          <div className="flex items-center gap-1.5 text-xs text-[#F5141C] pt-0.5">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span>Please select a size before adding to bag.</span>
           </div>
         )}
 
-        {/* Fit Guidance Note */}
-        <p className="text-[11px] text-neutral-500 leading-normal pt-1">
+        {/* Fit note */}
+        <p className="text-[11px] text-[#858585] leading-normal pt-0.5">
           {product.fit === "Oversized"
-            ? "Silhouette note: Cut with exaggerated drop shoulders and wide sleeves. Choose your standard size for the intended boxy drape."
+            ? "Silhouette: Exaggerated drop shoulders & wide sleeves. Order your standard size for the intended boxy drape."
             : product.fit === "Relaxed"
-            ? "Silhouette note: Relaxed chest cut with standard drop. Fits true to size."
-            : "Silhouette note: Classic regular architectural fit."}
+            ? "Silhouette: Relaxed chest cut with standard drop. Fits true to size."
+            : "Silhouette: Classic regular architectural fit. True to size."}
         </p>
       </div>
 
       {/* Quantity Selector */}
       <div className="flex items-center gap-4">
-        <span className="text-xs uppercase tracking-wider font-bold text-neutral-900">Quantity</span>
-        <div className="flex items-center border border-neutral-300">
+        <span className="text-xs uppercase tracking-wider font-bold text-[#111111]">
+          Qty
+        </span>
+        <div className="flex items-center border border-[#E5E5E5]">
           <button
             onClick={() => setQuantity(Math.max(1, quantity - 1))}
-            className="px-3 py-1.5 text-sm hover:bg-neutral-100 text-neutral-700 transition-colors"
+            disabled={!isInStock}
+            className="px-3 py-2 text-sm hover:bg-[#F5F4F0] text-[#111111] transition-colors"
             aria-label="Decrease quantity"
           >
-            -
+            −
           </button>
-          <span className="w-10 text-center text-xs font-bold text-black">{quantity}</span>
+          <span className="w-10 text-center text-xs font-bold text-[#111111]">
+            {quantity}
+          </span>
           <button
             onClick={() => setQuantity(Math.min(10, quantity + 1))}
-            className="px-3 py-1.5 text-sm hover:bg-neutral-100 text-neutral-700 transition-colors"
+            disabled={!isInStock}
+            className="px-3 py-2 text-sm hover:bg-[#F5F4F0] text-[#111111] transition-colors"
             aria-label="Increase quantity"
           >
             +
           </button>
         </div>
-        <span className="text-[11px] text-neutral-400 font-mono">
-          {product.stock > 10 ? "In Stock" : `Only ${product.stock} units left in stock`}
-        </span>
       </div>
 
-      {/* Action Buttons: Add to Bag & Buy Now */}
-      <div className="space-y-2.5 pt-2">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button
-            onClick={handleAddToBag}
-            className="w-full py-4 bg-[#111111] hover:bg-black text-white text-xs uppercase tracking-widest font-black flex items-center justify-center gap-2 transition-colors shadow-sm"
-          >
-            <ShoppingBag className="w-4 h-4" /> Add to Bag
-          </button>
-          <button
-            onClick={handleBuyNow}
-            className="w-full py-4 bg-[#B8FF3B] hover:bg-[#a5f022] text-black text-xs uppercase tracking-widest font-black flex items-center justify-center gap-2 transition-colors shadow-sm"
-          >
-            <Zap className="w-4 h-4" /> Buy Now
-          </button>
-        </div>
+      {/* Action Buttons */}
+      <div className="space-y-2 pt-1">
+        {/* Primary: Add to Bag — Yellow */}
+        <button
+          onClick={handleAddToBag}
+          disabled={!isInStock}
+          className="btn-morph btn-yellow w-full py-4 text-[11px] uppercase tracking-widest font-black flex items-center justify-center gap-2 shadow-sm"
+        >
+          <ShoppingBag className="w-4 h-4" />
+          Add to Bag
+        </button>
 
-        {/* Secondary Actions: Wishlist & Share */}
-        <div className="flex items-center justify-between pt-1">
+        {/* Secondary: Buy Now — Dark */}
+        <button
+          onClick={handleBuyNow}
+          disabled={!isInStock}
+          className="btn-morph btn-dark w-full py-3.5 text-[11px] uppercase tracking-widest font-bold flex items-center justify-center gap-2"
+        >
+          <Zap className="w-4 h-4" />
+          Buy Now
+        </button>
+
+        {/* Tertiary Actions */}
+        <div className="flex items-center justify-between pt-0.5">
           <button
             onClick={() =>
               toggleWishlist({
@@ -255,25 +308,25 @@ export function VariantSelector({
                 color: currentColor.name,
               })
             }
-            className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 hover:text-black py-1"
+            className="flex items-center gap-1.5 text-xs font-semibold text-[#858585] hover:text-[#111111] py-1 transition-colors"
           >
             <Heart
-              className={`w-4 h-4 ${isFavorited ? "fill-black text-black" : "text-neutral-500"}`}
+              className={`w-4 h-4 ${isFavorited ? "fill-[#F5141C] text-[#F5141C]" : ""}`}
             />
             <span>{isFavorited ? "Saved to Wishlist" : "Add to Wishlist"}</span>
           </button>
 
           <button
             onClick={handleShare}
-            className="flex items-center gap-1.5 text-xs font-semibold text-neutral-700 hover:text-black py-1"
+            className="flex items-center gap-1.5 text-xs font-semibold text-[#858585] hover:text-[#111111] py-1 transition-colors"
           >
-            <Share2 className="w-4 h-4 text-neutral-500" />
-            <span>Share Garment</span>
+            <Share2 className="w-4 h-4" />
+            <span>Share</span>
           </button>
         </div>
       </div>
 
-      {/* Delivery PIN Code Checker */}
+      {/* Delivery PIN Checker */}
       <DeliveryPinChecker />
 
       {/* Size Guide Modal */}
@@ -283,15 +336,20 @@ export function VariantSelector({
         initialFit={product.fit}
       />
 
-      {/* Mobile Discreet Sticky Purchase Bar */}
-      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-neutral-200 p-3 z-30 sm:hidden flex items-center justify-between gap-3 shadow-lg">
+      {/* Mobile Sticky Bar */}
+      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-[#E5E5E5] px-4 py-3 z-30 sm:hidden flex items-center justify-between gap-3 shadow-xl">
         <div className="min-w-0">
-          <p className="text-xs font-bold uppercase truncate">{product.name}</p>
-          <p className="text-xs font-black text-black">{formatINR(product.price)}</p>
+          <p className="text-xs font-bold uppercase truncate text-[#111111]">
+            {product.name}
+          </p>
+          <p className="text-sm font-black text-[#111111]">
+            {formatINR(product.price)}
+          </p>
         </div>
         <button
           onClick={handleAddToBag}
-          className="px-5 py-2.5 bg-[#111111] text-white text-[11px] uppercase tracking-widest font-black shrink-0 flex items-center gap-1.5"
+          className="btn-morph btn-yellow px-6 py-2.5 text-[11px] uppercase tracking-widest font-black shrink-0 flex items-center gap-1.5"
+          disabled={!isInStock}
         >
           <ShoppingBag className="w-3.5 h-3.5" />
           <span>Add to Bag</span>

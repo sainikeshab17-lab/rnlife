@@ -1,20 +1,22 @@
 @import "tailwindcss";
 
 @theme {
+  --color-brand-yellow: #FFB900;
+  --color-brand-blue: #0876A8;
+  --color-brand-green: #079447;
+  --color-brand-red: #F5141C;
   --color-brand-black: #111111;
   --color-brand-white: #ffffff;
-  --color-brand-cream: #f5f4f0;
+  --color-brand-cream: #F5F4F0;
   --color-brand-gray: #858585;
-  --color-brand-border: #e5e5e5;
-  --color-brand-lime: #b8ff3b;
-  --color-brand-muted: #737373;
-  --color-brand-dark: #1a1a1a;
-  --color-brand-surface: #faf9f6;
+  --color-brand-border: #E5E5E5;
 }
 
 :root {
   --background: #ffffff;
   --foreground: #111111;
+  --editorial-bg: #F5F4F0;
+  --border-color: #E5E5E5;
 }
 
 body {
@@ -25,13 +27,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom scrollbar for fashion aesthetic */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f5f4f0;
+  background: #F5F4F0;
 }
 ::-webkit-scrollbar-thumb {
   background: #d4d4d4;
@@ -41,17 +43,202 @@ body {
   background: #858585;
 }
 
-/* Streetwear editorial typography utility */
+/* Typography utilities */
 .font-editorial {
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 .tracking-tight-custom {
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
 }
 
 .tracking-widest-custom {
-  letter-spacing: 0.2em;
+  letter-spacing: 0.15em;
+}
+
+/* ============================
+   MORPH ANIMATIONS & MICRO-INTERACTIONS
+   ============================ */
+
+/* --- Button Morph --- */
+.btn-morph {
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+              border-radius 220ms cubic-bezier(0.16, 1, 0.3, 1),
+              background-color 180ms ease,
+              box-shadow 220ms ease,
+              color 180ms ease;
+  will-change: transform, border-radius;
+  position: relative;
+}
+
+.btn-morph:hover {
+  transform: translateY(-2px);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn-morph:active {
+  transform: translateY(0px) scale(0.985);
+  box-shadow: none;
+}
+
+.btn-morph:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px #0876A8;
+}
+
+/* Yellow CTA Specific */
+.btn-yellow {
+  background-color: #FFB900;
+  color: #111111;
+}
+.btn-yellow:hover {
+  background-color: #E5A500;
+}
+
+/* Dark CTA Specific */
+.btn-dark {
+  background-color: #111111;
+  color: #FFFFFF;
+}
+.btn-dark:hover {
+  background-color: #000000;
+}
+
+/* --- Card Morph --- */
+.card-morph {
+  transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 280ms cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 220ms ease;
+  will-change: transform;
+}
+
+.card-morph:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.07), 0 4px 8px -4px rgba(0, 0, 0, 0.04);
+}
+
+/* --- Image Morph --- */
+.img-morph {
+  transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 280ms ease;
+  will-change: transform;
+}
+
+.group:hover .img-morph {
+  transform: scale(1.03);
+}
+
+/* --- Chip / Swatch Morph --- */
+.chip-morph {
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chip-morph:hover {
+  transform: translateY(-1px);
+}
+
+/* --- Gallery Crossfade --- */
+.gallery-img-enter {
+  opacity: 0;
+}
+.gallery-img-enter-active {
+  opacity: 1;
+  transition: opacity 300ms ease;
+}
+.gallery-img-exit {
+  opacity: 1;
+}
+.gallery-img-exit-active {
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+/* --- Nav Link Transition --- */
+.nav-link {
+  position: relative;
+  transition: color 150ms ease;
+}
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 1.5px;
+  background-color: #111111;
+  transition: width 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav-link:hover::after,
+.nav-link.active::after {
+  width: 100%;
+}
+
+/* --- Marquee ticker --- */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 28s linear infinite;
+  display: inline-flex;
+}
+
+/* --- Accordion animate --- */
+.accordion-body {
+  animation: accordion-open 220ms ease forwards;
+  overflow: hidden;
+}
+
+@keyframes accordion-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --- No scrollbar utility --- */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ============================
+   ACCESSIBILITY: Reduced Motion
+   ============================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .btn-morph:hover,
+  .card-morph:hover,
+  .img-morph,
+  .group:hover .img-morph,
+  .chip-morph:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  .animate-marquee {
+    animation: none !important;
+  }
+
+  .nav-link::after {
+    transition: none !important;
+  }
 }

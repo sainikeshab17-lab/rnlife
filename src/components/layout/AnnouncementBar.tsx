@@ -19,19 +19,18 @@ export function AnnouncementBar() {
   if (!isVisible) return null;
 
   return (
-    <div className="bg-[#111111] text-white border-b border-neutral-800 text-[11px] uppercase tracking-widest font-medium py-2 px-4 transition-all">
+    <div className="bg-[#111111] text-white border-b border-neutral-800 text-[11px] uppercase tracking-widest font-medium py-1.5 px-4 transition-all">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
-        {/* Placeholder spacer for alignment */}
         <div className="hidden md:block w-8" />
 
         <div className="flex-1 text-center flex items-center justify-center gap-2 overflow-hidden">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#B8FF3B]" />
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#FFB900]" />
           <Link
             href="/collections/new-drops"
-            className="hover:underline flex items-center gap-1 transition-opacity duration-300"
+            className="hover:underline flex items-center gap-1 transition-opacity duration-300 text-neutral-200 hover:text-white"
           >
             <span>{BRAND_INFO.announcements[currentIndex]}</span>
-            <ChevronRight className="w-3 h-3 opacity-70" />
+            <ChevronRight className="w-3 h-3 text-[#FFB900]" />
           </Link>
         </div>
 

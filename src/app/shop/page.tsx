@@ -105,23 +105,23 @@ function ShopContent() {
         <Breadcrumbs items={[{ label: "Shop All Tees" }]} />
 
         {/* Page Header */}
-        <div className="pt-4 pb-8 border-b border-neutral-200">
+        <div className="pt-4 pb-8 border-b border-[#E5E5E5]">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
-              <span className="text-[11px] uppercase tracking-widest font-mono text-neutral-500 font-bold block mb-1">
-                COMPLETE CATALOG
+              <span className="text-[10px] uppercase tracking-widest font-mono text-[#858585] font-bold block mb-1">
+                Complete Catalog
               </span>
-              <h1 className="text-3xl sm:text-5xl font-black uppercase tracking-tight font-editorial">
-                SHOP ALL TEES
+              <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tight font-editorial">
+                Shop All Tees
               </h1>
-              <p className="text-xs sm:text-sm text-neutral-600 max-w-xl mt-2 leading-relaxed">
-                Discover our range of heavyweight graphic, oversized, and essential T-shirts. Milled from 100% combed cotton jersey with architectural streetwear silhouettes.
+              <p className="text-xs text-[#858585] max-w-lg mt-2 leading-relaxed">
+                Heavyweight graphic, oversized, and essential T-shirts — milled from 100% combed cotton jersey.
               </p>
             </div>
 
-            <div className="text-xs text-neutral-500 font-mono self-start md:self-end">
-              Showing <span className="font-bold text-black">{paginatedProducts.length}</span> of{" "}
-              <span className="font-bold text-black">{totalProducts}</span> garments
+            <div className="text-xs text-[#858585] font-mono self-start md:self-end">
+              Showing <span className="font-bold text-[#111111]">{paginatedProducts.length}</span> of{" "}
+              <span className="font-bold text-[#111111]">{totalProducts}</span> garments
             </div>
           </div>
         </div>
@@ -141,13 +141,13 @@ function ShopContent() {
           <div className="flex-1">
             {/* Active search chip */}
             {searchQuery && (
-              <div className="mb-6 flex items-center gap-2 p-3 bg-neutral-100 border border-neutral-200 text-xs">
+              <div className="mb-6 flex items-center gap-2 p-3 bg-[#F5F4F0] border border-[#E5E5E5] text-xs">
                 <span>
-                  Filtering results for: <strong>“{searchQuery}”</strong>
+                  Filtering results for: <strong>&ldquo;{searchQuery}&rdquo;</strong>
                 </span>
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="text-neutral-500 hover:text-black underline font-bold ml-auto"
+                  className="text-[#858585] hover:text-[#111111] underline font-bold ml-auto transition-colors"
                 >
                   Clear Search
                 </button>
@@ -156,14 +156,14 @@ function ShopContent() {
 
             <ProductGrid products={paginatedProducts} columns={3} />
 
-            {/* Load More Button */}
+            {/* Load More */}
             {hasMore && (
               <div className="mt-12 text-center">
                 <button
                   onClick={() => setCurrentPage((p) => p + 1)}
-                  className="px-8 py-3.5 border-2 border-black hover:bg-black hover:text-white text-xs uppercase tracking-widest font-black transition-colors"
+                  className="btn-morph btn-yellow px-8 py-3.5 text-xs uppercase tracking-widest font-black"
                 >
-                  Load More T-Shirts ({totalProducts - paginatedProducts.length} Remaining)
+                  Load More ({totalProducts - paginatedProducts.length} remaining)
                 </button>
               </div>
             )}

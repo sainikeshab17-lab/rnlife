@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { Product } from "@/types";
 import { ProductGallery } from "@/components/product/ProductGallery";
 import { VariantSelector } from "@/components/product/VariantSelector";
@@ -9,12 +10,7 @@ import { formatINR } from "@/lib/utils";
 import {
   ChevronDown,
   ChevronUp,
-  Sparkles,
-  ShieldCheck,
-  RefreshCw,
-  Truck,
   Layers,
-  Star,
 } from "lucide-react";
 
 interface ProductDetailsClientProps {
@@ -22,19 +18,24 @@ interface ProductDetailsClientProps {
   relatedProducts: Product[];
 }
 
+type AccordionId = "desc" | "specs" | "care" | "shipping" | "";
+
 export function ProductDetailsClient({
   product,
   relatedProducts,
 }: ProductDetailsClientProps) {
   const [selectedColorIdx, setSelectedColorIdx] = useState(0);
-  const [openSection, setOpenSection] = useState<string>("specs");
+  const [openSection, setOpenSection] = useState<AccordionId>("specs");
 
   // Track recently viewed in localStorage
   useEffect(() => {
     try {
       const stored = localStorage.getItem("rnl_recently_viewed_v1");
       const list: string[] = stored ? JSON.parse(stored) : [];
-      const updated = [product.slug, ...list.filter((s) => s !== product.slug)].slice(0, 6);
+      const updated = [
+        product.slug,
+        ...list.filter((s) => s !== product.slug),
+      ].slice(0, 6);
       localStorage.setItem("rnl_recently_viewed_v1", JSON.stringify(updated));
     } catch {
       // Ignore
@@ -44,59 +45,98 @@ export function ProductDetailsClient({
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
   const galleryImages = currentColor?.images || product.colors[0]?.images || [];
 
-  const toggleSection = (id: string) => {
+  const toggleSection = (id: AccordionId) => {
     setOpenSection((prev) => (prev === id ? "" : id));
   };
 
   const discountPercent = product.compareAtPrice
-    ? Math.round(((product.compareAtPrice - product.price) / product.compareAtPrice) * 100)
+    ? Math.round(
+        ((product.compareAtPrice - product.price) / product.compareAtPrice) *
+          100
+      )
     : 0;
 
   return (
-    <div className="pt-4 pb-16">
-      {/* Top 2-Column Product Stage */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14">
-        {/* Gallery Column (7 cols on Desktop) */}
-        <div className="lg:col-span-7">
+    <div className="pt-4 pb-20">
+      {/* ── Breadcrumb ── */}
+      <nav
+        className="flex items-center gap-1.5 text-[11px] text-[#858585] mb-6 uppercase tracking-wide font-medium"
+        aria-label="Breadcrumb"
+      >
+        <Link href="/" className="hover:text-[#111111] transition-colors">
+          Home
+        </Link>
+        <span>/</span>
+        <Link href="/shop" className="hover:text-[#111111] transition-colors">
+          Shop
+        </Link>
+        <span>/</span>
+        {product.collectionSlug && (
+          <>
+            <Link
+              href={`/collections/${product.collectionSlug}`}
+              className="hover:text-[#111111] transition-colors capitalize"
+            >
+              {product.collectionSlug.replace(/-/g, " ")}
+            </Link>
+            <span>/</span>
+          </>
+        )}
+        <span className="text-[#111111] truncate max-w-[180px]">
+          {product.name}
+        </span>
+      </nav>
+
+      {/* ── Two-Column Product Stage ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] gap-8 lg:gap-14">
+        {/* Gallery Column */}
+        <div>
           <ProductGallery
             images={galleryImages}
-            productName={`${product.name} - ${currentColor.name}`}
+            productName={`${product.name} — ${currentColor.name}`}
           />
         </div>
 
-        {/* Product Details & Purchase Column (5 cols on Desktop) */}
-        <div className="lg:col-span-5 flex flex-col justify-start">
-          <div className="border-b border-neutral-200 pb-5">
-            <span className="text-[11px] uppercase tracking-widest font-mono text-neutral-500 font-bold block mb-1">
-              RIGHTNOWLIFE STREETWEAR
+        {/* Purchase Details Column */}
+        <div className="flex flex-col justify-start lg:sticky lg:top-24 lg:self-start">
+          {/* Title block */}
+          <div className="border-b border-[#E5E5E5] pb-5">
+            <span className="text-[10px] uppercase tracking-widest font-mono text-[#858585] font-bold block mb-2">
+              RIGHTNOWLIFE
             </span>
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black uppercase tracking-tight font-editorial text-neutral-900 leading-tight">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#111111] leading-tight">
               {product.name}
             </h1>
-            <p className="text-xs sm:text-sm text-neutral-600 mt-2 leading-relaxed">
-              {product.tagline}
-            </p>
+            {product.tagline && (
+              <p className="text-xs text-[#858585] mt-2 leading-relaxed">
+                {product.tagline}
+              </p>
+            )}
 
-            {/* Pricing Area */}
-            <div className="mt-4 flex items-baseline gap-3">
-              <span className="text-2xl sm:text-3xl font-black text-neutral-900">
+            {/* Pricing */}
+            <div className="mt-4 flex items-baseline gap-3 flex-wrap">
+              <span className="text-2xl font-bold text-[#111111]">
                 {formatINR(product.price)}
               </span>
               {product.compareAtPrice && (
                 <>
-                  <span className="text-sm text-neutral-400 line-through">
+                  <span className="text-sm text-[#858585] line-through">
                     {formatINR(product.compareAtPrice)}
                   </span>
-                  <span className="px-2 py-0.5 bg-black text-[#B8FF3B] text-xs font-bold uppercase tracking-wider">
+                  <span className="px-2 py-0.5 bg-[#F5141C] text-white text-[10px] font-black uppercase tracking-wider">
                     {discountPercent}% OFF
                   </span>
                 </>
               )}
+              {product.isNewDrop && !product.compareAtPrice && (
+                <span className="px-2 py-0.5 bg-[#111111] text-[#FFB900] text-[10px] font-black uppercase tracking-wider">
+                  NEW DROP
+                </span>
+              )}
             </div>
-            <p className="text-[11px] text-neutral-500 mt-1">Inclusive of all taxes. Free express shipping above ₹1,499.</p>
           </div>
 
-          {/* Interactive Variant Selection */}
+          {/* Variant Selection */}
           <div className="py-6">
             <VariantSelector
               product={product}
@@ -106,200 +146,155 @@ export function ProductDetailsClient({
           </div>
 
           {/* Value Props Strip */}
-          <div className="grid grid-cols-3 gap-2 py-4 border-y border-neutral-200 text-center text-[10px] text-neutral-600 uppercase tracking-wider font-semibold">
-            <div className="flex flex-col items-center gap-1">
-              <Layers className="w-4 h-4 text-neutral-900" />
-              <span>{product.gsm} GSM Combed Jersey</span>
+          <div className="grid grid-cols-2 gap-x-5 gap-y-3 border-y border-[#E5E5E5] py-4 text-xs">
+            <div>
+              <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Fit</span>
+              <span className="mt-1 block font-medium">{product.fit}</span>
             </div>
-            <div className="flex flex-col items-center gap-1">
-              <Truck className="w-4 h-4 text-neutral-900" />
-              <span>Express Air Courier</span>
+            <div>
+              <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Fabric weight</span>
+              <span className="mt-1 flex items-center gap-1.5 font-medium"><Layers className="h-3.5 w-3.5" />{product.gsm} GSM</span>
             </div>
-            <div className="flex flex-col items-center gap-1">
-              <RefreshCw className="w-4 h-4 text-neutral-900" />
-              <span>Hassle-Free Size Swaps</span>
+            <div className="col-span-2">
+              <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Composition</span>
+              <span className="mt-1 block font-medium">{product.fabricComposition}</span>
             </div>
           </div>
 
           {/* Accordion Sections */}
-          <div className="divide-y divide-neutral-200 border-b border-neutral-200 text-xs">
+          <div className="divide-y divide-[#E5E5E5] border-b border-[#E5E5E5] text-xs mt-4">
             {/* Description & Fit */}
-            <div className="py-3.5">
-              <button
-                onClick={() => toggleSection("desc")}
-                className="w-full flex items-center justify-between text-left uppercase font-bold tracking-wider text-neutral-900 py-1"
-              >
-                <span>Garment Description & Fit</span>
-                {openSection === "desc" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-              {openSection === "desc" && (
-                <div className="pt-2.5 pb-2 text-neutral-600 space-y-2 leading-relaxed">
-                  <p>{product.description}</p>
-                  <p className="font-semibold text-black">
-                    Silhouette: {product.fit} Fit with {product.sleeve.toLowerCase()} and {product.neck.toLowerCase()}.
-                  </p>
-                </div>
-              )}
-            </div>
+            <AccordionSection
+              id="desc"
+              label="Garment Description & Fit"
+              open={openSection === "desc"}
+              onToggle={toggleSection}
+            >
+              <p className="text-[#858585] leading-relaxed">{product.description}</p>
+              <p className="font-semibold text-[#111111] mt-2">
+                Silhouette: {product.fit} Fit · {product.sleeve} · {product.neck}
+              </p>
+            </AccordionSection>
 
             {/* Specifications */}
-            <div className="py-3.5">
-              <button
-                onClick={() => toggleSection("specs")}
-                className="w-full flex items-center justify-between text-left uppercase font-bold tracking-wider text-neutral-900 py-1"
-              >
-                <span>Fabric & Print Specifications</span>
-                {openSection === "specs" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-              {openSection === "specs" && (
-                <div className="pt-2.5 pb-2 text-neutral-700 space-y-1.5 font-medium">
-                  <div className="flex justify-between py-1 border-b border-neutral-100">
-                    <span className="text-neutral-500">Fabric:</span>
-                    <span>{product.fabricComposition}</span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-neutral-100">
-                    <span className="text-neutral-500">Fabric Weight:</span>
-                    <span>{product.gsm} GSM Heavyweight</span>
-                  </div>
-                  {product.printTechnique && (
-                    <div className="flex justify-between py-1 border-b border-neutral-100">
-                      <span className="text-neutral-500">Print Technique:</span>
-                      <span>{product.printTechnique}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between py-1 border-b border-neutral-100">
-                    <span className="text-neutral-500">Collar:</span>
-                    <span>1.25&quot; Lycra Ribbed (Anti-curl)</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-neutral-500">Origin:</span>
-                    <span>Engineered & Crafted in India</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            <AccordionSection
+              id="specs"
+              label="Fabric & Print Specifications"
+              open={openSection === "specs"}
+              onToggle={toggleSection}
+            >
+              <dl className="space-y-1.5 text-[#111111]">
+                <SpecRow label="Fabric" value={product.fabricComposition} />
+                <SpecRow
+                  label="Fabric Weight"
+                  value={`${product.gsm} GSM`}
+                />
+                {product.printTechnique && (
+                  <SpecRow
+                    label="Print Technique"
+                    value={product.printTechnique}
+                  />
+                )}
+                <SpecRow label="Sleeve" value={product.sleeve} />
+                <SpecRow label="Neckline" value={product.neck} />
+              </dl>
+            </AccordionSection>
 
-            {/* Care Instructions */}
-            <div className="py-3.5">
-              <button
-                onClick={() => toggleSection("care")}
-                className="w-full flex items-center justify-between text-left uppercase font-bold tracking-wider text-neutral-900 py-1"
-              >
-                <span>Washing & Care Instructions</span>
-                {openSection === "care" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-              {openSection === "care" && (
-                <ul className="pt-2.5 pb-2 text-neutral-600 space-y-1.5 list-disc list-inside">
-                  {product.careInstructions.map((inst, idx) => (
-                    <li key={idx}>{inst}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {/* Shipping & Returns */}
-            <div className="py-3.5">
-              <button
-                onClick={() => toggleSection("shipping")}
-                className="w-full flex items-center justify-between text-left uppercase font-bold tracking-wider text-neutral-900 py-1"
-              >
-                <span>Pan-India Shipping & Returns</span>
-                {openSection === "shipping" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-              {openSection === "shipping" && (
-                <div className="pt-2.5 pb-2 text-neutral-600 space-y-2 leading-relaxed">
-                  <p>
-                    • Dispatched within 24 hours via express air courier (Delhivery / BlueDart).
-                  </p>
-                  <p>
-                    • Delivery timeline: 2 to 4 business days across metro cities; 3 to 5 days across rest of India.
-                  </p>
-                  <p>
-                    • Easy 7-day size exchange if your silhouette requires adjustment. Return pickups arranged from your doorstep.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Customer Demonstration Reviews Section */}
-      <div className="mt-16 sm:mt-24 pt-12 border-t border-neutral-200">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <div className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-neutral-500 font-bold mb-1">
-              <span>CUSTOMER COMMUNITY FEEDBACK</span>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-editorial">
-              GARMENT REVIEWS (DEMO CONTENT)
-            </h2>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-neutral-500 font-mono">
-            <span>[Demonstration Fixtures for Phase 1 Review]</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            {
-              author: "Rohan M.",
-              city: "Bengaluru",
-              rating: 5,
-              review:
-                "The 260 GSM fabric is genuinely heavyweight without being stiff. The drop shoulder sits perfectly boxy. Easily better than most high-street fast fashion brands.",
-              verified: "Verified Buyer (Size L)",
-            },
-            {
-              author: "Kritika S.",
-              city: "Mumbai",
-              rating: 5,
-              review:
-                "Loved the collar construction — washed it twice inside out and the neckline didn't warp at all. Puff print has awesome tactile texture.",
-              verified: "Verified Buyer (Size M)",
-            },
-            {
-              author: "Aditya P.",
-              city: "Delhi NCR",
-              rating: 5,
-              review:
-                "Ordered my normal size M and got the exact streetwear oversized drape shown on the model. Clean aesthetics, zero compromises.",
-              verified: "Verified Buyer (Size M)",
-            },
-          ].map((rev, idx) => (
-            <div key={idx} className="p-5 bg-[#F5F4F0] border border-neutral-200 space-y-3">
-              <div className="flex items-center gap-1 text-black">
-                {[...Array(rev.rating)].map((_, i) => (
-                  <Star key={i} className="w-3.5 h-3.5 fill-black" />
+            {/* Care */}
+            <AccordionSection
+              id="care"
+              label="Washing & Care Instructions"
+              open={openSection === "care"}
+              onToggle={toggleSection}
+            >
+              <ul className="text-[#858585] space-y-1.5 list-disc list-inside leading-relaxed">
+                {product.careInstructions.map((inst, idx) => (
+                  <li key={idx}>{inst}</li>
                 ))}
-              </div>
-              <p className="text-xs text-neutral-800 leading-relaxed italic">
-                &ldquo;{rev.review}&rdquo;
+              </ul>
+            </AccordionSection>
+
+            {/* Shipping */}
+            <AccordionSection
+              id="shipping"
+              label="Shipping & exchanges"
+              open={openSection === "shipping"}
+              onToggle={toggleSection}
+            >
+              <p className="text-[#858585] leading-relaxed">
+                Delivery coverage and exchange eligibility are not checked live in this prototype. Review the current policies before placing an order.
               </p>
-              <div className="pt-2 border-t border-neutral-200/60 flex items-center justify-between text-[11px]">
-                <span className="font-bold text-neutral-900">{rev.author} ({rev.city})</span>
-                <span className="text-neutral-500 text-[10px]">{rev.verified}</span>
+              <div className="mt-3 flex gap-4 font-semibold text-[#0876A8]">
+                <Link href="/shipping" className="underline underline-offset-2">Shipping policy</Link>
+                <Link href="/returns" className="underline underline-offset-2">Exchange policy</Link>
               </div>
-            </div>
-          ))}
+            </AccordionSection>
+          </div>
         </div>
       </div>
 
-      {/* Related Products Carousel / Grid */}
+      {/* ── Related Products ── */}
       {relatedProducts.length > 0 && (
-        <div className="mt-16 sm:mt-24 pt-12 border-t border-neutral-200">
+        <div className="mt-16 sm:mt-24 pt-12 border-t border-[#E5E5E5]">
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-editorial">
-              YOU MAY ALSO LIKE
+              You May Also Like
             </h2>
-            <span className="text-xs uppercase tracking-wider font-bold text-neutral-500 font-mono">
-              CURATED STYLES
-            </span>
+            <Link
+              href="/shop"
+              className="text-xs uppercase tracking-wider font-bold text-[#858585] hover:text-[#111111] transition-colors"
+            >
+              View All →
+            </Link>
           </div>
-
           <ProductGrid products={relatedProducts} columns={4} />
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Accordion Section Sub-component ── */
+function AccordionSection({
+  id,
+  label,
+  open,
+  onToggle,
+  children,
+}: {
+  id: AccordionId;
+  label: string;
+  open: boolean;
+  onToggle: (id: AccordionId) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="py-3.5">
+      <button
+        onClick={() => onToggle(id)}
+        className="w-full flex items-center justify-between text-left uppercase font-bold tracking-wider text-[#111111] py-0.5 hover:text-[#0876A8] transition-colors"
+        aria-expanded={open}
+      >
+        <span>{label}</span>
+        {open ? (
+          <ChevronUp className="w-4 h-4 shrink-0" />
+        ) : (
+          <ChevronDown className="w-4 h-4 shrink-0" />
+        )}
+      </button>
+      {open && (
+        <div className="accordion-body pt-3 pb-2 text-xs">{children}</div>
+      )}
+    </div>
+  );
+}
+
+/* ── Spec Row Sub-component ── */
+function SpecRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between py-1 border-b border-[#E5E5E5] last:border-0">
+      <span className="text-[#858585]">{label}:</span>
+      <span className="font-medium text-[#111111]">{value}</span>
     </div>
   );
 }

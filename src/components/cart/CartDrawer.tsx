@@ -79,21 +79,21 @@ export function CartDrawer() {
           </div>
 
           {/* Free Shipping Progress Meter */}
-          <div className="bg-[#F5F4F0] px-4 py-3 border-b border-neutral-200 text-xs">
+          <div className="bg-[#F5F4F0] px-4 py-3 border-b border-[#E5E5E5] text-xs">
             {amountRemainingForFreeShipping > 0 ? (
-              <p className="text-neutral-700">
-                Add <span className="font-bold text-black">{formatINR(amountRemainingForFreeShipping)}</span> more for{" "}
-                <span className="font-bold text-black">FREE Express Shipping</span>
+              <p className="text-[#858585]">
+                Add <span className="font-bold text-[#111111]">{formatINR(amountRemainingForFreeShipping)}</span> more for{" "}
+                <span className="font-bold text-[#111111]">FREE Express Shipping</span>
               </p>
             ) : (
-              <p className="font-bold text-emerald-700 flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+              <p className="font-bold text-[#079447] flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-[#079447]" />
                 You unlocked FREE Express Shipping!
               </p>
             )}
-            <div className="w-full h-1.5 bg-neutral-200 rounded-full mt-2 overflow-hidden">
+            <div className="w-full h-1.5 bg-[#E5E5E5] mt-2 overflow-hidden">
               <div
-                className="h-full bg-[#111111] transition-all duration-500"
+                className="h-full bg-[#079447] transition-all duration-500"
                 style={{ width: `${progressToFreeShipping}%` }}
               />
             </div>
@@ -115,7 +115,7 @@ export function CartDrawer() {
                 <Link
                   href="/collections/new-drops"
                   onClick={closeDrawer}
-                  className="px-6 py-3 bg-[#111111] text-white text-xs uppercase tracking-widest font-semibold hover:bg-black transition-colors inline-flex items-center gap-2"
+                  className="btn-morph btn-yellow px-6 py-3 text-xs uppercase tracking-widest font-semibold inline-flex items-center gap-2"
                 >
                   Shop New Drops <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
@@ -259,14 +259,14 @@ export function CartDrawer() {
                 <Link
                   href="/checkout"
                   onClick={closeDrawer}
-                  className="w-full py-3.5 bg-[#111111] hover:bg-black text-white text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
+                  className="btn-morph btn-yellow w-full py-3.5 text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2"
                 >
                   Proceed to Checkout <ArrowRight className="w-4 h-4" />
                 </Link>
                 <Link
                   href="/cart"
                   onClick={closeDrawer}
-                  className="w-full py-2.5 border border-neutral-300 hover:border-black text-neutral-800 hover:text-black text-xs uppercase tracking-widest font-bold flex items-center justify-center transition-colors"
+                  className="w-full py-2.5 border border-[#E5E5E5] hover:border-[#111111] text-[#858585] hover:text-[#111111] text-xs uppercase tracking-widest font-bold flex items-center justify-center transition-colors"
                 >
                   View Full Bag
                 </Link>
