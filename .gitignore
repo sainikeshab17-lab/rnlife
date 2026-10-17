@@ -42,5 +42,6 @@ next-env.d.ts
 
 # local test dist & database files
 /.test-dist/
+/.admin-dist/
 /data/*.db*
 !.env.example

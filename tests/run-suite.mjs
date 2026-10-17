@@ -14,9 +14,13 @@ const filesToCompile = [
   { in: "src/data/mock-data.ts", out: ".test-dist/src/data/mock-data.js" },
   { in: "src/lib/db/index.ts", out: ".test-dist/src/lib/db/index.js" },
   { in: "src/lib/db/orders.ts", out: ".test-dist/src/lib/db/orders.js" },
+  { in: "src/lib/db/audit.ts", out: ".test-dist/src/lib/db/audit.js" },
+  { in: "src/lib/auth/admin-auth.ts", out: ".test-dist/src/lib/auth/admin-auth.js" },
+  { in: "src/lib/order-status-machine.ts", out: ".test-dist/src/lib/order-status-machine.js" },
   { in: "src/lib/razorpay.ts", out: ".test-dist/src/lib/razorpay.js" },
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
-  { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" }
+  { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" },
+  { in: "tests/admin-and-dashboard.test.mjs", out: ".test-dist/tests/admin-and-dashboard.test.mjs" }
 ];
 
 for (const f of filesToCompile) {
@@ -31,8 +35,11 @@ for (const f of filesToCompile) {
     code = code
       .replace(/from\s+["']@\/data\/mock-data["']/g, 'from "../data/mock-data.js"')
       .replace(/from\s+["']@\/types["']/g, 'from "../types/index.js"');
+  } else if (f.in.startsWith("src/lib/auth/")) {
+    code = code.replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "../db/index.js"');
   } else if (f.in.startsWith("src/lib/db/")) {
     code = code
+      .replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "./index.js"')
       .replace(/from\s+["']@\/data\/mock-data["']/g, 'from "../../data/mock-data.js"')
       .replace(/from\s+["']@\/types["']/g, 'from "../../types/index.js"')
       .replace(/from\s+["']\.\/index["']/g, 'from "./index.js"');
@@ -44,7 +51,11 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/checkout-service\.ts["']/g, 'from "../src/services/checkout-service.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/razorpay\.ts["']/g, 'from "../src/lib/razorpay.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/orders\.ts["']/g, 'from "../src/lib/db/orders.js"')
-      .replace(/from\s+["']\.\.\/src\/lib\/db\/index\.ts["']/g, 'from "../src/lib/db/index.js"');
+      .replace(/from\s+["']\.\.\/src\/lib\/db\/index\.ts["']/g, 'from "../src/lib/db/index.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/db\/audit\.ts["']/g, 'from "../src/lib/db/audit.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/auth\/admin-auth\.ts["']/g, 'from "../src/lib/auth/admin-auth.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/order-status-machine\.ts["']/g, 'from "../src/lib/order-status-machine.js"')
+      .replace(/from\s+["']\.\.\/src\/data\/mock-data\.ts["']/g, 'from "../src/data/mock-data.js"');
   }
 
   if (f.in.endsWith(".ts")) {
@@ -63,11 +74,11 @@ for (const f of filesToCompile) {
 
 console.log("Transpiled test build ready in .test-dist. Running node test suite...");
 try {
-  execSync("node --test .test-dist/tests/checkout-and-payment.test.mjs", {
+  execSync("node --test .test-dist/tests/checkout-and-payment.test.mjs .test-dist/tests/admin-and-dashboard.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
-  console.log("\nAll automated checkout & payment tests passed successfully!");
+  console.log("\nAll automated tests (Phase 2 + Phase 3) passed successfully!");
 } catch (e) {
   console.error("Test execution failed:", e.message);
   process.exit(1);

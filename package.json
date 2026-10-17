@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node tests/run-suite.mjs",
+    "setup-admin": "node scripts/run-create-admin.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

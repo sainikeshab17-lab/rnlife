@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ShieldAlert,
   LayoutDashboard,
@@ -16,8 +16,16 @@ import {
   X,
   ExternalLink,
   LogOut,
+  FileText,
+  Loader2,
 } from "lucide-react";
-import { useAuth } from "@/context/auth-context";
+
+interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+}
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -33,16 +41,52 @@ export function AdminLayout({
   actions,
 }: AdminLayoutProps) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const router = useRouter();
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
+  useEffect(() => {
+    let isMounted = true;
+    async function verifyAuth() {
+      try {
+        const res = await fetch("/api/admin/me");
+        if (!res.ok) {
+          router.replace("/admin/login");
+          return;
+        }
+        const data = await res.json();
+        if (isMounted) {
+          setAdminUser(data.admin);
+          setCheckingAuth(false);
+        }
+      } catch {
+        router.replace("/admin/login");
+      }
+    }
+    verifyAuth();
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/admin/logout", { method: "POST" });
+    } finally {
+      router.push("/admin/login");
+      router.refresh();
+    }
+  };
+
   const navLinks = [
-    { label: "Overview", href: "/admin", icon: LayoutDashboard },
-    { label: "Catalog Products", href: "/admin/products", icon: Package },
-    { label: "Collections & Drops", href: "/admin/collections", icon: Layers },
+    { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
     { label: "Order Operations", href: "/admin/orders", icon: ShoppingBag },
     { label: "Warehouse Inventory", href: "/admin/inventory", icon: Boxes },
-    { label: "Staff & Permissions", href: "/admin/staff", icon: Users },
+    { label: "Catalog Products", href: "/admin/products", icon: Package },
+    { label: "Collections & Drops", href: "/admin/collections", icon: Layers },
+    { label: "Audit Logs", href: "/admin/audit-logs", icon: FileText },
+    { label: "Staff & Roles", href: "/admin/staff", icon: Users },
   ];
 
   return (
@@ -86,10 +130,14 @@ export function AdminLayout({
             </Link>
 
             <div className="flex items-center gap-2 pl-2 border-l border-neutral-700">
-              <span className="font-semibold hidden sm:inline">{user?.name || "Devika Rao"}</span>
+              <span className="font-semibold hidden sm:inline">{adminUser?.name || "Admin"}</span>
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-neutral-800 text-[#B8FF3B] border border-neutral-700">
+                {adminUser?.role || "ADMIN"}
+              </span>
               <button
-                onClick={logout}
-                className="text-neutral-400 hover:text-red-400 p-1"
+                onClick={handleLogout}
+                className="text-neutral-400 hover:text-red-400 p-1 cursor-pointer"
+                title="Sign Out"
                 aria-label="Logout"
               >
                 <LogOut className="w-4 h-4" />
@@ -146,11 +194,11 @@ export function AdminLayout({
                 Security & Role Notice
               </p>
               <div className="px-3 text-xs text-neutral-600 space-y-1">
-                <span className="inline-block text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 bg-purple-50 text-purple-800 border border-purple-200">
-                  Store Administrator
+                <span className="inline-block text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  {adminUser?.role === "super_admin" ? "Super Administrator" : "Store Administrator"}
                 </span>
                 <p className="text-[11px] text-neutral-400">
-                  Role-based access enforcement will be validated via NestJS JWT guards in Phase 2.
+                  Protected with PBKDF2-SHA512 authentication and HTTP-only session tokens.
                 </p>
               </div>
             </div>
@@ -173,7 +221,16 @@ export function AdminLayout({
             {actions && <div className="flex items-center gap-2">{actions}</div>}
           </div>
 
-          {children}
+          {checkingAuth ? (
+            <div className="bg-white border border-neutral-200 p-12 text-center shadow-sm">
+              <Loader2 className="w-8 h-8 animate-spin text-neutral-400 mx-auto mb-3" />
+              <p className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                Verifying Administrator Session...
+              </p>
+            </div>
+          ) : (
+            children
+          )}
         </main>
       </div>
     </div>

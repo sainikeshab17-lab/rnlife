@@ -20,6 +20,7 @@ export function getDb(): DatabaseSync {
     dbInstance.exec("PRAGMA foreign_keys = ON;");
     dbInstance.exec("PRAGMA journal_mode = WAL;");
     initSchema(dbInstance);
+    runMigrations(dbInstance);
   }
   return dbInstance;
 }
@@ -116,6 +117,127 @@ function initSchema(db: DatabaseSync) {
   }
 }
 
+/**
+ * Additive migrations — safe to run repeatedly.
+ * Each migration checks for existence before altering.
+ */
+function runMigrations(db: DatabaseSync) {
+  // Migration 001: Add shipping/tracking columns to orders
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN courier_name TEXT;`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN tracking_number TEXT;`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN tracking_url TEXT;`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT;`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN cancelled_reason TEXT;`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN refund_status TEXT;`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN refund_id TEXT;`);
+  } catch { /* column already exists */ }
+
+  // Migration 002: Order status history
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS order_status_history (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_status_history_order ON order_status_history(order_id);
+  `);
+
+  // Migration 003: Admin users (hashed passwords, no plain text stored)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_admin_email ON admin_users(email);
+  `);
+
+  // Migration 004: Admin sessions (HTTP-only cookie tokens)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id TEXT PRIMARY KEY,
+      admin_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      FOREIGN KEY (admin_id) REFERENCES admin_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_token ON admin_sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_session_admin ON admin_sessions(admin_id);
+  `);
+
+  // Migration 005: Inventory adjustments audit
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_adjustments (
+      id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      size TEXT NOT NULL,
+      prev_stock INTEGER NOT NULL,
+      new_stock INTEGER NOT NULL,
+      delta INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_inv_adj_product ON inventory_adjustments(product_id);
+  `);
+
+  // Migration 006: General admin audit log
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      actor TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT,
+      before_value TEXT,
+      after_value TEXT,
+      metadata TEXT,
+      ip_address TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor);
+    CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
+  `);
+
+  // Migration 007: Product overrides (visibility, description overrides — price always 999)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS product_overrides (
+      product_id TEXT PRIMARY KEY,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      custom_description TEXT,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
 export interface DbOrder {
   id: string;
   order_number: string;
@@ -134,6 +256,13 @@ export interface DbOrder {
   razorpay_signature: string | null;
   guest_token: string;
   user_id: string | null;
+  courier_name: string | null;
+  tracking_number: string | null;
+  tracking_url: string | null;
+  notes: string | null;
+  cancelled_reason: string | null;
+  refund_status: string | null;
+  refund_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -167,7 +296,57 @@ export interface DbOrderAddress {
   country: string;
 }
 
+export interface DbOrderStatusHistory {
+  id: string;
+  order_id: string;
+  from_status: string | null;
+  to_status: string;
+  actor: string;
+  note: string | null;
+  created_at: string;
+}
+
 export interface OrderWithDetails extends DbOrder {
   items: DbOrderItem[];
   address: DbOrderAddress | null;
+  history?: DbOrderStatusHistory[];
+}
+
+export interface DbAdminUser {
+  id: string;
+  email: string;
+  name: string;
+  password_hash: string;
+  role: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbInventoryRow {
+  product_id: string;
+  size: string;
+  stock: number;
+  reserved: number;
+}
+
+export interface DbAuditLog {
+  id: string;
+  actor: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  before_value: string | null;
+  after_value: string | null;
+  metadata: string | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface DbProductOverride {
+  product_id: string;
+  is_active: number;
+  custom_description: string | null;
+  updated_by: string | null;
+  updated_at: string;
 }
