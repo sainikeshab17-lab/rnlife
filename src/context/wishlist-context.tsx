@@ -14,7 +14,7 @@ interface WishlistContextType {
 
 const WishlistContext = createContext<WishlistContextType | undefined>(undefined);
 
-const WISHLIST_STORAGE_KEY = "rnl_wishlist_items_v1";
+const WISHLIST_STORAGE_KEY = "rnl_wishlist_items_v2";
 
 export function WishlistProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<WishlistItem[]>([]);
@@ -26,17 +26,16 @@ export function WishlistProvider({ children }: { children: React.ReactNode }) {
       if (stored) {
         setItems(JSON.parse(stored));
       } else {
-        // Sample item
+        // Sample item from actual catalogue
         setItems([
           {
-            productId: "prod-2",
-            productSlug: "metropolis-archive-boxy-tee",
-            productName: "METROPOLIS ARCHIVE BOXY TEE",
-            price: 1599,
-            image:
-              "https://images.unsplash.com/photo-1576566588028-4147f3842f27?auto=format&fit=crop&w=600&q=80",
-            fit: "Oversized",
-            color: "Acid Washed Charcoal",
+            productId: "rnl-design-02",
+            productSlug: "rightnowlife-design-02",
+            productName: "DESIGN 02 — GRAPHIC RAGLAN TEE",
+            price: 999,
+            image: "/products/design_02_front.png",
+            fit: "Regular",
+            color: "As pictured",
           },
         ]);
       }

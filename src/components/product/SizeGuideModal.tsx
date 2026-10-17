@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { X, Ruler, CheckCircle } from "lucide-react";
 import { TShirtFit } from "@/types";
 import { SIZE_CHART_OVERSIZED, SIZE_CHART_RELAXED, SIZE_CHART_REGULAR } from "@/data/mock-data";
@@ -17,6 +17,41 @@ export function SizeGuideModal({
   initialFit = "Oversized",
 }: SizeGuideModalProps) {
   const [selectedFit, setSelectedFit] = useState<TShirtFit>(initialFit);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const frame = window.requestAnimationFrame(() => {
+      modalRef.current?.querySelector<HTMLElement>("button")?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !modalRef.current) return;
+      const focusable = Array.from(modalRef.current.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled)"));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = "";
+      previousFocus?.focus();
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -33,11 +68,9 @@ export function SizeGuideModal({
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
-      }}
     >
       <div
+        ref={modalRef}
         className="relative w-full max-w-2xl bg-white border border-neutral-200 p-6 sm:p-8 animate-in fade-in duration-200"
         role="dialog"
         aria-modal="true"
@@ -80,21 +113,7 @@ export function SizeGuideModal({
 
         {/* Fit Explanation Notice */}
         <div className="mt-4 p-3 bg-[#F5F4F0] border-l-2 border-black text-xs text-neutral-700 leading-relaxed">
-          {selectedFit === "Oversized" && (
-            <p>
-              <strong>Oversized Fit:</strong> Intentionally cut with exaggerated dropped shoulders, wider sleeves, and a boxy torso drape. We recommend choosing your normal size for the intended streetwear silhouette.
-            </p>
-          )}
-          {selectedFit === "Relaxed" && (
-            <p>
-              <strong>Relaxed Fit:</strong> Cut with subtle ease through the chest and shoulders for everyday comfort without appearing excessively bag-like. Fits true to size.
-            </p>
-          )}
-          {selectedFit === "Regular" && (
-            <p>
-              <strong>Regular Fit:</strong> Classic architectural cut with standard shoulder seams and a clean straight hem. Ideal for minimalist layering.
-            </p>
-          )}
+          <p><strong>{selectedFit} fit.</strong> Measurements below are garment dimensions in centimeters. Compare them with a tee that fits you well.</p>
         </div>
 
         {/* Measurement Table in CM */}

@@ -1,42 +1,31 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { BRAND_INFO } from "@/data/mock-data";
-import { ChevronRight, X } from "lucide-react";
+import { ArrowRight, X } from "lucide-react";
 
 export function AnnouncementBar() {
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % BRAND_INFO.announcements.length);
-    }, 4500);
-    return () => clearInterval(timer);
-  }, []);
 
   if (!isVisible) return null;
 
   return (
-    <div className="bg-[#111111] text-white border-b border-neutral-800 text-[11px] uppercase tracking-widest font-medium py-1.5 px-4 transition-all">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="hidden md:block w-8" />
-
-        <div className="flex-1 text-center flex items-center justify-center gap-2 overflow-hidden">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#FFB900]" />
+    <div className="bg-[#F5F4F0] text-[#111111] border-b border-[#E5E5E5] text-[10px] uppercase tracking-wider font-semibold py-1 px-4">
+      <div className="max-w-7xl mx-auto flex items-center justify-center relative min-h-6">
+        <div className="flex items-center justify-center gap-2 overflow-hidden text-center">
           <Link
             href="/collections/new-drops"
-            className="hover:underline flex items-center gap-1 transition-opacity duration-300 text-neutral-200 hover:text-white"
+            className="hover:text-[#0876A8] flex items-center gap-1.5 transition-colors"
           >
-            <span>{BRAND_INFO.announcements[currentIndex]}</span>
-            <ChevronRight className="w-3 h-3 text-[#FFB900]" />
+            <span>{BRAND_INFO.announcements[0]}</span>
+            <ArrowRight className="w-3 h-3 text-[#0876A8] shrink-0" />
           </Link>
         </div>
 
         <button
           onClick={() => setIsVisible(false)}
-          className="text-neutral-400 hover:text-white transition-colors p-1"
+          className="absolute right-0 text-neutral-500 hover:text-[#111111] transition-colors p-1"
           aria-label="Dismiss announcement"
         >
           <X className="w-3.5 h-3.5" />

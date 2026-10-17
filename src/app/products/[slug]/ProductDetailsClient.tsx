@@ -151,14 +151,18 @@ export function ProductDetailsClient({
               <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Fit</span>
               <span className="mt-1 block font-medium">{product.fit}</span>
             </div>
-            <div>
-              <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Fabric weight</span>
-              <span className="mt-1 flex items-center gap-1.5 font-medium"><Layers className="h-3.5 w-3.5" />{product.gsm} GSM</span>
-            </div>
-            <div className="col-span-2">
-              <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Composition</span>
-              <span className="mt-1 block font-medium">{product.fabricComposition}</span>
-            </div>
+            {product.gsm > 0 && (
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Fabric weight</span>
+                <span className="mt-1 flex items-center gap-1.5 font-medium"><Layers className="h-3.5 w-3.5" />{product.gsm} GSM</span>
+              </div>
+            )}
+            {product.fabricComposition !== "Fabric details coming soon" && (
+              <div className="col-span-2">
+                <span className="block text-[10px] uppercase tracking-wider text-[#858585]">Composition</span>
+                <span className="mt-1 block font-medium">{product.fabricComposition}</span>
+              </div>
+            )}
           </div>
 
           {/* Accordion Sections */}
@@ -185,10 +189,12 @@ export function ProductDetailsClient({
             >
               <dl className="space-y-1.5 text-[#111111]">
                 <SpecRow label="Fabric" value={product.fabricComposition} />
-                <SpecRow
-                  label="Fabric Weight"
-                  value={`${product.gsm} GSM`}
-                />
+                {product.gsm > 0 && (
+                  <SpecRow
+                    label="Fabric Weight"
+                    value={`${product.gsm} GSM`}
+                  />
+                )}
                 {product.printTechnique && (
                   <SpecRow
                     label="Print Technique"

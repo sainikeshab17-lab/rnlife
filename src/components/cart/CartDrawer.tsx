@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, ShieldCheck, Tag } from "lucide-react";
@@ -25,6 +25,8 @@ export function CartDrawer() {
   } = useCart();
 
   const [promoInput, setPromoInput] = useState("");
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     if (isDrawerOpen) {
@@ -37,6 +39,48 @@ export function CartDrawer() {
     };
   }, [isDrawerOpen]);
 
+  useEffect(() => {
+    if (isDrawerOpen) {
+      setIsMounted(true);
+      return;
+    }
+    const timeout = window.setTimeout(() => setIsMounted(false), 240);
+    return () => window.clearTimeout(timeout);
+  }, [isDrawerOpen]);
+
+  useEffect(() => {
+    if (!isDrawerOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const focusDrawer = () => drawerRef.current?.querySelector<HTMLElement>("button, a, input")?.focus();
+    const frame = window.requestAnimationFrame(focusDrawer);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeDrawer();
+        return;
+      }
+      if (event.key !== "Tab" || !drawerRef.current) return;
+      const focusable = Array.from(
+        drawerRef.current.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])"),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [isDrawerOpen, closeDrawer]);
+
   const handleApplyPromo = (e: React.FormEvent) => {
     e.preventDefault();
     if (promoInput.trim()) {
@@ -45,27 +89,36 @@ export function CartDrawer() {
     }
   };
 
-  if (!isDrawerOpen) return null;
+  if (!isMounted) return null;
 
   const freeShippingThreshold = 1499;
   const progressToFreeShipping = Math.min(100, Math.round((subtotal / freeShippingThreshold) * 100));
   const amountRemainingForFreeShipping = Math.max(0, freeShippingThreshold - subtotal);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
+    <div className={`fixed inset-0 z-50 overflow-hidden transition-opacity duration-200 ${isDrawerOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
       {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity animate-in fade-in duration-300"
+      <button
+        type="button"
+        aria-label="Close shopping bag"
+        className="fixed inset-0 border-0 bg-black/50 p-0 backdrop-blur-[1px]"
         onClick={closeDrawer}
       />
 
       <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
-        <div className="w-screen max-w-md bg-white border-l border-neutral-200 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+        <div
+          ref={drawerRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cart-drawer-title"
+          tabIndex={-1}
+          className={`w-screen max-w-md bg-white border-l border-neutral-200 flex flex-col transition-transform duration-200 ease-out ${isDrawerOpen ? "translate-x-0" : "translate-x-full"}`}
+        >
           {/* Header */}
           <div className="p-4 sm:p-5 border-b border-neutral-200 flex items-center justify-between bg-white">
             <div className="flex items-center gap-2">
               <ShoppingBag className="w-5 h-5 text-neutral-900" />
-              <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
+              <h2 id="cart-drawer-title" className="text-sm font-bold uppercase tracking-wider text-neutral-900">
                 Your Bag ({itemCount})
               </h2>
             </div>

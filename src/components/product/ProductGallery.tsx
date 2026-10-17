@@ -78,7 +78,7 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
             src={currentImage}
             alt={`${productName} — View ${selectedIdx + 1}`}
             fill
-            priority
+            loading="eager"
             className={`gallery-crossfade object-contain ${isTransitioning ? "opacity-90" : "opacity-100"}`}
             onClick={() => setIsLightboxOpen(true)}
             sizes="(max-width: 1024px) 100vw, 58vw"

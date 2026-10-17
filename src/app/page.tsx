@@ -5,7 +5,7 @@ import { StoreLayout } from "@/components/layout/StoreLayout";
 import { ProductGrid } from "@/components/product/ProductGrid";
 import { BRAND_INFO, COLLECTIONS, PRODUCTS } from "@/data/mock-data";
 
-const newArrivals = PRODUCTS.filter((product) => product.isNewDrop).slice(0, 4);
+const allProducts = PRODUCTS;
 const featuredCollections = COLLECTIONS.slice(0, 3).map((collection) => ({
   ...collection,
   image: PRODUCTS.find((product) => product.collectionSlug === collection.slug)?.colors[0]?.images[0],
@@ -15,6 +15,7 @@ const heroProduct = PRODUCTS[0];
 export default function HomePage() {
   return (
     <StoreLayout>
+      {/* ── HERO ── */}
       <section className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 md:grid-cols-[.9fr_1.1fr] md:items-center md:gap-14 md:py-12 lg:px-8">
         <div className="order-2 md:order-1">
           <p className="mb-4 text-[10px] font-bold uppercase tracking-[.18em] text-neutral-500">
@@ -24,13 +25,13 @@ export default function HomePage() {
             Wear what<br />you feel.
           </h1>
           <p className="mt-5 max-w-md text-sm leading-6 text-neutral-600">
-            T-shirts for the person you are, right now. Find your fit in our latest drop.
+            T-shirts for the person you are, right now. 8 designs. One price: ₹999.
           </p>
           <Link
             href="/shop"
             className="btn-morph btn-yellow mt-7 inline-flex min-h-12 items-center gap-4 px-5 text-xs font-bold uppercase tracking-wider"
           >
-            Shop now <ArrowRight className="h-4 w-4" />
+            Shop all designs <ArrowRight className="h-4 w-4" />
           </Link>
           <p className="mt-7 text-[10px] font-mono uppercase tracking-widest text-neutral-500">
             01 — {heroProduct.name}
@@ -44,7 +45,7 @@ export default function HomePage() {
             src={heroProduct.colors[0].images[0]}
             alt={heroProduct.name}
             fill
-            priority
+            loading="eager"
             className="img-morph object-cover object-center"
             sizes="(max-width: 768px) 100vw, 55vw"
           />
@@ -54,6 +55,7 @@ export default function HomePage() {
         </Link>
       </section>
 
+      {/* ── COLLECTIONS ── */}
       <section id="collections" className="border-y border-[#E5E5E5] bg-[#F5F4F0]">
         <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 md:py-12 lg:px-8">
           <div className="mb-6 flex items-end justify-between gap-4">
@@ -101,21 +103,25 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="new-arrivals" className="mx-auto max-w-7xl px-4 py-12 sm:px-6 md:py-16 lg:px-8">
-        <div className="mb-7 flex items-end justify-between gap-4">
+      {/* ── ALL DESIGNS ── */}
+      <section id="all-designs" className="mx-auto max-w-7xl px-4 py-12 sm:px-6 md:py-16 lg:px-8">
+        <div className="mb-8 flex items-end justify-between gap-4">
           <div>
             <p className="mb-1 text-[10px] font-mono font-semibold uppercase tracking-widest text-neutral-500">
-              Just added
+              The full collection
             </p>
-            <h2 className="text-2xl font-black uppercase tracking-tight sm:text-3xl">New arrivals</h2>
+            <h2 className="text-2xl font-black uppercase tracking-tight sm:text-3xl">
+              All designs — ₹999 each
+            </h2>
           </div>
-          <Link href="/collections/new-drops" className="text-xs font-semibold text-[#0876A8] hover:underline">
-            Shop new drops <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
+          <Link href="/shop" className="text-xs font-semibold text-[#0876A8] hover:underline">
+            Shop all <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
           </Link>
         </div>
-        <ProductGrid products={newArrivals} columns={4} />
+        <ProductGrid products={allProducts} columns={4} />
       </section>
 
+      {/* ── BRAND STATEMENT ── */}
       <section className="border-y border-[#E5E5E5] bg-[#F5F4F0]">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-10 sm:px-6 md:flex-row md:items-center md:justify-between md:py-12 lg:px-8">
           <div className="max-w-2xl">

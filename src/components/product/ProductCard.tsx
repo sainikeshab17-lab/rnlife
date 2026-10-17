@@ -73,7 +73,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
     >
       {/* Image Container */}
       <div className="relative aspect-[3/4] w-full bg-[#F5F4F0] overflow-hidden">
-        <Link href={`/products/${product.slug}`} className="block w-full h-full">
+        <Link href={`/products/${product.slug}`} className="relative block w-full h-full">
           {/* Primary image */}
           <Image
             src={primaryImage}
@@ -195,10 +195,10 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
 
       {/* Product Info */}
       <div className="pt-3 pb-2 flex flex-col gap-1.5">
-        {/* Fit & GSM */}
+        {/* Fit & Specifications */}
         <div className="flex items-center justify-between text-[10px] text-[#858585] uppercase tracking-wider font-semibold">
           <span>{product.fit} Fit</span>
-          <span>{product.gsm} GSM</span>
+          <span>{product.gsm > 0 ? `${product.gsm} GSM` : product.sleeve}</span>
         </div>
 
         {/* Title */}

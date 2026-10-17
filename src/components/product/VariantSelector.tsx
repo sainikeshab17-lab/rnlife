@@ -36,7 +36,7 @@ export function VariantSelector({
   const [sizeError, setSizeError] = useState(false);
   const [isSizeGuideOpen, setIsSizeGuideOpen] = useState(false);
 
-  const { addToBag } = useCart();
+  const { addToBag, closeDrawer } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { toast } = useToast();
   const router = useRouter();
@@ -89,6 +89,7 @@ export function VariantSelector({
     }
 
     handleAddToBag();
+    closeDrawer();
     router.push("/checkout");
   };
 
@@ -110,9 +111,11 @@ export function VariantSelector({
         <span className="px-2 py-0.5 bg-[#111111] text-white text-[10px] uppercase tracking-widest font-bold">
           {product.fit} FIT
         </span>
-        <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
-          {product.gsm} GSM
-        </span>
+        {product.gsm > 0 && (
+          <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
+            {product.gsm} GSM
+          </span>
+        )}
         <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
           {product.sleeve}
         </span>
@@ -237,13 +240,8 @@ export function VariantSelector({
           </div>
         )}
 
-        {/* Fit note */}
         <p className="text-[11px] text-[#858585] leading-normal pt-0.5">
-          {product.fit === "Oversized"
-            ? "Silhouette: Exaggerated drop shoulders & wide sleeves. Order your standard size for the intended boxy drape."
-            : product.fit === "Relaxed"
-            ? "Silhouette: Relaxed chest cut with standard drop. Fits true to size."
-            : "Silhouette: Classic regular architectural fit. True to size."}
+          {product.fit} fit. Use the size guide to compare garment measurements.
         </p>
       </div>
 

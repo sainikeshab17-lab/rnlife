@@ -29,8 +29,8 @@ export default function AddProductPage() {
   const [collection, setCollection] = useState("new-drops");
   const [tagline, setTagline] = useState("");
   const [description, setDescription] = useState("");
-  const [price, setPrice] = useState("1499");
-  const [compareAtPrice, setCompareAtPrice] = useState("1999");
+  const [price, setPrice] = useState("999");
+  const [compareAtPrice, setCompareAtPrice] = useState("");
   const [fit, setFit] = useState<TShirtFit>("Oversized");
   const [gsm, setGsm] = useState("260");
   const [sleeve, setSleeve] = useState("Drop Shoulder");
@@ -155,7 +155,7 @@ export default function AddProductPage() {
                   required
                   value={name}
                   onChange={(e) => handleNameChange(e.target.value)}
-                  placeholder="e.g. ECHO OF REALITY HEAVYWEIGHT TEE"
+                  placeholder="e.g. DESIGN 09 — GRAPHIC RAGLAN TEE"
                   className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-bold uppercase"
                 />
               </div>
@@ -169,7 +169,7 @@ export default function AddProductPage() {
                     type="text"
                     value={slug}
                     onChange={(e) => setSlug(e.target.value)}
-                    placeholder="echo-of-reality-heavyweight-tee"
+                    placeholder="rightnowlife-design-09"
                     className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-mono"
                   />
                 </div>

@@ -36,7 +36,7 @@ interface CartContextType {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-const CART_STORAGE_KEY = "rnl_bag_items_v1";
+const CART_STORAGE_KEY = "rnl_bag_items_v2";
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
@@ -52,20 +52,19 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (stored) {
         setItems(JSON.parse(stored));
       } else {
-        // Pre-populate with 1 realistic initial product for immediate preview
+        // Pre-populate with 1 realistic initial product from the actual catalogue
         const initialItem: CartItem = {
           id: "rnl-init-1",
-          productId: "prod-1",
-          productSlug: "echo-of-reality-heavyweight-tee",
-          productName: "ECHO OF REALITY HEAVYWEIGHT TEE",
-          color: "Pitch Black",
+          productId: "rnl-design-01",
+          productSlug: "rightnowlife-design-01",
+          productName: "DESIGN 01 — GRAPHIC RAGLAN TEE",
+          color: "As pictured",
           size: "L",
-          price: 1499,
-          image:
-            "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=600&q=80",
+          price: 999,
+          image: "/products/design_01_front.png",
           quantity: 1,
-          fit: "Oversized",
-          sku: "RNL-TEE-001-BLK-L",
+          fit: "Regular",
+          sku: "RNL-DESIGN-01-L",
         };
         setItems([initialItem]);
       }

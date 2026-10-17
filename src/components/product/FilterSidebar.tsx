@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Filter, X, ChevronDown, Check } from "lucide-react";
 import { TShirtFit, TShirtSize } from "@/types";
 
@@ -29,6 +29,42 @@ export function FilterSidebar({
   totalCount,
 }: FilterSidebarProps) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const mobileFilterPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isMobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    document.body.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => {
+      mobileFilterPanelRef.current?.querySelector<HTMLElement>("button, input, select")?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMobileOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !mobileFilterPanelRef.current) return;
+      const focusable = Array.from(mobileFilterPanelRef.current.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled)"));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [isMobileOpen]);
 
   const collections = [
     { label: "All Collections", value: "all" },
@@ -307,7 +343,7 @@ export function FilterSidebar({
             className="fixed inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setIsMobileOpen(false)}
           />
-          <div className="fixed inset-y-0 right-0 w-4/5 max-w-sm bg-white shadow-2xl flex flex-col p-6 animate-in slide-in-from-right duration-300">
+          <div ref={mobileFilterPanelRef} role="dialog" aria-modal="true" aria-label="Product filters" className="fixed inset-y-0 right-0 w-4/5 max-w-sm bg-white shadow-xl flex flex-col p-6 animate-in slide-in-from-right duration-300">
             <div className="flex items-center justify-between pb-4 border-b border-neutral-200">
               <span className="text-sm font-bold uppercase tracking-wider text-black">
                 Filters & Refinements
