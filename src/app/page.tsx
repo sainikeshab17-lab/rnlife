@@ -42,11 +42,11 @@ export default function HomePage() {
           className="group relative order-1 aspect-[4/3] overflow-hidden bg-[#F5F4F0] md:order-2 md:aspect-[5/4]"
         >
           <Image
-            src={heroProduct.colors[0].images[0]}
-            alt={heroProduct.name}
+  src="/images/hero-raglan-campaign.png"
+  alt="RIGHTNOWLIFE Phirse bolo raglan T-shirt campaign"
             fill
             loading="eager"
-            className="img-morph object-cover object-center"
+            className="img-morph object-contain object-center"
             sizes="(max-width: 768px) 100vw, 55vw"
           />
           <span className="absolute bottom-3 right-3 bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-wider">
