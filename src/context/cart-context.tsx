@@ -149,21 +149,23 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const removeFromBag = useCallback(
-    (itemId: string) => {
-      setItems((prev) => {
-        const target = prev.find((i) => i.id === itemId);
-        if (target) {
-          toast({
-            type: "info",
-            title: "Removed from Bag",
-            message: target.productName,
-          });
-        }
-        return prev.filter((i) => i.id !== itemId);
+  (itemId: string) => {
+    const target = items.find((item) => item.id === itemId);
+
+    // Update cart state without side effects inside the updater.
+    setItems((prev) => prev.filter((item) => item.id !== itemId));
+
+    // Show the toast outside the state updater.
+    if (target) {
+      toast({
+        type: "info",
+        title: "Removed from Bag",
+        message: target.productName,
       });
-    },
-    [toast]
-  );
+    }
+  },
+  [items, toast]
+);
 
   const applyCoupon = useCallback(
     (code: string): boolean => {
