@@ -71,7 +71,7 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
       </div>}
 
       {/* Main Image Stage */}
-      <div className="relative flex-1 aspect-[4/5] bg-[#F5F4F0] overflow-hidden group">
+      <div className="relative flex-1 aspect-[4/5] bg-[#FFFFFF] overflow-hidden group">
         {currentImage ? (
           <Image
             key={currentImage}

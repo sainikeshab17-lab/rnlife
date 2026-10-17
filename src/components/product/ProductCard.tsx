@@ -72,7 +72,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
       }}
     >
       {/* Image Container */}
-      <div className="relative aspect-[3/4] w-full bg-[#F5F4F0] overflow-hidden">
+      <div className="relative aspect-[3/4] w-full bg-[#FFFFFF] overflow-hidden">
         <Link href={`/products/${product.slug}`} className="relative block w-full h-full">
           {/* Primary image */}
           <Image
@@ -159,7 +159,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
                     key={size}
                     onClick={(e) => handleQuickAdd(size, e)}
                     disabled={product.stock <= 0}
-                    className="py-1.5 text-[11px] font-bold text-[#111111] bg-[#F5F4F0] hover:bg-[#FFB900] hover:text-[#111111] transition-colors border border-[#E5E5E5]"
+                    className="py-1.5 text-[11px] font-bold text-[#111111] bg-[#FFFFFF] hover:bg-[#FFB900] hover:text-[#111111] transition-colors border border-[#E5E5E5]"
                   >
                     {size}
                   </button>
@@ -176,7 +176,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
               className={`w-full py-2.5 text-[11px] uppercase tracking-widest font-bold flex items-center justify-center gap-1.5 transition-all duration-200 ${
                 justAdded
                   ? "bg-[#079447] text-white"
-                  : "bg-[#FFB900] text-[#111111] hover:bg-[#E5A500]"
+                  : "bg-[#FFB900] text-[#111111] hover:bg-[#FFB900]"
               }`}
             >
               {justAdded ? (

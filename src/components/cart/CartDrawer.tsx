@@ -132,7 +132,7 @@ export function CartDrawer() {
           </div>
 
           {/* Free Shipping Progress Meter */}
-          <div className="bg-[#F5F4F0] px-4 py-3 border-b border-[#E5E5E5] text-xs">
+          <div className="bg-[#FFFFFF] px-4 py-3 border-b border-[#E5E5E5] text-xs">
             {amountRemainingForFreeShipping > 0 ? (
               <p className="text-[#858585]">
                 Add <span className="font-bold text-[#111111]">{formatINR(amountRemainingForFreeShipping)}</span> more for{" "}

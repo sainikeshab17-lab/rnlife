@@ -11,7 +11,7 @@ export function AnnouncementBar() {
   if (!isVisible) return null;
 
   return (
-    <div className="bg-[#F5F4F0] text-[#111111] border-b border-[#E5E5E5] text-[10px] uppercase tracking-wider font-semibold py-1 px-4">
+    <div className="bg-[#FFFFFF] text-[#111111] border-b border-[#E5E5E5] text-[10px] uppercase tracking-wider font-semibold py-1 px-4">
       <div className="max-w-7xl mx-auto flex items-center justify-center relative min-h-6">
         <div className="flex items-center justify-center gap-2 overflow-hidden text-center">
           <Link

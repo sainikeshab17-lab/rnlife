@@ -242,7 +242,7 @@ export function Navbar() {
                       </div>
                     )}
 
-                    <div className="border-t border-neutral-100 px-4 py-2 bg-[#F5F4F0]">
+                    <div className="border-t border-neutral-100 px-4 py-2 bg-[#FFFFFF]">
                       <p className="text-[10px] uppercase tracking-wider font-bold text-neutral-400 mb-1.5">
                         Internal Staff Portals
                       </p>

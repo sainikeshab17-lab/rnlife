@@ -6,16 +6,14 @@
   --color-brand-green: #079447;
   --color-brand-red: #F5141C;
   --color-brand-black: #111111;
-  --color-brand-white: #ffffff;
-  --color-brand-cream: #F5F4F0;
-  --color-brand-gray: #858585;
-  --color-brand-border: #E5E5E5;
+  --color-brand-white: #FFFFFF;
+  --font-sans: var(--font-inter);
 }
 
 :root {
-  --background: #ffffff;
+  --background: #FFFFFF;
   --foreground: #111111;
-  --editorial-bg: #F5F4F0;
+  --editorial-bg: #FFFFFF;
   --border-color: #E5E5E5;
   --motion-fast: 180ms;
   --motion-standard: 260ms;
@@ -30,14 +28,22 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1,
+h1 {
+  font-family: var(--font-bebas-neue), sans-serif;
+  font-weight: 400;
+}
+
 h2,
 h3,
 h4,
 h5,
-h6,
-.font-editorial {
-  font-family: var(--font-manrope), sans-serif;
+h6 {
+  font-family: var(--font-space-grotesk), sans-serif;
+}
+
+blockquote.font-editorial {
+  font-family: var(--font-bebas-neue), sans-serif;
+  font-weight: 400;
 }
 
 /* Custom scrollbar */
@@ -46,7 +52,7 @@ h6,
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #F5F4F0;
+  background: #FFFFFF;
 }
 ::-webkit-scrollbar-thumb {
   background: #d4d4d4;
@@ -61,6 +67,10 @@ h6,
   letter-spacing: -0.03em;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+h1.font-editorial {
+  font-weight: 400;
 }
 
 .tracking-tight-custom {
@@ -104,7 +114,7 @@ h6,
   color: #111111;
 }
 .btn-yellow:hover {
-  background-color: #E5A500;
+  background-color: #FFB900;
 }
 
 /* Dark CTA Specific */
@@ -113,7 +123,7 @@ h6,
   color: #FFFFFF;
 }
 .btn-dark:hover {
-  background-color: #000000;
+  background-color: #111111;
 }
 
 /* --- Card Morph --- */

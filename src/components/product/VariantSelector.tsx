@@ -112,14 +112,14 @@ export function VariantSelector({
           {product.fit} FIT
         </span>
         {product.gsm > 0 && (
-          <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
+          <span className="px-2 py-0.5 bg-[#FFFFFF] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
             {product.gsm} GSM
           </span>
         )}
-        <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
+        <span className="px-2 py-0.5 bg-[#FFFFFF] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
           {product.sleeve}
         </span>
-        <span className="px-2 py-0.5 bg-[#F5F4F0] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
+        <span className="px-2 py-0.5 bg-[#FFFFFF] text-[#111111] text-[10px] uppercase tracking-wider font-semibold border border-[#E5E5E5]">
           {product.neck}
         </span>
       </div>
@@ -254,7 +254,7 @@ export function VariantSelector({
           <button
             onClick={() => setQuantity(Math.max(1, quantity - 1))}
             disabled={!isInStock}
-            className="px-3 py-2 text-sm hover:bg-[#F5F4F0] text-[#111111] transition-colors"
+            className="px-3 py-2 text-sm hover:bg-[#FFFFFF] text-[#111111] transition-colors"
             aria-label="Decrease quantity"
           >
             −
@@ -265,7 +265,7 @@ export function VariantSelector({
           <button
             onClick={() => setQuantity(Math.min(10, quantity + 1))}
             disabled={!isInStock}
-            className="px-3 py-2 text-sm hover:bg-[#F5F4F0] text-[#111111] transition-colors"
+            className="px-3 py-2 text-sm hover:bg-[#FFFFFF] text-[#111111] transition-colors"
             aria-label="Increase quantity"
           >
             +

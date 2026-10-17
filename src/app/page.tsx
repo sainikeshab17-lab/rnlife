@@ -39,7 +39,7 @@ export default function HomePage() {
         </div>
         <Link
           href={`/products/${heroProduct.slug}`}
-          className="group relative order-1 aspect-[4/3] overflow-hidden bg-[#F5F4F0] md:order-2 md:aspect-[5/4]"
+          className="group relative order-1 aspect-[4/3] overflow-hidden bg-[#FFFFFF] md:order-2 md:aspect-[5/4]"
         >
           <Image
   src="/images/hero-raglan-campaign.png"
@@ -56,7 +56,7 @@ export default function HomePage() {
       </section>
 
       {/* ── COLLECTIONS ── */}
-      <section id="collections" className="border-y border-[#E5E5E5] bg-[#F5F4F0]">
+      <section id="collections" className="border-y border-[#E5E5E5] bg-[#FFFFFF]">
         <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 md:py-12 lg:px-8">
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
@@ -122,7 +122,7 @@ export default function HomePage() {
       </section>
 
       {/* ── BRAND STATEMENT ── */}
-      <section className="border-y border-[#E5E5E5] bg-[#F5F4F0]">
+      <section className="border-y border-[#E5E5E5] bg-[#FFFFFF]">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-10 sm:px-6 md:flex-row md:items-center md:justify-between md:py-12 lg:px-8">
           <div className="max-w-2xl">
             <p className="mb-2 text-[10px] font-mono font-semibold uppercase tracking-widest text-neutral-500">

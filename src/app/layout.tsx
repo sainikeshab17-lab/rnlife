@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Manrope } from "next/font/google";
+import { Bebas_Neue, Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/context/providers";
 
@@ -9,9 +9,16 @@ const inter = Inter({
   display: "swap",
 });
 
-const manrope = Manrope({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-manrope",
+  variable: "--font-space-grotesk",
+  display: "swap",
+});
+
+const bebasNeue = Bebas_Neue({
+  weight: "400",
+  subsets: ["latin"],
+  variable: "--font-bebas-neue",
   display: "swap",
 });
 
@@ -35,7 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${manrope.variable} h-full antialiased`}>
+    <html lang="en" className={`${inter.variable} ${spaceGrotesk.variable} ${bebasNeue.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-white text-[#111111]">
         <Providers>{children}</Providers>
       </body>

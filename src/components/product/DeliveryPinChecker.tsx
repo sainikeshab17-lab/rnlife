@@ -63,7 +63,7 @@ export function DeliveryPinChecker() {
       {result && (
         <div id="delivery-pin-result" className="mt-2.5" role="status" aria-live="polite">
           {result.valid ? (
-            <div className="p-2.5 bg-[#F5F4F0] border border-neutral-200 text-xs">
+            <div className="p-2.5 bg-[#FFFFFF] border border-neutral-200 text-xs">
               <p className="font-medium text-neutral-900 flex items-start gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-600" />
                 <span>{result.message}</span>

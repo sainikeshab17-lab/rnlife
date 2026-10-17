@@ -66,7 +66,7 @@ export function AccountLayout({ children, title, subtitle }: AccountLayoutProps)
           {/* Navigation Sidebar (3 cols) */}
           <aside className="lg:col-span-3">
             <div className="border border-neutral-200 bg-white p-4 space-y-1 shadow-sm">
-              <div className="p-3 bg-[#F5F4F0] border border-neutral-200 mb-3">
+              <div className="p-3 bg-[#FFFFFF] border border-neutral-200 mb-3">
                 <p className="text-xs font-bold uppercase truncate text-black">{user?.name}</p>
                 <p className="text-[11px] text-neutral-500 truncate">{user?.email}</p>
                 <span className="inline-block mt-1 text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 bg-neutral-200 text-neutral-700">

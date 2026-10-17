@@ -112,7 +112,7 @@ export function SizeGuideModal({
         </div>
 
         {/* Fit Explanation Notice */}
-        <div className="mt-4 p-3 bg-[#F5F4F0] border-l-2 border-black text-xs text-neutral-700 leading-relaxed">
+        <div className="mt-4 p-3 bg-[#FFFFFF] border-l-2 border-black text-xs text-neutral-700 leading-relaxed">
           <p><strong>{selectedFit} fit.</strong> Measurements below are garment dimensions in centimeters. Compare them with a tee that fits you well.</p>
         </div>
 
