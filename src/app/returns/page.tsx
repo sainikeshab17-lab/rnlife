@@ -58,11 +58,28 @@ export default function ReturnsPage() {
             </p>
           </div>
 
+          <div className="p-5 bg-black text-white space-y-3">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-[#FFB900]">
+              Ready to submit a Return or Size Exchange?
+            </h3>
+            <p className="text-xs text-neutral-300">
+              You can easily initiate a return or exchange request directly from your verified order timeline within 7 days of delivery.
+            </p>
+            <div className="pt-2">
+              <Link
+                href="/account/orders"
+                className="inline-block px-6 py-2.5 bg-[#FFB900] text-black text-xs uppercase tracking-widest font-black hover:bg-white transition-colors"
+              >
+                Go to My Orders &rarr;
+              </Link>
+            </div>
+          </div>
+
           <div className="pt-4 border-t border-neutral-200 flex items-center justify-between">
             <span className="text-xs text-neutral-500">Need help with an exchange?</span>
             <Link
               href="/contact"
-              className="px-6 py-2.5 bg-black text-white text-xs uppercase tracking-widest font-bold"
+              className="px-6 py-2.5 bg-neutral-200 hover:bg-neutral-300 text-black text-xs uppercase tracking-widest font-bold"
             >
               Contact Support
             </Link>

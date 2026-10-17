@@ -163,5 +163,6 @@ export function calculateTrustedOrderPricing(
 export function generateOrderNumber(): string {
   const datePrefix = new Date().toISOString().slice(2, 10).replace(/-/g, "");
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  return `RNL-${datePrefix}-${randomSuffix}`;
+  const entropy = Math.floor(100 + Math.random() * 900);
+  return `RNL-${datePrefix}-${randomSuffix}-${entropy}`;
 }

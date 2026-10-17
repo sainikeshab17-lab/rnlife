@@ -98,3 +98,65 @@ export function verifyWebhookSignature(
     return false;
   }
 }
+
+export interface CreateRefundParams {
+  paymentId: string;
+  amountPaisa?: number; // In paisa (e.g. 99900 for ₹999.00). If omitted, full refund.
+  notes?: Record<string, string>;
+  receipt?: string;
+}
+
+export interface RazorpayRefundResult {
+  success: boolean;
+  refundId?: string;
+  amount?: number;
+  status?: string;
+  error?: string;
+}
+
+/**
+ * Initiates an online refund via Razorpay Payments API
+ */
+export async function createRazorpayRefund({
+  paymentId,
+  amountPaisa,
+  notes,
+  receipt,
+}: CreateRefundParams): Promise<RazorpayRefundResult> {
+  // If running in development/test without real credentials, return safe simulated refund
+  if (
+    !process.env.RAZORPAY_KEY_SECRET ||
+    RAZORPAY_KEY_SECRET === "rzp_test_placeholder_secret"
+  ) {
+    const simRefundId = `rfnd_sim_${crypto.randomBytes(8).toString("hex")}`;
+    return {
+      success: true,
+      refundId: simRefundId,
+      amount: amountPaisa || 99900,
+      status: "processed",
+    };
+  }
+
+  try {
+    const client = getRazorpayClient();
+    const payload: any = {};
+    if (amountPaisa) payload.amount = amountPaisa;
+    if (notes) payload.notes = notes;
+    if (receipt) payload.receipt = receipt;
+
+    const refund = await (client.payments as any).refund(paymentId, payload);
+
+    return {
+      success: true,
+      refundId: refund.id,
+      amount: refund.amount,
+      status: refund.status,
+    };
+  } catch (err: any) {
+    console.error("Razorpay refund creation failed:", err);
+    return {
+      success: false,
+      error: err?.error?.description || err?.message || "Refund failed",
+    };
+  }
+}

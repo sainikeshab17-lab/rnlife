@@ -18,6 +18,7 @@ import {
   LogOut,
   FileText,
   Loader2,
+  RotateCcw,
 } from "lucide-react";
 
 interface AdminUser {
@@ -82,6 +83,8 @@ export function AdminLayout({
   const navLinks = [
     { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
     { label: "Order Operations", href: "/admin/orders", icon: ShoppingBag },
+    { label: "Returns & Exchanges", href: "/admin/returns", icon: RotateCcw },
+    { label: "Notification Queue", href: "/admin/notifications", icon: FileText },
     { label: "Warehouse Inventory", href: "/admin/inventory", icon: Boxes },
     { label: "Catalog Products", href: "/admin/products", icon: Package },
     { label: "Collections & Drops", href: "/admin/collections", icon: Layers },

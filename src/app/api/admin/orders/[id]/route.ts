@@ -27,7 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   return NextResponse.json({ order });
 }
 
-/** PATCH /api/admin/orders/[id] — update tracking info and/or notes */
+/** PATCH /api/admin/orders/[id] — update tracking info, dates, and/or notes */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -38,7 +38,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!existing) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
   const body = await req.json();
-  const { courier_name, tracking_number, tracking_url, notes } = body;
+  const {
+    courier_name,
+    tracking_number,
+    tracking_url,
+    dispatch_date,
+    estimated_delivery_date,
+    actual_delivery_date,
+    notes,
+  } = body;
+
+  const { isValidTrackingUrl } = await import("@/lib/policies");
+  if (tracking_url && !isValidTrackingUrl(tracking_url)) {
+    return NextResponse.json(
+      { error: "Invalid tracking URL: Only secure http:// and https:// links are permitted." },
+      { status: 400 }
+    );
+  }
 
   const updates: string[] = [];
   const args: (string | null)[] = [];
@@ -46,6 +62,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (courier_name !== undefined) { updates.push("courier_name = ?"); args.push(courier_name ?? null); }
   if (tracking_number !== undefined) { updates.push("tracking_number = ?"); args.push(tracking_number ?? null); }
   if (tracking_url !== undefined) { updates.push("tracking_url = ?"); args.push(tracking_url ?? null); }
+  if (dispatch_date !== undefined) { updates.push("dispatch_date = ?"); args.push(dispatch_date ?? null); }
+  if (estimated_delivery_date !== undefined) { updates.push("estimated_delivery_date = ?"); args.push(estimated_delivery_date ?? null); }
+  if (actual_delivery_date !== undefined) { updates.push("actual_delivery_date = ?"); args.push(actual_delivery_date ?? null); }
   if (notes !== undefined) { updates.push("notes = ?"); args.push(notes ?? null); }
 
   if (updates.length === 0) {
@@ -58,13 +77,42 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   db.prepare(`UPDATE orders SET ${updates.join(", ")} WHERE id = ?`).run(...args);
 
+  // If tracking number was newly added or changed, add a shipping event and queue notification
+  if (tracking_number && tracking_number !== existing.tracking_number) {
+    const { addShippingEvent } = await import("@/lib/db/orders");
+    const { sendShippingUpdateEmail } = await import("@/services/notification-service");
+
+    addShippingEvent({
+      orderId: id,
+      status: "Dispatched",
+      location: "Fulfillment Centre",
+      description: `Dispatched with ${courier_name || "Air Courier"}. AWB: ${tracking_number}`,
+      occurredAt: dispatch_date || new Date().toISOString(),
+    });
+
+    const updatedOrder = fetchOrderWithDetails(id);
+    if (updatedOrder) {
+      sendShippingUpdateEmail(
+        updatedOrder,
+        courier_name || "Express Courier",
+        tracking_number,
+        tracking_url
+      ).catch(console.error);
+    }
+  }
+
   writeAuditLog({
     actor: admin.email,
-    action: "order_tracking_updated",
+    action: "order_fulfilment_updated",
     entityType: "order",
     entityId: id,
-    before: { courier_name: existing.courier_name, tracking_number: existing.tracking_number, tracking_url: existing.tracking_url },
-    after: { courier_name, tracking_number, tracking_url },
+    before: {
+      courier_name: existing.courier_name,
+      tracking_number: existing.tracking_number,
+      tracking_url: existing.tracking_url,
+      dispatch_date: existing.dispatch_date,
+    },
+    after: { courier_name, tracking_number, tracking_url, dispatch_date },
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 

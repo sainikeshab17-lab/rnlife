@@ -7,6 +7,7 @@ import { AccountLayout } from "@/components/layout/AccountLayout";
 import { getOrderById, getOrderByNumber } from "@/lib/db/orders";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { formatINR } from "@/lib/utils";
+import { OrderActionButtons } from "@/components/order/OrderActionButtons";
 
 interface OrderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -99,18 +100,48 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
               {isPaid ? "PAYMENT PAID" : "PENDING PAYMENT"}
             </span>
             <StatusBadge status={dbOrder.order_status as any} />
+            <OrderActionButtons
+              order={dbOrder}
+              guestToken={token || dbOrder.guest_token}
+              customerEmail={email || dbOrder.customer_email}
+            />
           </div>
         </div>
 
         {/* Visual Timeline Tracker */}
         <div className="border border-[#E5E5E5] bg-white p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between pb-3 border-b border-[#E5E5E5]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#E5E5E5] gap-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111] flex items-center gap-2">
               <Truck className="w-4 h-4 text-[#079447]" /> Dispatch & Verification Status
             </h3>
-            <span className="text-xs font-mono text-[#858585]">
-              AWB: {dbOrder.razorpay_order_id ? `RNL-AIR-${dbOrder.order_number.slice(-4)}` : "ASSIGNING"}
-            </span>
+            <div className="flex items-center gap-3 text-xs">
+              {dbOrder.courier_name && (
+                <span className="font-semibold text-[#111111]">
+                  Courier: {dbOrder.courier_name}
+                </span>
+              )}
+              {dbOrder.tracking_number ? (
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[#858585]">
+                    AWB: <strong>{dbOrder.tracking_number}</strong>
+                  </span>
+                  {dbOrder.tracking_url && (
+                    <a
+                      href={dbOrder.tracking_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 bg-[#111111] text-white text-[11px] font-bold uppercase tracking-wider hover:bg-[#222222]"
+                    >
+                      Track Shipment &rarr;
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <span className="text-xs font-mono text-[#858585]">
+                  AWB: {dbOrder.razorpay_order_id ? `RNL-AIR-${dbOrder.order_number.slice(-4)}` : "ASSIGNING"}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-[#E5E5E5]">

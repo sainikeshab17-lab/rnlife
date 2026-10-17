@@ -12,6 +12,8 @@ fs.mkdirSync(outDir, { recursive: true });
 const filesToCompile = [
   { in: "src/types/index.ts", out: ".test-dist/src/types/index.js" },
   { in: "src/data/mock-data.ts", out: ".test-dist/src/data/mock-data.js" },
+  { in: "src/lib/policies.ts", out: ".test-dist/src/lib/policies.js" },
+  { in: "src/lib/shipping/provider.ts", out: ".test-dist/src/lib/shipping/provider.js" },
   { in: "src/lib/db/index.ts", out: ".test-dist/src/lib/db/index.js" },
   { in: "src/lib/db/orders.ts", out: ".test-dist/src/lib/db/orders.js" },
   { in: "src/lib/db/audit.ts", out: ".test-dist/src/lib/db/audit.js" },
@@ -20,7 +22,8 @@ const filesToCompile = [
   { in: "src/lib/razorpay.ts", out: ".test-dist/src/lib/razorpay.js" },
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
   { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" },
-  { in: "tests/admin-and-dashboard.test.mjs", out: ".test-dist/tests/admin-and-dashboard.test.mjs" }
+  { in: "tests/admin-and-dashboard.test.mjs", out: ".test-dist/tests/admin-and-dashboard.test.mjs" },
+  { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
 ];
 
 for (const f of filesToCompile) {
@@ -37,6 +40,8 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']@\/types["']/g, 'from "../types/index.js"');
   } else if (f.in.startsWith("src/lib/auth/")) {
     code = code.replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "../db/index.js"');
+  } else if (f.in.startsWith("src/lib/shipping/")) {
+    code = code.replace(/from\s+["']@\/lib\/policies["']/g, 'from "../policies.js"');
   } else if (f.in.startsWith("src/lib/db/")) {
     code = code
       .replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "./index.js"')
@@ -49,6 +54,8 @@ for (const f of filesToCompile) {
   } else if (f.in.startsWith("tests/")) {
     code = code
       .replace(/from\s+["']\.\.\/src\/services\/checkout-service\.ts["']/g, 'from "../src/services/checkout-service.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/policies\.ts["']/g, 'from "../src/lib/policies.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/shipping\/provider\.ts["']/g, 'from "../src/lib/shipping/provider.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/razorpay\.ts["']/g, 'from "../src/lib/razorpay.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/orders\.ts["']/g, 'from "../src/lib/db/orders.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/index\.ts["']/g, 'from "../src/lib/db/index.js"')
@@ -72,13 +79,21 @@ for (const f of filesToCompile) {
   }
 }
 
-console.log("Transpiled test build ready in .test-dist. Running node test suite...");
+console.log("Transpiled test build ready in .test-dist. Running node test suite sequentially...");
 try {
-  execSync("node --test .test-dist/tests/checkout-and-payment.test.mjs .test-dist/tests/admin-and-dashboard.test.mjs", {
+  execSync("node --test .test-dist/tests/checkout-and-payment.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
-  console.log("\nAll automated tests (Phase 2 + Phase 3) passed successfully!");
+  execSync("node --test .test-dist/tests/admin-and-dashboard.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --test .test-dist/tests/shipping-returns-refunds.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  console.log("\nAll automated tests (Phase 2 + Phase 3 + Phase 4) passed successfully!");
 } catch (e) {
   console.error("Test execution failed:", e.message);
   process.exit(1);

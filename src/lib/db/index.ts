@@ -236,6 +236,143 @@ function runMigrations(db: DatabaseSync) {
       updated_at TEXT NOT NULL
     );
   `);
+
+  // Migration 008 (Phase 4): Detailed Shipping & Fulfilment Dates
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN dispatch_date TEXT;`);
+  } catch { /* column exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN estimated_delivery_date TEXT;`);
+  } catch { /* column exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN actual_delivery_date TEXT;`);
+  } catch { /* column exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN cancellation_requested INTEGER DEFAULT 0;`);
+  } catch { /* column exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN cancellation_requested_at TEXT;`);
+  } catch { /* column exists */ }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN cancellation_reason TEXT;`);
+  } catch { /* column exists */ }
+
+  // Migration 009 (Phase 4): Shipping Events / Tracking History
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS shipping_events (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      location TEXT,
+      description TEXT NOT NULL,
+      courier_name TEXT,
+      tracking_number TEXT,
+      occurred_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_shipping_events_order ON shipping_events(order_id);
+  `);
+
+  // Migration 010 (Phase 4): Returns and Exchanges
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS returns (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      return_number TEXT,
+      customer_email TEXT,
+      type TEXT NOT NULL DEFAULT 'return', -- 'return' | 'exchange'
+      status TEXT NOT NULL DEFAULT 'requested', -- 'requested' | 'approved' | 'rejected' | 'in_transit' | 'inspected' | 'completed' | 'cancelled'
+      reason TEXT NOT NULL,
+      customer_note TEXT,
+      admin_note TEXT,
+      resolution_type TEXT NOT NULL DEFAULT 'refund',
+      refund_amount INTEGER NOT NULL DEFAULT 0,
+      inspection_result TEXT,
+      inspection_notes TEXT,
+      restocked INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_returns_order ON returns(order_id);
+  `);
+  try { db.exec(`ALTER TABLE returns ADD COLUMN customer_note TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE returns ADD COLUMN admin_note TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE returns ADD COLUMN resolution_type TEXT DEFAULT 'refund';`); } catch {}
+  try { db.exec(`ALTER TABLE returns ADD COLUMN refund_amount INTEGER DEFAULT 0;`); } catch {}
+
+  // Migration 011 (Phase 4): Return Line Items
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS return_items (
+      id TEXT PRIMARY KEY,
+      return_id TEXT NOT NULL,
+      order_item_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      product_slug TEXT,
+      size TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      requested_exchange_size TEXT,
+      condition TEXT NOT NULL DEFAULT 'pending',
+      restocked INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_return_items_return ON return_items(return_id);
+  `);
+  try { db.exec(`ALTER TABLE return_items ADD COLUMN product_slug TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE return_items ADD COLUMN requested_exchange_size TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE return_items ADD COLUMN condition TEXT DEFAULT 'pending';`); } catch {}
+  try { db.exec(`ALTER TABLE return_items ADD COLUMN restocked INTEGER DEFAULT 0;`); } catch {}
+  try { db.exec(`ALTER TABLE return_items ADD COLUMN created_at TEXT;`); } catch {}
+
+  // Migration 012 (Phase 4): Refund Records
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS refund_records (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      return_id TEXT,
+      razorpay_payment_id TEXT,
+      razorpay_refund_id TEXT,
+      amount INTEGER NOT NULL, -- in INR rupees
+      currency TEXT NOT NULL DEFAULT 'INR',
+      status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'processed' | 'failed' | 'rejected'
+      reason TEXT,
+      initiated_by TEXT,
+      failure_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_refund_records_order ON refund_records(order_id);
+    CREATE INDEX IF NOT EXISTS idx_refund_records_rzp ON refund_records(razorpay_refund_id);
+  `);
+  try { db.exec(`ALTER TABLE refund_records ADD COLUMN initiated_by TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE refund_records ADD COLUMN failure_reason TEXT;`); } catch {}
+
+  // Migration 013 (Phase 4): Persistent Notification Jobs
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_jobs (
+      id TEXT PRIMARY KEY,
+      order_id TEXT,
+      event_type TEXT NOT NULL, -- 'order_placed' | 'payment_confirmed' | 'order_dispatched' | 'tracking_updated' | 'order_delivered' | 'cancellation_decided' | 'return_decided' | 'refund_processed' | 'refund_failed'
+      recipient_email TEXT NOT NULL,
+      recipient_name TEXT,
+      subject TEXT NOT NULL,
+      html_content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'sent' | 'failed' | 'skipped'
+      provider TEXT NOT NULL DEFAULT 'none',
+      provider_message_id TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      last_error TEXT,
+      idempotency_key TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_notif_order ON notification_jobs(order_id);
+    CREATE INDEX IF NOT EXISTS idx_notif_status ON notification_jobs(status);
+  `);
 }
 
 export interface DbOrder {
@@ -259,6 +396,12 @@ export interface DbOrder {
   courier_name: string | null;
   tracking_number: string | null;
   tracking_url: string | null;
+  dispatch_date?: string | null;
+  estimated_delivery_date?: string | null;
+  actual_delivery_date?: string | null;
+  cancellation_requested?: number;
+  cancellation_requested_at?: string | null;
+  cancellation_reason?: string | null;
   notes: string | null;
   cancelled_reason: string | null;
   refund_status: string | null;
@@ -306,10 +449,85 @@ export interface DbOrderStatusHistory {
   created_at: string;
 }
 
+export interface DbShippingEvent {
+  id: string;
+  order_id: string;
+  status: string;
+  location: string | null;
+  description: string;
+  occurred_at: string;
+  created_at: string;
+}
+
+export interface DbReturn {
+  id: string;
+  order_id: string;
+  type: 'return' | 'exchange';
+  status: 'requested' | 'approved' | 'rejected' | 'in_transit' | 'inspected' | 'completed' | 'cancelled';
+  reason: string;
+  customer_note: string | null;
+  admin_note: string | null;
+  resolution_type: 'refund' | 'exchange';
+  refund_amount: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbReturnItem {
+  id: string;
+  return_id: string;
+  order_item_id: string;
+  product_id: string;
+  product_slug: string;
+  size: string;
+  quantity: number;
+  requested_exchange_size: string | null;
+  condition: 'pending' | 'resalable' | 'damaged' | 'unsuitable';
+  restocked: number;
+  created_at: string;
+}
+
+export interface DbRefundRecord {
+  id: string;
+  order_id: string;
+  return_id: string | null;
+  razorpay_refund_id: string | null;
+  razorpay_payment_id: string | null;
+  amount: number;
+  currency: string;
+  status: 'pending' | 'processed' | 'failed';
+  reason: string;
+  initiated_by: string;
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbNotificationJob {
+  id: string;
+  order_id: string | null;
+  recipient_email: string;
+  recipient_name: string | null;
+  event_type: string;
+  subject: string;
+  body_text: string | null;
+  body_html: string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface OrderWithDetails extends DbOrder {
   items: DbOrderItem[];
   address: DbOrderAddress | null;
   history?: DbOrderStatusHistory[];
+  shipping_events?: DbShippingEvent[];
+  returns?: (DbReturn & { items: DbReturnItem[] })[];
+  refunds?: DbRefundRecord[];
 }
 
 export interface DbAdminUser {

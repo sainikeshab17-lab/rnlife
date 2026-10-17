@@ -483,10 +483,115 @@ export default function AdminOrderDetailPage() {
                     className="w-full py-2 bg-neutral-800 hover:bg-black text-white text-xs uppercase font-bold tracking-wider cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
                   >
                     <Save className="w-3.5 h-3.5" />
-                    <span>{updatingTracking ? "Saving..." : "Save Tracking Information"}</span>
+                    <span>{updatingTracking ? "Saving..." : "Save Tracking & Notify"}</span>
                   </button>
                 </form>
               </div>
+
+              {/* Customer Cancellation Request Decision Box */}
+              {order.cancellation_requested === 1 && (
+                <div className="bg-amber-50 border border-amber-300 p-5 shadow-sm space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-900 pb-2 border-b border-amber-200 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    <span>Customer Cancellation Request</span>
+                  </h3>
+                  <div className="text-xs text-amber-950 space-y-1">
+                    <p><strong>Reason:</strong> {order.cancellation_reason || "None specified"}</p>
+                    <p className="text-[11px] text-amber-800">
+                      Requested at: {order.cancellation_requested_at ? new Date(order.cancellation_requested_at).toLocaleString("en-IN") : "Recent"}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!confirm("Approve cancellation? This will cancel the order and trigger inventory restock/refund queue.")) return;
+                        const res = await fetch(`/api/admin/orders/${order.id}/cancel`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ approved: true, note: "Admin approved cancellation" }),
+                        });
+                        if (res.ok) {
+                          alert("Cancellation approved.");
+                          fetchOrderDetail();
+                        } else {
+                          const err = await res.json();
+                          alert(err.error || "Failed to approve cancellation");
+                        }
+                      }}
+                      className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider"
+                    >
+                      Approve & Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const reason = prompt("Reason for rejecting cancellation:");
+                        if (reason === null) return;
+                        const res = await fetch(`/api/admin/orders/${order.id}/cancel`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ approved: false, note: reason }),
+                        });
+                        if (res.ok) {
+                          alert("Cancellation rejected.");
+                          fetchOrderDetail();
+                        } else {
+                          const err = await res.json();
+                          alert(err.error || "Failed to reject cancellation");
+                        }
+                      }}
+                      className="flex-1 py-2 bg-neutral-200 hover:bg-neutral-300 text-neutral-800 text-xs font-bold uppercase tracking-wider"
+                    >
+                      Reject Request
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Online Razorpay Refund Trigger Box */}
+              {order.payment_status === "paid" && order.order_status !== "refunded" && (
+                <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-200 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>Issue Online Refund (Razorpay)</span>
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    Order Total: <strong>₹{order.total}</strong> • Remaining balance can be refunded directly to customer&apos;s bank/UPI.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const amountStr = prompt(`Enter refund amount in ₹ (Max: ${order.total}):`, String(order.total));
+                      if (!amountStr) return;
+                      const amount = Number(amountStr);
+                      if (isNaN(amount) || amount <= 0 || amount > order.total) {
+                        alert("Invalid refund amount.");
+                        return;
+                      }
+                      const reason = prompt("Enter refund reason:", "Order cancelled / Customer refund");
+                      if (!reason) return;
+
+                      const res = await fetch(`/api/admin/refunds`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ orderId: order.id, amount, reason }),
+                      });
+
+                      const data = await res.json();
+                      if (res.ok) {
+                        alert(data.message || "Refund issued successfully.");
+                        fetchOrderDetail();
+                      } else {
+                        alert(data.error || "Refund initiation failed.");
+                      }
+                    }}
+                    className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs uppercase font-bold tracking-wider cursor-pointer"
+                  >
+                    Initiate Online Refund
+                  </button>
+                </div>
+              )}
 
               {/* Gateway Audit Identifiers */}
               <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-2">
