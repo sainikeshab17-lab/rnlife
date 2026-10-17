@@ -1,18 +1,13 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
-import crypto from "node:crypto";
+import { databaseTest } from "./postgres-test-support.mjs";
 import { getDb } from "../src/lib/db/index.ts";
 import {
   isValidTrackingUrl,
-  isValidCancellationStatus,
-  isReturnWindowValid,
-  RETURN_REASONS,
-  CANCELLATION_REASONS,
 } from "../src/lib/policies.ts";
 import {
   getShippingProvider,
   createTrackingUrl,
-  validateAwbFormat,
 } from "../src/lib/shipping/provider.ts";
 import {
   createPendingOrder,
@@ -24,11 +19,12 @@ import {
   requestReturnOrExchange,
   inspectReturnItem,
   recordRefund,
-  checkAndReserveInventory,
-  releaseInventoryReservation,
 } from "../src/lib/db/orders.ts";
 import { generateOrderNumber } from "../src/services/checkout-service.ts";
-import { createRazorpayRefund, verifyWebhookSignature } from "../src/lib/razorpay.ts";
+import {
+  createRazorpayRefund,
+  RAZORPAY_KEY_SECRET,
+} from "../src/lib/razorpay.ts";
 
 describe("Phase 4: Shipping, Fulfilment & URL Validation", () => {
   test("Validates tracking URLs strictly and rejects dangerous javascript: schemes", () => {
@@ -49,15 +45,16 @@ describe("Phase 4: Shipping, Fulfilment & URL Validation", () => {
     assert.ok(createTrackingUrl("bluedart", "123456789")?.includes("bluedart.com"));
 
     const delhivery = getShippingProvider("delhivery");
+    assert.strictEqual(delhivery.name, "Delhivery Surface & Express");
     assert.ok(createTrackingUrl("delhivery", "DEL123456")?.includes("delhivery.com"));
 
     // Generic carrier
     assert.strictEqual(createTrackingUrl("generic", "GEN123"), null);
   });
 
-  test("Records shipping timeline events and updates order fulfilment state", () => {
+  databaseTest("Records shipping timeline events and updates order fulfilment state", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Shipping Test User",
       customerEmail: "ship_test@rightnowlife.in",
@@ -91,7 +88,7 @@ describe("Phase 4: Shipping, Fulfilment & URL Validation", () => {
       },
     });
 
-    const event = addShippingEvent({
+    const event = await addShippingEvent({
       orderId: order.id,
       status: "Dispatched",
       location: "Bengaluru Hub",
@@ -102,7 +99,7 @@ describe("Phase 4: Shipping, Fulfilment & URL Validation", () => {
     assert.strictEqual(event.order_id, order.id);
     assert.strictEqual(event.status, "Dispatched");
 
-    const fetched = getOrderById(order.id);
+    const fetched = await getOrderById(order.id);
     assert.ok(fetched?.shipping_events);
     assert.strictEqual(fetched.shipping_events.length, 1);
     assert.strictEqual(fetched.shipping_events[0].location, "Bengaluru Hub");
@@ -110,9 +107,9 @@ describe("Phase 4: Shipping, Fulfilment & URL Validation", () => {
 });
 
 describe("Phase 4: Customer Order Ownership & Cancellation Flow", () => {
-  test("Customer requests cancellation for eligible pending order", () => {
+  databaseTest("Customer requests cancellation for eligible pending order", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Cancel Cust",
       customerEmail: "cancel_cust@rightnowlife.in",
@@ -147,26 +144,26 @@ describe("Phase 4: Customer Order Ownership & Cancellation Flow", () => {
     });
 
     // Request cancellation
-    const cancelRes = requestOrderCancellation(order.id, "Ordered wrong size by mistake");
+    const cancelRes = await requestOrderCancellation(order.id, "Ordered wrong size by mistake");
     assert.strictEqual(cancelRes.success, true);
 
     // Duplicate request must be rejected idempotently
-    const dupRes = requestOrderCancellation(order.id, "Ordered wrong size by mistake");
+    const dupRes = await requestOrderCancellation(order.id, "Ordered wrong size by mistake");
     assert.strictEqual(dupRes.success, false);
     assert.match(dupRes.error || "", /already been requested/i);
 
     // Admin approves cancellation
-    const decisionRes = decideOrderCancellation(order.id, true, "admin@rightnowlife.in", "Approved");
+    const decisionRes = await decideOrderCancellation(order.id, true, "admin@rightnowlife.in", "Approved");
     assert.strictEqual(decisionRes.success, true);
     assert.strictEqual(decisionRes.newStatus, "cancelled");
 
-    const updated = getOrderById(order.id);
+    const updated = await getOrderById(order.id);
     assert.strictEqual(updated?.order_status, "cancelled");
   });
 
-  test("Cancellation of paid order sets refund_pending status without falsely reporting money returned", () => {
+  databaseTest("Cancellation of paid order sets refund_pending status without falsely reporting money returned", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Paid Cancel Cust",
       customerEmail: "paid_cancel@rightnowlife.in",
@@ -201,25 +198,25 @@ describe("Phase 4: Customer Order Ownership & Cancellation Flow", () => {
     });
 
     // Mark paid
-    markOrderAsPaid(order.id, "pay_test_paid_cancel_123");
+    await markOrderAsPaid(order.id, "pay_test_paid_cancel_123");
 
     // Request cancellation
-    requestOrderCancellation(order.id, "Change of travel plans");
+    await requestOrderCancellation(order.id, "Change of travel plans");
 
     // Admin approves
-    const decisionRes = decideOrderCancellation(order.id, true, "admin@rightnowlife.in", "Approved refund needed");
+    const decisionRes = await decideOrderCancellation(order.id, true, "admin@rightnowlife.in", "Approved refund needed");
     assert.strictEqual(decisionRes.success, true);
     assert.strictEqual(decisionRes.newStatus, "refund_pending");
 
-    const updated = getOrderById(order.id);
+    const updated = await getOrderById(order.id);
     assert.strictEqual(updated?.order_status, "refund_pending");
   });
 });
 
 describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
-  test("Prevents return quantities from exceeding purchased items", () => {
+  databaseTest("Prevents return quantities from exceeding purchased items", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Return Cust",
       customerEmail: "return_cust@rightnowlife.in",
@@ -253,20 +250,20 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
       },
     });
 
-    markOrderAsPaid(order.id, "pay_return_test_1");
+    await markOrderAsPaid(order.id, "pay_return_test_1");
 
     // Transition to delivered
     const db = getDb();
-    db.prepare("UPDATE orders SET order_status = 'delivered', actual_delivery_date = ? WHERE id = ?").run(
+    await db.prepare("UPDATE orders SET order_status = 'delivered', actual_delivery_date = ? WHERE id = ?").run(
       new Date().toISOString(),
       order.id
     );
 
-    const orderWithItems = getOrderById(order.id);
+    const orderWithItems = await getOrderById(order.id);
     const orderItemId = orderWithItems.items[0].id;
 
     // Try returning 3 items when only 2 were purchased
-    const overReturnRes = requestReturnOrExchange({
+    const overReturnRes = await requestReturnOrExchange({
       orderId: order.id,
       type: "return",
       reason: "Defective / damaged piece",
@@ -277,7 +274,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
     assert.match(overReturnRes.error || "", /Cannot return 3 units/i);
 
     // Return 1 valid item
-    const validReturnRes = requestReturnOrExchange({
+    const validReturnRes = await requestReturnOrExchange({
       orderId: order.id,
       type: "return",
       reason: "Defective / damaged piece",
@@ -288,7 +285,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
     assert.ok(validReturnRes.returnId);
 
     // Now try returning 2 more items (1 + 2 = 3 > 2 purchased)
-    const secondReturnRes = requestReturnOrExchange({
+    const secondReturnRes = await requestReturnOrExchange({
       orderId: order.id,
       type: "return",
       reason: "Defective / damaged piece",
@@ -298,16 +295,16 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
     assert.match(secondReturnRes.error || "", /Only 1 eligible units remaining/i);
   });
 
-  test("Inspection records item condition and restocks only if resalable", () => {
+  databaseTest("Inspection records item condition and restocks only if resalable", async () => {
     const db = getDb();
     // Get initial inventory for design 05
-    const initInv = db
+    const initInv = await db
       .prepare("SELECT stock FROM inventory WHERE product_id = 'rnl-design-05' AND size = 'L'")
       .get();
     const initialStock = initInv ? initInv.stock : 20;
 
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Inspect Cust",
       customerEmail: "inspect_cust@rightnowlife.in",
@@ -341,28 +338,28 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
       },
     });
 
-    markOrderAsPaid(order.id, "pay_inspect_test_1");
-    db.prepare("UPDATE orders SET order_status = 'delivered', actual_delivery_date = ? WHERE id = ?").run(
+    await markOrderAsPaid(order.id, "pay_inspect_test_1");
+    await db.prepare("UPDATE orders SET order_status = 'delivered', actual_delivery_date = ? WHERE id = ?").run(
       new Date().toISOString(),
       order.id
     );
 
-    const orderWithItems = getOrderById(order.id);
+    const orderWithItems = await getOrderById(order.id);
     const orderItemId = orderWithItems.items[0].id;
 
-    const returnRes = requestReturnOrExchange({
+    const returnRes = await requestReturnOrExchange({
       orderId: order.id,
       type: "return",
       reason: "Size fits too small",
       items: [{ orderItemId, quantity: 1 }],
     });
 
-    const returnItem = db
+    const returnItem = await db
       .prepare("SELECT * FROM return_items WHERE return_id = ?")
       .get(returnRes.returnId);
 
     // Inspect as resalable -> should increment inventory
-    const inspectRes = inspectReturnItem({
+    const inspectRes = await inspectReturnItem({
       returnItemId: returnItem.id,
       condition: "resalable",
       actorEmail: "admin@rightnowlife.in",
@@ -370,7 +367,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
 
     assert.strictEqual(inspectRes.success, true);
 
-    const updatedInv = db
+    const updatedInv = await db
       .prepare("SELECT stock FROM inventory WHERE product_id = 'rnl-design-05' AND size = 'L'")
       .get();
 
@@ -378,13 +375,13 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
     assert.strictEqual(updatedInv.stock, initialStock);
 
     // Calling inspect again should be idempotent and not restock twice
-    inspectReturnItem({
+    await inspectReturnItem({
       returnItemId: returnItem.id,
       condition: "resalable",
       actorEmail: "admin@rightnowlife.in",
     });
 
-    const doubleInspectInv = db
+    const doubleInspectInv = await db
       .prepare("SELECT stock FROM inventory WHERE product_id = 'rnl-design-05' AND size = 'L'")
       .get();
 
@@ -393,9 +390,9 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
 });
 
 describe("Phase 4: Refund Safety & Record Tracking", () => {
-  test("Records refund record and enforces maximum refundable limits", () => {
+  databaseTest("Records refund record and enforces maximum refundable limits", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Refund Limit Cust",
       customerEmail: "refund_limit@rightnowlife.in",
@@ -430,7 +427,7 @@ describe("Phase 4: Refund Safety & Record Tracking", () => {
     });
 
     // Record partial refund
-    const refundRec1 = recordRefund({
+    const refundRec1 = await recordRefund({
       orderId: order.id,
       amount: 500,
       status: "processed",
@@ -442,13 +439,17 @@ describe("Phase 4: Refund Safety & Record Tracking", () => {
     assert.strictEqual(refundRec1.amount, 500);
     assert.strictEqual(refundRec1.status, "processed");
 
-    const fetched = getOrderById(order.id);
+    const fetched = await getOrderById(order.id);
     assert.ok(fetched?.refunds);
     assert.strictEqual(fetched.refunds.length, 1);
     assert.strictEqual(fetched.refunds[0].amount, 500);
   });
 
-  test("Simulated server-side Razorpay refund works in test/dev mode", async () => {
+  test("Simulated server-side Razorpay refund works in test/dev mode", {
+    skip: RAZORPAY_KEY_SECRET === "rzp_test_placeholder_secret"
+      ? false
+      : "provider-facing refund call is disabled when Razorpay credentials are configured",
+  }, async () => {
     const res = await createRazorpayRefund({
       paymentId: "pay_test_sim_123",
       amountPaisa: 99900,

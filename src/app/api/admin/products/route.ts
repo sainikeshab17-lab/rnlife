@@ -13,12 +13,12 @@ export const dynamic = "force-dynamic";
  * Price is always ₹999 — it is not returned from DB and cannot be overridden.
  */
 export async function GET(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const db = getDb();
-    const overrides = db.prepare("SELECT * FROM product_overrides").all() as DbProductOverride[];
+    const overrides = await db.prepare("SELECT * FROM product_overrides").all<DbProductOverride>();
     const overrideMap: Record<string, DbProductOverride> = {};
     for (const o of overrides) overrideMap[o.product_id] = o;
 
@@ -57,7 +57,7 @@ const UpdateProductSchema = z.object({
  * Price changes are rejected — always ₹999.
  */
 export async function PATCH(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(req.url);
@@ -85,25 +85,25 @@ export async function PATCH(req: NextRequest) {
 
   const { is_active, custom_description } = parsed.data;
   const db = getDb();
-  const existing = db.prepare("SELECT * FROM product_overrides WHERE product_id = ?").get(productId) as DbProductOverride | undefined;
+  const existing = await db.prepare("SELECT * FROM product_overrides WHERE product_id = ?").get<DbProductOverride>(productId);
   const now = new Date().toISOString();
 
   const newIsActive = is_active !== undefined ? (is_active ? 1 : 0) : (existing?.is_active ?? 1);
   const newDesc = custom_description !== undefined ? custom_description : existing?.custom_description ?? null;
 
   if (existing) {
-    db.prepare(`
+    await db.prepare(`
       UPDATE product_overrides SET is_active = ?, custom_description = ?, updated_by = ?, updated_at = ?
       WHERE product_id = ?
     `).run(newIsActive, newDesc, admin.email, now, productId);
   } else {
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO product_overrides (product_id, is_active, custom_description, updated_by, updated_at)
       VALUES (?, ?, ?, ?, ?)
     `).run(productId, newIsActive, newDesc, admin.email, now);
   }
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: "product_updated",
     entityType: "product",

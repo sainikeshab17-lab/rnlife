@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, RefreshCw, AlertCircle } from "lucide-react";
 import { ReturnModal } from "./ReturnModal";
 import { CancelModal } from "./CancelModal";
 
@@ -11,7 +10,7 @@ interface OrderActionButtonsProps {
     id: string;
     order_number: string;
     order_status: string;
-    cancellation_requested?: number;
+    cancellation_requested?: number | null;
     items: Array<{
       id: string;
       product_name: string;

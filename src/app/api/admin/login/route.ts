@@ -14,14 +14,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Retrieve admin by email
-    const admin = getAdminByEmail(email);
+    const admin = await getAdminByEmail(email);
 
     // Always run verifyPassword even if admin not found, to prevent timing attacks
     const dummyHash = "pbkdf2$100000$0000000000000000$0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
     const passwordValid = verifyPassword(password, admin?.password_hash ?? dummyHash);
 
     if (!admin || !passwordValid) {
-      writeAuditLog({
+      await writeAuditLog({
         actor: email,
         action: "admin_login_failed",
         entityType: "admin_session",
@@ -31,13 +31,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Create session
-    const rawToken = createSession(
+    const rawToken = await createSession(
       admin.id,
       req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? undefined,
       req.headers.get("user-agent") ?? undefined
     );
 
-    writeAuditLog({
+    await writeAuditLog({
       actor: admin.email,
       action: "admin_login_success",
       entityType: "admin_session",

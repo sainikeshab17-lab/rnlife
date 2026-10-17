@@ -8,6 +8,7 @@ if (fs.existsSync(outDir)) {
   fs.rmSync(outDir, { recursive: true, force: true });
 }
 fs.mkdirSync(outDir, { recursive: true });
+fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "module" }));
 
 const filesToCompile = [
   { in: "src/types/index.ts", out: ".test-dist/src/types/index.js" },
@@ -15,6 +16,7 @@ const filesToCompile = [
   { in: "src/lib/policies.ts", out: ".test-dist/src/lib/policies.js" },
   { in: "src/lib/shipping/provider.ts", out: ".test-dist/src/lib/shipping/provider.js" },
   { in: "src/lib/db/index.ts", out: ".test-dist/src/lib/db/index.js" },
+  { in: "src/lib/db/sql.ts", out: ".test-dist/src/lib/db/sql.js" },
   { in: "src/lib/db/orders.ts", out: ".test-dist/src/lib/db/orders.js" },
   { in: "src/lib/db/audit.ts", out: ".test-dist/src/lib/db/audit.js" },
   { in: "src/lib/auth/admin-auth.ts", out: ".test-dist/src/lib/auth/admin-auth.js" },
@@ -24,6 +26,8 @@ const filesToCompile = [
   { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" },
   { in: "tests/admin-and-dashboard.test.mjs", out: ".test-dist/tests/admin-and-dashboard.test.mjs" },
   { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
+  { in: "tests/postgres-test-support.mjs", out: ".test-dist/tests/postgres-test-support.mjs" },
+  { in: "tests/postgres-sql.test.mjs", out: ".test-dist/tests/postgres-sql.test.mjs" },
 ];
 
 for (const f of filesToCompile) {
@@ -44,6 +48,7 @@ for (const f of filesToCompile) {
     code = code.replace(/from\s+["']@\/lib\/policies["']/g, 'from "../policies.js"');
   } else if (f.in.startsWith("src/lib/db/")) {
     code = code
+      .replace(/from\s+["']\.\/sql["']/g, 'from "./sql.js"')
       .replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "./index.js"')
       .replace(/from\s+["']@\/data\/mock-data["']/g, 'from "../../data/mock-data.js"')
       .replace(/from\s+["']@\/types["']/g, 'from "../../types/index.js"')
@@ -59,6 +64,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/lib\/razorpay\.ts["']/g, 'from "../src/lib/razorpay.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/orders\.ts["']/g, 'from "../src/lib/db/orders.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/index\.ts["']/g, 'from "../src/lib/db/index.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/db\/sql\.ts["']/g, 'from "../src/lib/db/sql.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/audit\.ts["']/g, 'from "../src/lib/db/audit.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/auth\/admin-auth\.ts["']/g, 'from "../src/lib/auth/admin-auth.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/order-status-machine\.ts["']/g, 'from "../src/lib/order-status-machine.js"')
@@ -79,22 +85,36 @@ for (const f of filesToCompile) {
   }
 }
 
+const serverOnlyStub = path.join(outDir, "node_modules", "server-only");
+fs.mkdirSync(serverOnlyStub, { recursive: true });
+fs.writeFileSync(
+  path.join(serverOnlyStub, "package.json"),
+  JSON.stringify({ type: "module", exports: "./index.js" })
+);
+fs.writeFileSync(path.join(serverOnlyStub, "index.js"), "export {};\n");
+
 console.log("Transpiled test build ready in .test-dist. Running node test suite sequentially...");
 try {
-  execSync("node --test .test-dist/tests/checkout-and-payment.test.mjs", {
+  execSync("node --test tests/postgres-migration.test.mjs tests/postgres-import.test.mjs tests/postgres-migration-runner.test.mjs tests/postgres-sql.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
-  execSync("node --test .test-dist/tests/admin-and-dashboard.test.mjs", {
+  execSync("node --conditions=react-server --test .test-dist/tests/checkout-and-payment.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
-  execSync("node --test .test-dist/tests/shipping-returns-refunds.test.mjs", {
+  execSync("node --conditions=react-server --test .test-dist/tests/admin-and-dashboard.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
-  console.log("\nAll automated tests (Phase 2 + Phase 3 + Phase 4) passed successfully!");
+  execSync("node --conditions=react-server --test .test-dist/tests/shipping-returns-refunds.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  console.log("\nAll automated test suites completed; see TAP totals for passed, failed, and skipped tests.");
 } catch (e) {
   console.error("Test execution failed:", e.message);
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  fs.rmSync(outDir, { recursive: true, force: true });
 }

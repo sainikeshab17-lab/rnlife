@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const outDir = path.join(process.cwd(), ".admin-dist");
 if (fs.existsSync(outDir)) {
@@ -49,10 +49,14 @@ for (const f of filesToCompile) {
 }
 
 try {
-  execSync(`node .admin-dist/scripts/create-admin.js ${process.argv.slice(2).join(" ")}`, {
+  execFileSync(process.execPath, [
+    "--conditions=react-server",
+    ".admin-dist/scripts/create-admin.js",
+    ...process.argv.slice(2),
+  ], {
     stdio: "inherit",
     cwd: process.cwd(),
   });
-} catch (e) {
+} catch {
   process.exit(1);
 }

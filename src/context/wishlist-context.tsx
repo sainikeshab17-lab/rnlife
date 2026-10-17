@@ -31,9 +31,9 @@ export function WishlistProvider({ children }: { children: React.ReactNode }) {
           {
             productId: "rnl-design-02",
             productSlug: "rightnowlife-design-02",
-            productName: "DESIGN 02 — GRAPHIC RAGLAN TEE",
+            productName: "RIGHTNOWLIFE Design 02",
             price: 999,
-            image: "/products/design_02_front.png",
+            image: "/products/tshirt_product_images_high_quality/design_02_01_front_view.jpg",
             fit: "Regular",
             color: "As pictured",
           },

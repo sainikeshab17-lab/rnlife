@@ -23,26 +23,17 @@ export async function queueNotificationJob(params: {
   idempotencyKey?: string | null;
 }): Promise<DbNotificationJob> {
   const db = getDb();
-
-  // If idempotency key provided, check if already queued
-  if (params.idempotencyKey) {
-    const existing = db
-      .prepare("SELECT * FROM notification_jobs WHERE idempotency_key = ?")
-      .get(params.idempotencyKey) as DbNotificationJob | undefined;
-    if (existing) {
-      return existing;
-    }
-  }
-
   const id = `notif_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const idempotencyKey = params.idempotencyKey || id;
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO notification_jobs (
       id, order_id, recipient_email, recipient_name, event_type,
       subject, body_text, body_html, status, attempts, max_attempts,
       last_error, idempotency_key, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, NULL, ?, ?, ?)
+    ON CONFLICT (idempotency_key) DO NOTHING
   `).run(
     id,
     params.orderId || null,
@@ -52,15 +43,19 @@ export async function queueNotificationJob(params: {
     params.subject,
     params.bodyText || null,
     params.bodyHtml,
-    params.idempotencyKey || null,
+    idempotencyKey,
     now,
     now
   );
 
   // Attempt dispatch immediately
-  await processNotificationJob(id);
+  const job = await db.prepare("SELECT * FROM notification_jobs WHERE idempotency_key = ?")
+    .get<DbNotificationJob>(idempotencyKey);
+  if (!job) throw new Error("Notification job could not be retrieved after enqueue.");
+  if (job.id === id) await processNotificationJob(job.id);
 
-  return db.prepare("SELECT * FROM notification_jobs WHERE id = ?").get(id) as DbNotificationJob;
+  return (await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+    .get<DbNotificationJob>(job.id)) ?? job;
 }
 
 /**
@@ -68,7 +63,8 @@ export async function queueNotificationJob(params: {
  */
 export async function processNotificationJob(jobId: string): Promise<EmailSendResult> {
   const db = getDb();
-  const job = db.prepare("SELECT * FROM notification_jobs WHERE id = ?").get(jobId) as DbNotificationJob | undefined;
+  const job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+    .get<DbNotificationJob>(jobId);
 
   if (!job) {
     return { sent: false, provider: "none", error: "Notification job not found." };
@@ -84,7 +80,7 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
 
   if (!resendApiKey && !smtpHost) {
     // Graceful unconfigured fallback
-    db.prepare(`
+    await db.prepare(`
       UPDATE notification_jobs
       SET status = 'skipped',
           last_error = 'No email provider configured (RESEND_API_KEY or SMTP_HOST missing).',
@@ -92,7 +88,7 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
       WHERE id = ?
     `).run(now, jobId);
 
-    console.info(`[Notification] Job ${jobId} for <${job.recipient_email}> skipped: Provider unconfigured.`);
+    console.info(`[Notification] Job ${jobId} skipped: provider is unconfigured.`);
     return { sent: false, provider: "none", error: "Email provider unconfigured." };
   }
 
@@ -114,7 +110,7 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
 
       if (response.ok) {
         const data = await response.json();
-        db.prepare(`
+        await db.prepare(`
           UPDATE notification_jobs
           SET status = 'sent',
               attempts = attempts + 1,
@@ -126,7 +122,7 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
         return { sent: true, provider: "resend", messageId: data.id };
       } else {
         const errData = await response.text();
-        db.prepare(`
+        await db.prepare(`
           UPDATE notification_jobs
           SET attempts = attempts + 1,
               status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
@@ -138,7 +134,7 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
         return { sent: false, provider: "resend", error: errData };
       }
     } catch (err: any) {
-      db.prepare(`
+      await db.prepare(`
         UPDATE notification_jobs
         SET attempts = attempts + 1,
             status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,

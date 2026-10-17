@@ -6,6 +6,102 @@ This is **Phase 1** of the RightNowLife platform build, focusing exclusively on 
 
 ---
 
+## Supabase PostgreSQL Migration (Phase 5)
+
+The application runtime uses the `pg` PostgreSQL pool in `src/lib/db/index.ts`.
+Prisma is not the runtime adapter; `prisma/schema.prisma` is kept aligned as a
+schema reference. The local SQLite database remains the authoritative source
+until a non-production PostgreSQL target has been reviewed and verified.
+See [docs/supabase-reconciliation.md](./docs/supabase-reconciliation.md) for the
+table-by-table reconciliation and constraint findings.
+
+### Local configuration
+
+1. Keep `data/rightnowlife.db` unchanged. Create `.env.local` from `.env.example`.
+2. Set `DATABASE_URL` to the Supabase runtime/pooler connection URI and
+   `DIRECT_URL` to the direct PostgreSQL URI. Keep both server-only; do not use
+   either in `NEXT_PUBLIC_*` variables or commit `.env.local`.
+3. `DATABASE_URL` is required by application requests. `DIRECT_URL` is required
+   by the explicit migration and import scripts. They are intentionally separate
+   so runtime pooling does not control DDL/import sessions. Both must be private
+   server-side database connection strings; the migration enables RLS and
+   revokes table access from Supabase `anon`/`authenticated` roles.
+4. Node.js 22 or later is required by the offline SQLite inspection, backup, and
+   import utilities (`node:sqlite`).
+
+### Migration and import sequence
+
+Do not point these commands at production without explicit approval. These
+commands require `--confirm-non-production`; importing additionally requires
+`--schema-reviewed` and a separately verified backup.
+
+```powershell
+# Inspect schema/table metadata only; this does not print row contents.
+node scripts/inspect-schema.mjs
+
+# Create a new backup path; existing paths are never overwritten.
+npm run db:backup -- --output "$env:LOCALAPPDATA\RIGHTNOWLIFE\backups\rightnowlife-pre-supabase.db"
+
+# After independently reviewing the target URL and migration SQL:
+npm run db:migrate -- --confirm-non-production
+
+# Only after the target migration succeeds and the backup is verified:
+npm run db:import -- --schema-reviewed --confirm-non-production-target `
+  --backup "$env:LOCALAPPDATA\RIGHTNOWLIFE\backups\rightnowlife-pre-supabase.db"
+```
+
+Migrations are ordered by their 14-digit version, checksum-recorded in
+`rightnowlife_schema_migrations`, serialized with a PostgreSQL advisory lock,
+and applied transactionally. Applied migration files are forward-only: edits
+after application fail checksum validation; add a new migration for corrections.
+The initial migration is safe for an empty Supabase database and creates the
+16 application tables. It does not drop tables or enable extensions.
+
+The importer checks that source and backup have matching table counts and that
+the backup passes SQLite integrity checks; verifies the target schema columns;
+preserves primary keys and recorded fields; uses a transaction and row
+savepoints; skips only identical existing rows; checks foreign-key relationships;
+and reports imported, skipped, and failed counts without printing row values.
+Failed rows cause a non-zero exit; rerunning the importer is safe for rows already
+imported. `notification_jobs.html_content`, `retry_count`, and `max_retries` map
+to PostgreSQL's `body_html`, `attempts`, and `max_attempts`; the separate returns
+note columns and refund amount-in-paisa are retained distinctly.
+
+### Backup, restore, and rollback
+
+Before import, retain both the original SQLite file and a verified copy. The
+backup command refuses overwrite and checks SQLite integrity plus per-table row
+counts. Store backups outside the repository with access controls because they
+contain customer, payment-reference, and password-hash data.
+
+Before migration/import, take a Supabase backup using the project's approved
+Supabase backup/PITR process. Restore PostgreSQL from that snapshot using the
+Supabase recovery procedure; never roll back by dropping tables or replaying a
+destructive SQL script. The schema runner is forward-only. The application
+should continue using the previous database configuration until imports, checks,
+and application flows have been validated; no traffic switch is performed by
+these scripts.
+
+### Reconciliation notes and verification boundary
+
+The SQLite source has 16 runtime tables. The PostgreSQL migration preserves
+`returns.customer_note` and `customer_notes` (and both admin note variants),
+`return_items.product_name`, `color`, and `price`, and `refund_records.amount`,
+`amount_paisa`, `idempotency_key`, and `raw_response` as separate columns. The
+SQLite notification queue's `html_content`/retry fields are intentionally
+translated to the service's `body_html`/attempt fields. The source currently has
+duplicate non-null Razorpay refund IDs, so the PostgreSQL schema deliberately
+uses a non-unique index for that provider reference and does not discard existing
+records.
+
+No schema application, import, PostgreSQL query, provider API call, deployment,
+or production traffic change is authorized or performed by the local code
+changes alone. Full PostgreSQL integration and critical-flow verification
+requires an explicitly approved non-production Supabase target and test-mode
+provider configuration.
+
+---
+
 ## 1. Technical Architecture
 
 - **Framework:** Next.js (App Router, Turbopack)

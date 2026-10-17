@@ -10,12 +10,12 @@ export const dynamic = "force-dynamic";
  * Returns full inventory grouped by product with available/reserved/sold breakdown.
  */
 export async function GET(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const db = getDb();
-    const rows = db.prepare("SELECT * FROM inventory ORDER BY product_id, size").all() as DbInventoryRow[];
+    const rows = await db.prepare("SELECT * FROM inventory ORDER BY product_id, size").all<DbInventoryRow>();
 
     // Group by product and enrich with product info
     const productMap: Record<string, {

@@ -9,71 +9,91 @@ import {
   DbReturn,
   DbReturnItem,
   DbRefundRecord,
+  DbConnection,
   OrderWithDetails,
+  withTransaction,
 } from "./index";
 
-export function checkAndReserveInventory(
+export async function checkAndReserveInventory(
   items: Array<{ productId: string; size: string; quantity: number }>
-): { ok: boolean; error?: string } {
-  const db = getDb();
-  for (const item of items) {
-    const row = db
-      .prepare("SELECT stock, reserved FROM inventory WHERE product_id = ? AND size = ?")
-      .get(item.productId, item.size) as { stock: number; reserved: number } | undefined;
+): Promise<{ ok: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const quantities = new Map<string, { productId: string; size: string; quantity: number }>();
+    for (const item of items) {
+      const key = `${item.productId}\0${item.size}`;
+      const existing = quantities.get(key);
+      quantities.set(key, {
+        ...item,
+        quantity: (existing?.quantity ?? 0) + item.quantity,
+      });
+    }
 
-    if (!row) {
-      // If product not explicitly in inventory, initialize with standard stock of 20
-      db.prepare(
-        "INSERT OR IGNORE INTO inventory (product_id, size, stock, reserved) VALUES (?, ?, 20, 0)"
-      ).run(item.productId, item.size);
-    } else {
-      const available = row.stock - row.reserved;
+    const lockedRows: Array<{
+      item: { productId: string; size: string; quantity: number };
+      available: number;
+    }> = [];
+
+    for (const item of quantities.values()) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, 20, 0)
+        ON CONFLICT (product_id, size) DO NOTHING
+      `).run(item.productId, item.size);
+
+      const row = await db.prepare(`
+        SELECT stock, reserved FROM inventory
+        WHERE product_id = ? AND size = ?
+        FOR UPDATE
+      `).get<{ stock: number; reserved: number }>(item.productId, item.size);
+      if (!row) throw new Error("Inventory row disappeared while reserving stock.");
+
+      const available = Math.max(0, row.stock - row.reserved);
       if (available < item.quantity) {
         return {
           ok: false,
-          error: `Insufficient stock for product (${item.size}). Only ${Math.max(0, available)} available.`,
+          error: `Insufficient stock for product (${item.size}). Only ${available} available.`,
         };
       }
+      lockedRows.push({ item, available });
     }
-  }
 
-  // Reserve inventory for pending checkout
-  for (const item of items) {
-    db.prepare(`
-      UPDATE inventory 
-      SET reserved = reserved + ? 
-      WHERE product_id = ? AND size = ?
-    `).run(item.quantity, item.productId, item.size);
-  }
-
-  return { ok: true };
+    for (const { item } of lockedRows) {
+      await db.prepare(`
+        UPDATE inventory SET reserved = reserved + ?
+        WHERE product_id = ? AND size = ?
+      `).run(item.quantity, item.productId, item.size);
+    }
+    return { ok: true };
+  });
 }
 
-export function releaseInventoryReservation(
+export async function releaseInventoryReservation(
   items: Array<{ productId: string; size: string; quantity: number }>
-) {
-  const db = getDb();
-  for (const item of items) {
-    db.prepare(`
+): Promise<void> {
+  await withTransaction(async (db) => {
+    for (const item of items) {
+      await db.prepare(`
       UPDATE inventory 
-      SET reserved = MAX(0, reserved - ?) 
+      SET reserved = GREATEST(0, reserved - ?) 
       WHERE product_id = ? AND size = ?
     `).run(item.quantity, item.productId, item.size);
-  }
+    }
+  });
 }
 
-export function commitInventoryDeduction(
+export async function commitInventoryDeduction(
   items: Array<{ productId: string; size: string; quantity: number }>
-) {
-  const db = getDb();
-  for (const item of items) {
-    db.prepare(`
+): Promise<void> {
+  await withTransaction(async (db) => {
+    for (const item of items) {
+      await db.prepare(`
       UPDATE inventory 
-      SET stock = MAX(0, stock - ?), 
-          reserved = MAX(0, reserved - ?) 
+      SET stock = GREATEST(0, stock - ?), 
+          reserved = GREATEST(0, reserved - ?) 
       WHERE product_id = ? AND size = ?
     `).run(item.quantity, item.quantity, item.productId, item.size);
-  }
+    }
+  });
 }
 
 export interface CreateOrderParams {
@@ -113,16 +133,16 @@ export interface CreateOrderParams {
   };
 }
 
-export function createPendingOrder(params: CreateOrderParams): {
+export async function createPendingOrder(params: CreateOrderParams): Promise<{
   order: DbOrder;
   guestToken: string;
-} {
-  const db = getDb();
+}> {
   const orderId = `ord_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   const guestToken = randomUUID();
   const now = new Date().toISOString();
 
-  db.prepare(`
+  return withTransaction(async (db) => {
+  await db.prepare(`
     INSERT INTO orders (
       id, order_number, customer_name, customer_email, customer_phone,
       subtotal, shipping, discount, total, payment_method, payment_status,
@@ -156,7 +176,7 @@ export function createPendingOrder(params: CreateOrderParams): {
 
   for (const item of params.items) {
     const itemId = `item_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    insertItem.run(
+    await insertItem.run(
       itemId,
       orderId,
       item.productId,
@@ -174,7 +194,7 @@ export function createPendingOrder(params: CreateOrderParams): {
 
   // Insert delivery address
   const addrId = `addr_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO order_addresses (
       id, order_id, full_name, phone, address_line1, address_line2,
       landmark, city, state, pin_code, country
@@ -193,46 +213,48 @@ export function createPendingOrder(params: CreateOrderParams): {
     params.address.country || "India"
   );
 
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder;
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  if (!order) throw new Error("Created order could not be retrieved.");
   return { order, guestToken };
+  });
 }
 
-export function updateOrderRazorpayId(orderId: string, razorpayOrderId: string) {
+export async function updateOrderRazorpayId(orderId: string, razorpayOrderId: string): Promise<void> {
   const db = getDb();
-  db.prepare("UPDATE orders SET razorpay_order_id = ?, updated_at = ? WHERE id = ?").run(
+  await db.prepare("UPDATE orders SET razorpay_order_id = ?, updated_at = ? WHERE id = ?").run(
     razorpayOrderId,
     new Date().toISOString(),
     orderId
   );
 }
 
-function populateOrderRelations(order: DbOrder): OrderWithDetails {
+async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails> {
   const db = getDb();
-  const items = db
+  const items = await db
     .prepare("SELECT * FROM order_items WHERE order_id = ?")
-    .all(order.id) as DbOrderItem[];
-  const address = (db
+    .all<DbOrderItem>(order.id);
+  const address = (await db
     .prepare("SELECT * FROM order_addresses WHERE order_id = ?")
-    .get(order.id) || null) as DbOrderAddress | null;
-  const history = db
+    .get<DbOrderAddress>(order.id)) || null;
+  const history = await db
     .prepare("SELECT * FROM order_status_history WHERE order_id = ? ORDER BY created_at ASC")
-    .all(order.id) as DbOrderStatusHistory[];
-  const shipping_events = db
+    .all<DbOrderStatusHistory>(order.id);
+  const shipping_events = await db
     .prepare("SELECT * FROM shipping_events WHERE order_id = ? ORDER BY occurred_at ASC")
-    .all(order.id) as DbShippingEvent[];
-  const refunds = db
+    .all<DbShippingEvent>(order.id);
+  const refunds = await db
     .prepare("SELECT * FROM refund_records WHERE order_id = ? ORDER BY created_at DESC")
-    .all(order.id) as DbRefundRecord[];
+    .all<DbRefundRecord>(order.id);
 
-  const returnRows = db
+  const returnRows = await db
     .prepare("SELECT * FROM returns WHERE order_id = ? ORDER BY created_at DESC")
-    .all(order.id) as DbReturn[];
-  const returns = returnRows.map((ret) => {
-    const returnItems = db
+    .all<DbReturn>(order.id);
+  const returns = await Promise.all(returnRows.map(async (ret) => {
+    const returnItems = await db
       .prepare("SELECT * FROM return_items WHERE return_id = ?")
-      .all(ret.id) as DbReturnItem[];
+      .all<DbReturnItem>(ret.id);
     return { ...ret, items: returnItems };
-  });
+  }));
 
   return {
     ...order,
@@ -245,68 +267,63 @@ function populateOrderRelations(order: DbOrder): OrderWithDetails {
   };
 }
 
-export function getOrderById(orderId: string): OrderWithDetails | null {
+export async function getOrderById(orderId: string): Promise<OrderWithDetails | null> {
   const db = getDb();
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder | undefined;
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
   if (!order) return null;
   return populateOrderRelations(order);
 }
 
-export function getOrderByRazorpayOrderId(rzpOrderId: string): OrderWithDetails | null {
+export async function getOrderByRazorpayOrderId(rzpOrderId: string): Promise<OrderWithDetails | null> {
   const db = getDb();
-  const order = db
+  const order = await db
     .prepare("SELECT * FROM orders WHERE razorpay_order_id = ?")
-    .get(rzpOrderId) as DbOrder | undefined;
+    .get<DbOrder>(rzpOrderId);
   if (!order) return null;
   return populateOrderRelations(order);
 }
 
-export function getOrderByNumber(orderNumber: string): OrderWithDetails | null {
+export async function getOrderByNumber(orderNumber: string): Promise<OrderWithDetails | null> {
   const db = getDb();
-  const order = db
+  const order = await db
     .prepare("SELECT * FROM orders WHERE order_number = ?")
-    .get(orderNumber) as DbOrder | undefined;
+    .get<DbOrder>(orderNumber);
   if (!order) return null;
   return populateOrderRelations(order);
 }
 
-export function getOrdersByEmail(email: string): OrderWithDetails[] {
+export async function getOrdersByEmail(email: string): Promise<OrderWithDetails[]> {
   const db = getDb();
-  const orders = db
+  const orders = await db
     .prepare("SELECT * FROM orders WHERE customer_email = ? ORDER BY created_at DESC")
-    .all(email.toLowerCase().trim()) as DbOrder[];
+    .all<DbOrder>(email.toLowerCase().trim());
 
-  return orders.map((order) => populateOrderRelations(order));
+  return Promise.all(orders.map(populateOrderRelations));
 }
 
-export function getAllOrders(): OrderWithDetails[] {
+export async function getAllOrders(): Promise<OrderWithDetails[]> {
   const db = getDb();
-  const orders = db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all() as DbOrder[];
+  const orders = await db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all<DbOrder>();
 
-  return orders.map((order) => populateOrderRelations(order));
+  return Promise.all(orders.map(populateOrderRelations));
 }
 
 /**
  * Idempotently mark order as paid.
  * Returns true if transition occurred, or true if already paid.
  */
-export function markOrderAsPaid(
+export async function markOrderAsPaid(
   orderId: string,
   razorpayPaymentId: string,
   razorpaySignature?: string
-): { success: boolean; alreadyPaid: boolean } {
-  const db = getDb();
-  const current = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder | undefined;
-  if (!current) {
-    return { success: false, alreadyPaid: false };
-  }
-
-  if (current.payment_status === "paid") {
-    return { success: true, alreadyPaid: true };
-  }
+): Promise<{ success: boolean; alreadyPaid: boolean }> {
+  return withTransaction(async (db) => {
+  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+  if (!current) return { success: false, alreadyPaid: false };
+  if (current.payment_status === "paid") return { success: true, alreadyPaid: true };
 
   const now = new Date().toISOString();
-  db.prepare(`
+  await db.prepare(`
     UPDATE orders 
     SET payment_status = 'paid',
         order_status = 'paid',
@@ -317,24 +334,29 @@ export function markOrderAsPaid(
   `).run(razorpayPaymentId, razorpaySignature || null, now, orderId);
 
   // Deduct inventory
-  const items = db
+  const items = await db
     .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
-    .all(orderId) as Array<{ product_id: string; size: string; quantity: number }>;
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
 
-  commitInventoryDeduction(
-    items.map((i) => ({ productId: i.product_id, size: i.size, quantity: i.quantity }))
-  );
+  for (const item of items) {
+    await db.prepare(`
+      UPDATE inventory
+      SET stock = GREATEST(0, stock - ?), reserved = GREATEST(0, reserved - ?)
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.quantity, item.product_id, item.size);
+  }
 
   return { success: true, alreadyPaid: false };
+  });
 }
 
-export function markOrderPaymentFailed(orderId: string, reason?: string) {
-  const db = getDb();
-  const current = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder | undefined;
+export async function markOrderPaymentFailed(orderId: string, reason?: string): Promise<void> {
+  await withTransaction(async (db) => {
+  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
   if (!current || current.payment_status === "paid") return;
 
   const now = new Date().toISOString();
-  db.prepare(`
+  await db.prepare(`
     UPDATE orders 
     SET payment_status = 'payment_failed',
         order_status = 'payment_failed',
@@ -343,46 +365,51 @@ export function markOrderPaymentFailed(orderId: string, reason?: string) {
   `).run(now, orderId);
 
   // Release reserved inventory
-  const items = db
+  const items = await db
     .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
-    .all(orderId) as Array<{ product_id: string; size: string; quantity: number }>;
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
 
-  releaseInventoryReservation(
-    items.map((i) => ({ productId: i.product_id, size: i.size, quantity: i.quantity }))
-  );
+  for (const item of items) {
+    await db.prepare(`
+      UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.product_id, item.size);
+  }
 
-  logPaymentAudit(orderId, "payment_failed", { reason: reason || "Payment failed or cancelled" });
+  await logPaymentAudit(orderId, "payment_failed", { reason: reason || "Payment failed or cancelled" }, db);
+  });
 }
 
-export function logPaymentAudit(orderId: string | null, eventType: string, payload: unknown) {
-  try {
-    const db = getDb();
-    const auditId = `aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    db.prepare(`
-      INSERT INTO payment_audits (id, order_id, event_type, payload, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(auditId, orderId || null, eventType, JSON.stringify(payload), new Date().toISOString());
-  } catch (err) {
-    console.error("Failed to log payment audit:", err);
-  }
+export async function logPaymentAudit(
+  orderId: string | null,
+  eventType: string,
+  payload: unknown,
+  connection?: DbConnection
+): Promise<void> {
+  const db = connection ?? getDb();
+  const auditId = `aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO payment_audits (id, order_id, event_type, payload, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(auditId, orderId || null, eventType, JSON.stringify(payload), new Date().toISOString());
 }
 
 /**
  * Record a shipping timeline event (e.g. Dispatched, Out for Delivery, Delivered)
  */
-export function addShippingEvent(params: {
+export async function addShippingEvent(params: {
   orderId: string;
   status: string;
   location?: string | null;
   description: string;
   occurredAt?: string;
-}): DbShippingEvent {
+}): Promise<DbShippingEvent> {
   const db = getDb();
   const id = `shpe_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   const occurredAt = params.occurredAt || new Date().toISOString();
   const createdAt = new Date().toISOString();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO shipping_events (id, order_id, status, location, description, occurred_at, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -401,6 +428,8 @@ export function addShippingEvent(params: {
     status: params.status,
     location: params.location || null,
     description: params.description,
+    courier_name: null,
+    tracking_number: null,
     occurred_at: occurredAt,
     created_at: createdAt,
   };
@@ -409,16 +438,17 @@ export function addShippingEvent(params: {
 /**
  * Record a status change in order_status_history
  */
-export function recordOrderStatusHistory(
+export async function recordOrderStatusHistory(
   orderId: string,
   fromStatus: string | null,
   toStatus: string,
   actor: string,
-  note?: string | null
-) {
-  const db = getDb();
+  note?: string | null,
+  connection?: DbConnection
+): Promise<void> {
+  const db = connection ?? getDb();
   const id = `osh_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO order_status_history (id, order_id, from_status, to_status, actor, note, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(id, orderId, fromStatus, toStatus, actor, note || null, new Date().toISOString());
@@ -428,40 +458,38 @@ export function recordOrderStatusHistory(
  * Customer requests cancellation.
  * Allowed when order is pending_payment, paid, or processing (within policy).
  */
-export function requestOrderCancellation(orderId: string, reason: string): { success: boolean; error?: string } {
-  const db = getDb();
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder | undefined;
-  if (!order) {
-    return { success: false, error: "Order not found." };
-  }
+export async function requestOrderCancellation(orderId: string, reason: string): Promise<{ success: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.cancellation_requested) {
+      return { success: false, error: "Cancellation has already been requested for this order." };
+    }
+    if (["shipped", "delivered", "cancelled", "refunded"].includes(order.order_status)) {
+      return { success: false, error: `Order cannot be cancelled in '${order.order_status}' status.` };
+    }
 
-  if (order.cancellation_requested) {
-    return { success: false, error: "Cancellation has already been requested for this order." };
-  }
+    const now = new Date().toISOString();
+    await db.prepare(`
+      UPDATE orders
+      SET cancellation_requested = 1,
+          cancellation_requested_at = ?,
+          cancellation_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(now, reason, now, orderId);
 
-  if (["shipped", "delivered", "cancelled", "refunded"].includes(order.order_status)) {
-    return { success: false, error: `Order cannot be cancelled in '${order.order_status}' status.` };
-  }
+    await recordOrderStatusHistory(
+      orderId,
+      order.order_status,
+      order.order_status,
+      order.customer_email,
+      `Customer requested cancellation: ${reason}`,
+      db
+    );
 
-  const now = new Date().toISOString();
-  db.prepare(`
-    UPDATE orders
-    SET cancellation_requested = 1,
-        cancellation_requested_at = ?,
-        cancellation_reason = ?,
-        updated_at = ?
-    WHERE id = ?
-  `).run(now, reason, now, orderId);
-
-  recordOrderStatusHistory(
-    orderId,
-    order.order_status,
-    order.order_status,
-    order.customer_email,
-    `Customer requested cancellation: ${reason}`
-  );
-
-  return { success: true };
+    return { success: true };
+  });
 }
 
 /**
@@ -470,89 +498,80 @@ export function requestOrderCancellation(orderId: string, reason: string): { suc
  * - If unpaid: order marked cancelled, reserved inventory released.
  * - If paid: order marked cancelled, order_status becomes refund_pending, inventory returned to stock.
  */
-export function decideOrderCancellation(
+export async function decideOrderCancellation(
   orderId: string,
   approved: boolean,
   actorEmail: string,
   adminNote?: string
-): { success: boolean; newStatus?: string; error?: string } {
-  const db = getDb();
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder | undefined;
-  if (!order) {
-    return { success: false, error: "Order not found." };
-  }
+): Promise<{ success: boolean; newStatus?: string; error?: string }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (!order.cancellation_requested) {
+      return { success: false, error: "There is no pending cancellation request for this order." };
+    }
 
-  const now = new Date().toISOString();
+    const now = new Date().toISOString();
+    if (!approved) {
+      await db.prepare(`
+        UPDATE orders SET cancellation_requested = 0, updated_at = ? WHERE id = ?
+      `).run(now, orderId);
+      await recordOrderStatusHistory(
+        orderId,
+        order.order_status,
+        order.order_status,
+        actorEmail,
+        `Cancellation rejected by admin. Note: ${adminNote || "None"}`,
+        db
+      );
+      return { success: true, newStatus: order.order_status };
+    }
 
-  if (!approved) {
-    db.prepare(`
+    const isPaid = order.payment_status === "paid";
+    const newStatus = isPaid ? "refund_pending" : "cancelled";
+    await db.prepare(`
       UPDATE orders
-      SET cancellation_requested = 0,
+      SET order_status = ?,
+          cancellation_requested = 0,
+          cancelled_reason = ?,
           updated_at = ?
       WHERE id = ?
-    `).run(now, orderId);
+    `).run(newStatus, order.cancellation_reason || adminNote || "Approved cancellation", now, orderId);
 
-    recordOrderStatusHistory(
+    const items = await db
+      .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id, size")
+      .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+    for (const item of items) {
+      const result = isPaid
+        ? await db.prepare(`
+            UPDATE inventory SET stock = stock + ?
+            WHERE product_id = ? AND size = ?
+          `).run(item.quantity, item.product_id, item.size)
+        : await db.prepare(`
+            UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+            WHERE product_id = ? AND size = ?
+          `).run(item.quantity, item.product_id, item.size);
+      if (result.rowCount !== 1) throw new Error("Inventory row missing while processing order cancellation.");
+    }
+
+    await recordOrderStatusHistory(
       orderId,
       order.order_status,
-      order.order_status,
+      newStatus,
       actorEmail,
-      `Cancellation rejected by admin. Note: ${adminNote || "None"}`
+      `Cancellation approved by admin. ${adminNote ? "Note: " + adminNote : ""}`,
+      db
     );
-
-    return { success: true, newStatus: order.order_status };
-  }
-
-  // Approved cancellation
-  const isPaid = order.payment_status === "paid";
-  const newStatus = isPaid ? "refund_pending" : "cancelled";
-
-  db.prepare(`
-    UPDATE orders
-    SET order_status = ?,
-        cancellation_requested = 0,
-        cancelled_reason = ?,
-        updated_at = ?
-    WHERE id = ?
-  `).run(newStatus, order.cancellation_reason || adminNote || "Approved cancellation", now, orderId);
-
-  // Inventory handling
-  const items = db
-    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
-    .all(orderId) as Array<{ product_id: string; size: string; quantity: number }>;
-
-  if (isPaid) {
-    // Inventory was committed on payment; restock items
-    for (const item of items) {
-      db.prepare(`
-        UPDATE inventory
-        SET stock = stock + ?
-        WHERE product_id = ? AND size = ?
-      `).run(item.quantity, item.product_id, item.size);
-    }
-  } else {
-    // Release reservation
-    releaseInventoryReservation(
-      items.map((i) => ({ productId: i.product_id, size: i.size, quantity: i.quantity }))
-    );
-  }
-
-  recordOrderStatusHistory(
-    orderId,
-    order.order_status,
-    newStatus,
-    actorEmail,
-    `Cancellation approved by admin. ${adminNote ? "Note: " + adminNote : ""}`
-  );
-
-  return { success: true, newStatus };
+    return { success: true, newStatus };
+  });
 }
 
 /**
  * Customer submits return or exchange request.
  * Validates 7-day window and prevents returning more items than purchased.
  */
-export function requestReturnOrExchange(params: {
+export async function requestReturnOrExchange(params: {
   orderId: string;
   type: "return" | "exchange";
   reason: string;
@@ -562,172 +581,147 @@ export function requestReturnOrExchange(params: {
     quantity: number;
     requestedExchangeSize?: string;
   }>;
-}): { success: boolean; returnId?: string; error?: string } {
-  const db = getDb();
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(params.orderId) as DbOrder | undefined;
-  if (!order) {
-    return { success: false, error: "Order not found." };
-  }
-
-  if (order.order_status !== "delivered") {
-    return { success: false, error: "Returns and exchanges can only be requested for delivered orders." };
-  }
-
-  // Check 7-day window based on actual_delivery_date or updated_at
-  const deliveryDateStr = order.actual_delivery_date || order.updated_at;
-  const deliveryTime = new Date(deliveryDateStr).getTime();
-  const nowMs = Date.now();
-  const daysSinceDelivery = (nowMs - deliveryTime) / (1000 * 60 * 60 * 24);
-
-  if (daysSinceDelivery > 7) {
-    return { success: false, error: "Return window has expired (7 days policy)." };
-  }
-
-  if (!params.items || params.items.length === 0) {
+}): Promise<{ success: boolean; returnId?: string; error?: string }> {
+  if (!params.items?.length) {
     return { success: false, error: "Please select at least one item to return or exchange." };
   }
+  if (new Set(params.items.map((item) => item.orderItemId)).size !== params.items.length) {
+    return { success: false, error: "Each order item may only be listed once." };
+  }
 
-  // Check quantities against purchased and existing returns
-  let totalRefundAmount = 0;
-
-  for (const reqItem of params.items) {
-    const orderItem = db
-      .prepare("SELECT * FROM order_items WHERE id = ? AND order_id = ?")
-      .get(reqItem.orderItemId, params.orderId) as DbOrderItem | undefined;
-
-    if (!orderItem) {
-      return { success: false, error: `Invalid order item ${reqItem.orderItemId}.` };
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE")
+      .get<DbOrder>(params.orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.order_status !== "delivered") {
+      return { success: false, error: "Returns and exchanges can only be requested for delivered orders." };
     }
 
-    if (reqItem.quantity <= 0) {
-      return { success: false, error: "Return quantity must be at least 1." };
+    const deliveryTime = new Date(order.actual_delivery_date || order.updated_at).getTime();
+    const daysSinceDelivery = (Date.now() - deliveryTime) / (1000 * 60 * 60 * 24);
+    if (!Number.isFinite(deliveryTime) || daysSinceDelivery > 7) {
+      return { success: false, error: "Return window has expired (7 days policy)." };
     }
 
-    // Sum already returned or active return quantities for this order item
-    const existingReturnedRow = db
-      .prepare(`
-        SELECT COALESCE(SUM(ri.quantity), 0) as total_returned
+    const validatedItems: Array<{ request: typeof params.items[number]; orderItem: DbOrderItem }> = [];
+    let totalRefundAmount = 0;
+    for (const reqItem of params.items) {
+      if (!Number.isInteger(reqItem.quantity) || reqItem.quantity <= 0) {
+        return { success: false, error: "Return quantity must be at least 1." };
+      }
+      const orderItem = await db.prepare(
+        "SELECT * FROM order_items WHERE id = ? AND order_id = ? FOR UPDATE"
+      ).get<DbOrderItem>(reqItem.orderItemId, params.orderId);
+      if (!orderItem) return { success: false, error: "An order item was not found." };
+
+      const returned = await db.prepare(`
+        SELECT COALESCE(SUM(ri.quantity), 0) AS total_returned
         FROM return_items ri
         JOIN returns r ON ri.return_id = r.id
         WHERE ri.order_item_id = ? AND r.status NOT IN ('rejected', 'cancelled')
-      `)
-      .get(reqItem.orderItemId) as { total_returned: number };
-
-    const remainingAvailable = orderItem.quantity - existingReturnedRow.total_returned;
-    if (reqItem.quantity > remainingAvailable) {
-      return {
-        success: false,
-        error: `Cannot return ${reqItem.quantity} units of ${orderItem.product_name} (${orderItem.size}). Only ${remainingAvailable} eligible units remaining.`,
-      };
+      `).get<{ total_returned: number | string }>(reqItem.orderItemId);
+      const remaining = orderItem.quantity - Number(returned?.total_returned ?? 0);
+      if (reqItem.quantity > remaining) {
+        return {
+          success: false,
+          error: `Cannot return ${reqItem.quantity} units of ${orderItem.product_name} (${orderItem.size}). Only ${remaining} eligible units remaining.`,
+        };
+      }
+      validatedItems.push({ request: reqItem, orderItem });
+      totalRefundAmount += orderItem.price * reqItem.quantity;
     }
 
-    totalRefundAmount += orderItem.price * reqItem.quantity;
-  }
-
-  const returnId = `ret_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  const returnNumber = `RET-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${Math.floor(1000 + Math.random() * 9000)}`;
-  const now = new Date().toISOString();
-
-  db.prepare(`
-    INSERT INTO returns (
-      id, order_id, return_number, customer_email, type, status, reason, customer_note, admin_note,
-      resolution_type, refund_amount, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, NULL, ?, ?, ?, ?)
-  `).run(
-    returnId,
-    params.orderId,
-    returnNumber,
-    order.customer_email,
-    params.type,
-    params.reason,
-    params.customerNote || null,
-    params.type === "exchange" ? "exchange" : "refund",
-    params.type === "exchange" ? 0 : totalRefundAmount,
-    now,
-    now
-  );
-
-  const insertItemStmt = db.prepare(`
-    INSERT INTO return_items (
-      id, return_id, order_item_id, product_id, product_name, product_slug, color, size,
-      quantity, price, requested_exchange_size, condition, restocked, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
-  `);
-
-  for (const reqItem of params.items) {
-    const orderItem = db
-      .prepare("SELECT * FROM order_items WHERE id = ?")
-      .get(reqItem.orderItemId) as DbOrderItem;
-
-    const returnItemId = `reti_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    insertItemStmt.run(
-      returnItemId,
+    const returnId = `ret_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const returnNumber = `RET-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${randomUUID().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    await db.prepare(`
+      INSERT INTO returns (
+        id, order_id, return_number, customer_email, type, status, reason, customer_note, admin_note,
+        resolution_type, refund_amount, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, NULL, ?, ?, ?, ?)
+    `).run(
       returnId,
-      reqItem.orderItemId,
-      orderItem.product_id,
-      orderItem.product_name,
-      orderItem.product_slug,
-      orderItem.color || "As pictured",
-      orderItem.size,
-      reqItem.quantity,
-      orderItem.price,
-      reqItem.requestedExchangeSize || null,
+      params.orderId,
+      returnNumber,
+      order.customer_email,
+      params.type,
+      params.reason,
+      params.customerNote || null,
+      params.type === "exchange" ? "exchange" : "refund",
+      params.type === "exchange" ? 0 : totalRefundAmount,
+      now,
       now
     );
-  }
 
-  recordOrderStatusHistory(
-    params.orderId,
-    order.order_status,
-    order.order_status,
-    order.customer_email,
-    `${params.type === "exchange" ? "Exchange" : "Return"} requested for order (${returnId}). Reason: ${params.reason}`
-  );
-
-  return { success: true, returnId };
+    const insertItem = db.prepare(`
+      INSERT INTO return_items (
+        id, return_id, order_item_id, product_id, product_name, product_slug, color, size,
+        quantity, price, requested_exchange_size, condition, restocked, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+    `);
+    for (const { request, orderItem } of validatedItems) {
+      await insertItem.run(
+        `reti_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        returnId,
+        request.orderItemId,
+        orderItem.product_id,
+        orderItem.product_name,
+        orderItem.product_slug,
+        orderItem.color || "As pictured",
+        orderItem.size,
+        request.quantity,
+        orderItem.price,
+        request.requestedExchangeSize || null,
+        now
+      );
+    }
+    await recordOrderStatusHistory(
+      params.orderId,
+      order.order_status,
+      order.order_status,
+      order.customer_email,
+      `${params.type === "exchange" ? "Exchange" : "Return"} requested for order (${returnId}). Reason: ${params.reason}`,
+      db
+    );
+    return { success: true, returnId };
+  });
 }
 
 /**
  * Admin inspects return items and decides restocking condition.
  */
-export function inspectReturnItem(params: {
+export async function inspectReturnItem(params: {
   returnItemId: string;
   condition: "resalable" | "damaged" | "unsuitable";
   actorEmail: string;
-}): { success: boolean; error?: string } {
-  const db = getDb();
-  const item = db
-    .prepare("SELECT * FROM return_items WHERE id = ?")
-    .get(params.returnItemId) as DbReturnItem | undefined;
+}): Promise<{ success: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const item = await db.prepare("SELECT * FROM return_items WHERE id = ? FOR UPDATE")
+      .get<DbReturnItem>(params.returnItemId);
+    if (!item) return { success: false, error: "Return item not found." };
 
-  if (!item) {
-    return { success: false, error: "Return item not found." };
-  }
+    let restocked = item.restocked;
+    if (params.condition === "resalable" && !item.restocked) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT (product_id, size)
+        DO UPDATE SET stock = inventory.stock + EXCLUDED.stock
+      `).run(item.product_id, item.size, item.quantity);
+      restocked = 1;
+    }
 
-  // Restock if resalable and not already restocked
-  let restocked = item.restocked;
-  if (params.condition === "resalable" && !item.restocked) {
-    db.prepare(`
-      UPDATE inventory
-      SET stock = stock + ?
-      WHERE product_id = ? AND size = ?
-    `).run(item.quantity, item.product_id, item.size);
-    restocked = 1;
-  }
-
-  db.prepare(`
-    UPDATE return_items
-    SET condition = ?, restocked = ?
-    WHERE id = ?
-  `).run(params.condition, restocked, params.returnItemId);
-
-  return { success: true };
+    await db.prepare(`
+      UPDATE return_items SET condition = ?, restocked = ? WHERE id = ?
+    `).run(params.condition, restocked, params.returnItemId);
+    return { success: true };
+  });
 }
 
 /**
  * Record a refund record in the database
  */
-export function recordRefund(params: {
+export async function recordRefund(params: {
   orderId: string;
   returnId?: string | null;
   razorpayRefundId?: string | null;
@@ -737,7 +731,7 @@ export function recordRefund(params: {
   reason: string;
   initiatedBy: string;
   failureReason?: string | null;
-}): DbRefundRecord {
+}): Promise<DbRefundRecord> {
   const db = getDb();
   const id = `ref_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   const now = new Date().toISOString();
@@ -745,7 +739,7 @@ export function recordRefund(params: {
   const paymentId = params.razorpayPaymentId || "manual_unpaid_reversal";
   const idempotencyKey = `idemp_${id}`;
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO refund_records (
       id, order_id, return_id, razorpay_refund_id, razorpay_payment_id,
       amount, amount_paisa, currency, status, reason, idempotency_key, initiated_by, failure_reason,
@@ -773,11 +767,14 @@ export function recordRefund(params: {
     order_id: params.orderId,
     return_id: params.returnId || null,
     razorpay_refund_id: params.razorpayRefundId || null,
-    razorpay_payment_id: params.razorpayPaymentId || null,
+    razorpay_payment_id: paymentId,
     amount: params.amount,
+    amount_paisa: amountPaisa,
     currency: "INR",
     status: params.status,
     reason: params.reason,
+    idempotency_key: idempotencyKey,
+    raw_response: null,
     initiated_by: params.initiatedBy,
     failure_reason: params.failureReason || null,
     created_at: now,

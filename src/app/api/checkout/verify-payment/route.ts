@@ -31,14 +31,14 @@ export async function POST(req: NextRequest) {
     const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = validation.data;
 
     // 1. Fetch order from database
-    const order = getOrderById(orderId);
+    const order = await getOrderById(orderId);
     if (!order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
     // Check matching Razorpay order ID
     if (order.razorpay_order_id && order.razorpay_order_id !== razorpayOrderId) {
-      logPaymentAudit(order.id, "payment_mismatch_order_id", {
+      await logPaymentAudit(order.id, "payment_mismatch_order_id", {
         expected: order.razorpay_order_id,
         received: razorpayOrderId,
       });
@@ -84,8 +84,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (!isSignatureValid) {
-      markOrderPaymentFailed(order.id, "Invalid payment signature");
-      logPaymentAudit(order.id, "invalid_signature", {
+      await markOrderPaymentFailed(order.id, "Invalid payment signature");
+      await logPaymentAudit(order.id, "invalid_signature", {
         razorpayOrderId,
         razorpayPaymentId,
         razorpaySignature,
@@ -105,11 +105,11 @@ export async function POST(req: NextRequest) {
         // Verify currency and amount matches expected order total (in paisa)
         const expectedPaisa = Math.round(order.total * 100);
         if (payment.amount !== expectedPaisa) {
-          logPaymentAudit(order.id, "payment_amount_mismatch", {
+          await logPaymentAudit(order.id, "payment_amount_mismatch", {
             expected: expectedPaisa,
             received: payment.amount,
           });
-          markOrderPaymentFailed(order.id, "Payment amount mismatch");
+          await markOrderPaymentFailed(order.id, "Payment amount mismatch");
           return NextResponse.json(
             { error: "Payment amount does not match order total" },
             { status: 400 }
@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (payment.status !== "captured" && payment.status !== "authorized") {
-          markOrderPaymentFailed(order.id, `Payment status is ${payment.status}`);
+          await markOrderPaymentFailed(order.id, `Payment status is ${payment.status}`);
           return NextResponse.json(
             { error: `Payment is not successful (status: ${payment.status})` },
             { status: 400 }
@@ -134,15 +134,15 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Update database: Mark order as paid and commit inventory deduction
-    const updateResult = markOrderAsPaid(order.id, razorpayPaymentId, razorpaySignature);
+    const updateResult = await markOrderAsPaid(order.id, razorpayPaymentId, razorpaySignature);
 
-    logPaymentAudit(order.id, "payment_verified_and_paid", {
+    await logPaymentAudit(order.id, "payment_verified_and_paid", {
       razorpayPaymentId,
       amount: order.total,
     });
 
     // 6. Send transactional confirmation email asynchronously
-    const refreshedOrder = getOrderById(order.id) || order;
+    const refreshedOrder = await getOrderById(order.id) || order;
     sendOrderConfirmationEmail(refreshedOrder).catch((err) => {
       console.error("Email notification dispatch error:", err);
     });

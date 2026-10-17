@@ -10,7 +10,7 @@
  */
 
 import { randomBytes, pbkdf2Sync, timingSafeEqual, createHmac } from "crypto";
-import { getDb, DbAdminUser } from "@/lib/db/index";
+import { getDb, DbAdminUser, withTransaction } from "@/lib/db/index";
 import { NextRequest } from "next/server";
 
 const PBKDF2_ITERATIONS = 100_000;
@@ -58,25 +58,23 @@ export function verifyPassword(password: string, stored: string): boolean {
  * The raw token is sent to the client in an HTTP-only cookie.
  * Only the hash is stored in the database.
  */
-export function createSession(
+export async function createSession(
   adminId: string,
   ipAddress?: string,
   userAgent?: string
-): string {
-  const db = getDb();
+): Promise<string> {
   const rawToken = randomBytes(SESSION_BYTES).toString("hex");
   const tokenHash = hashToken(rawToken);
   const sessionId = `sess_${randomBytes(8).toString("hex")}`;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_HOURS * 60 * 60 * 1000);
 
-  // Clean up expired sessions for this admin
-  db.prepare("DELETE FROM admin_sessions WHERE admin_id = ? AND expires_at < ?").run(
-    adminId,
-    now.toISOString()
-  );
-
-  db.prepare(`
+  await withTransaction(async (db) => {
+    await db.prepare("DELETE FROM admin_sessions WHERE admin_id = ? AND expires_at < ?").run(
+      adminId,
+      now.toISOString()
+    );
+    await db.prepare(`
     INSERT INTO admin_sessions (id, admin_id, token_hash, expires_at, created_at, ip_address, user_agent)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -88,6 +86,7 @@ export function createSession(
     ipAddress || null,
     userAgent || null
   );
+  });
 
   return rawToken;
 }
@@ -96,104 +95,96 @@ export function createSession(
  * Validate a session token from request cookie.
  * Returns the admin user if the session is valid, null otherwise.
  */
-export function validateSession(req: NextRequest): DbAdminUser | null {
-  try {
-    const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
-    if (!token || token.length < 10) return null;
+export async function validateSession(req: NextRequest): Promise<DbAdminUser | null> {
+  const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
+  if (!token || token.length < 10) return null;
 
-    const tokenHash = hashToken(token);
-    const db = getDb();
+  const tokenHash = hashToken(token);
+  const db = getDb();
 
-    const session = db.prepare(`
+  const session = await db.prepare(`
       SELECT s.*, u.id as uid, u.email, u.name, u.password_hash, u.role, u.is_active, u.created_at as ucreated, u.updated_at as uupdated
       FROM admin_sessions s
       JOIN admin_users u ON u.id = s.admin_id
       WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1
-    `).get(tokenHash, new Date().toISOString()) as (
-      { uid: string; email: string; name: string; password_hash: string; role: string; is_active: number; ucreated: string; uupdated: string } | undefined
-    );
+    `).get<{
+    uid: string;
+    email: string;
+    name: string;
+    password_hash: string;
+    role: string;
+    is_active: number;
+    ucreated: string;
+    uupdated: string;
+  }>(tokenHash, new Date().toISOString());
 
-    if (!session) return null;
+  if (!session) return null;
 
-    return {
-      id: session.uid,
-      email: session.email,
-      name: session.name,
-      password_hash: session.password_hash,
-      role: session.role,
-      is_active: session.is_active,
-      created_at: session.ucreated,
-      updated_at: session.uupdated,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    id: session.uid,
+    email: session.email,
+    name: session.name,
+    password_hash: session.password_hash,
+    role: session.role,
+    is_active: session.is_active,
+    created_at: session.ucreated,
+    updated_at: session.uupdated,
+  };
 }
 
 /**
  * Invalidate a specific session (logout).
  */
-export function revokeSession(token: string): void {
-  try {
-    const db = getDb();
-    const tokenHash = hashToken(token);
-    db.prepare("DELETE FROM admin_sessions WHERE token_hash = ?").run(tokenHash);
-  } catch {
-    /* ignore */
-  }
+export async function revokeSession(token: string): Promise<void> {
+  const db = getDb();
+  const tokenHash = hashToken(token);
+  await db.prepare("DELETE FROM admin_sessions WHERE token_hash = ?").run(tokenHash);
 }
 
 /**
  * Get admin user by email (for login).
  */
-export function getAdminByEmail(email: string): DbAdminUser | null {
-  try {
-    const db = getDb();
-    return (db.prepare("SELECT * FROM admin_users WHERE email = ? AND is_active = 1").get(
-      email.toLowerCase().trim()
-    ) as DbAdminUser | undefined) ?? null;
-  } catch {
-    return null;
-  }
+export async function getAdminByEmail(email: string): Promise<DbAdminUser | null> {
+  const db = getDb();
+  return (await db.prepare("SELECT * FROM admin_users WHERE email = ? AND is_active = 1").get<DbAdminUser>(
+    email.toLowerCase().trim()
+  )) ?? null;
 }
 
 /**
  * Create an admin user (called from server-side setup script only).
  */
-export function createAdminUser(
+export async function createAdminUser(
   email: string,
   name: string,
   password: string,
   role = "admin"
-): { success: boolean; error?: string } {
-  try {
-    const db = getDb();
-
-    // Check if email already exists
-    const existing = db.prepare("SELECT id FROM admin_users WHERE email = ?").get(
-      email.toLowerCase().trim()
-    );
-    if (existing) {
-      return { success: false, error: "Admin account with this email already exists." };
-    }
-
-    if (password.length < 12) {
-      return { success: false, error: "Password must be at least 12 characters." };
-    }
-
-    const id = `adm_${randomBytes(8).toString("hex")}`;
-    const now = new Date().toISOString();
-    const passwordHash = hashPassword(password);
-
-    db.prepare(`
-      INSERT INTO admin_users (id, email, name, password_hash, role, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-    `).run(id, email.toLowerCase().trim(), name, passwordHash, role, now, now);
-
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: String(err) };
+): Promise<{ success: boolean; error?: string }> {
+  if (password.length < 12) {
+    return { success: false, error: "Password must be at least 12 characters." };
   }
+
+  const id = `adm_${randomBytes(8).toString("hex")}`;
+  const now = new Date().toISOString();
+  const passwordHash = hashPassword(password);
+  const result = await getDb().prepare(`
+    INSERT INTO admin_users (id, email, name, password_hash, role, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT (email) DO NOTHING
+    RETURNING id
+  `).get<{ id: string }>(
+    id,
+    email.toLowerCase().trim(),
+    name,
+    passwordHash,
+    role,
+    now,
+    now
+  );
+
+  return result
+    ? { success: true }
+    : { success: false, error: "Admin account with this email already exists." };
 }
 
 // ─── Cookie Helpers ────────────────────────────────────────────────────────────
@@ -214,7 +205,7 @@ export function getSessionCookieOptions(maxAgeSeconds?: number) {
  * Returns the authenticated admin or null.
  * Use in Route Handlers for /api/admin/* endpoints.
  */
-export function requireAdminAuth(req: NextRequest): DbAdminUser | null {
+export function requireAdminAuth(req: NextRequest): Promise<DbAdminUser | null> {
   return validateSession(req);
 }
 

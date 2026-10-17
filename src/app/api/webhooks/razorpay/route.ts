@@ -8,6 +8,7 @@ import {
   logPaymentAudit,
 } from "@/lib/db/orders";
 import { sendOrderConfirmationEmail } from "@/services/notification-service";
+import { getDb } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -42,13 +43,13 @@ export async function POST(req: NextRequest) {
       const rzpPaymentId = paymentEntity?.id || "webhook_captured";
       const notesOrderId = paymentEntity?.notes?.orderId || orderEntity?.notes?.orderId;
 
-      let order = notesOrderId ? getOrderById(notesOrderId) : null;
+      let order = notesOrderId ? await getOrderById(notesOrderId) : null;
       if (!order && rzpOrderId) {
-        order = getOrderByRazorpayOrderId(rzpOrderId);
+        order = await getOrderByRazorpayOrderId(rzpOrderId);
       }
 
       if (order) {
-        logPaymentAudit(order.id, `webhook_${eventType}`, {
+        await logPaymentAudit(order.id, `webhook_${eventType}`, {
           event: eventType,
           paymentId: rzpPaymentId,
         });
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
         if (paymentEntity?.amount) {
           const expectedPaisa = Math.round(order.total * 100);
           if (paymentEntity.amount !== expectedPaisa) {
-            logPaymentAudit(order.id, "webhook_amount_mismatch", {
+            await logPaymentAudit(order.id, "webhook_amount_mismatch", {
               expected: expectedPaisa,
               received: paymentEntity.amount,
             });
@@ -65,29 +66,29 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const result = markOrderAsPaid(order.id, rzpPaymentId);
+        const result = await markOrderAsPaid(order.id, rzpPaymentId);
         if (!result.alreadyPaid) {
-          const refreshed = getOrderById(order.id);
+          const refreshed = await getOrderById(order.id);
           if (refreshed) {
             sendOrderConfirmationEmail(refreshed).catch(console.error);
           }
         }
       } else {
-        logPaymentAudit(null, `webhook_unmatched_${eventType}`, { rzpOrderId, notesOrderId });
+        await logPaymentAudit(null, `webhook_unmatched_${eventType}`, { rzpOrderId, notesOrderId });
       }
     } else if (eventType === "payment.failed") {
       const paymentEntity = payload.payment?.entity;
       const rzpOrderId = paymentEntity?.order_id;
       const notesOrderId = paymentEntity?.notes?.orderId;
 
-      let order = notesOrderId ? getOrderById(notesOrderId) : null;
+      let order = notesOrderId ? await getOrderById(notesOrderId) : null;
       if (!order && rzpOrderId) {
-        order = getOrderByRazorpayOrderId(rzpOrderId);
+        order = await getOrderByRazorpayOrderId(rzpOrderId);
       }
 
         if (order) {
-        markOrderPaymentFailed(order.id, paymentEntity?.error_description || "Payment failed");
-        logPaymentAudit(order.id, "webhook_payment_failed", {
+        await markOrderPaymentFailed(order.id, paymentEntity?.error_description || "Payment failed");
+        await logPaymentAudit(order.id, "webhook_payment_failed", {
           errorCode: paymentEntity?.error_code,
           description: paymentEntity?.error_description,
         });
@@ -99,54 +100,62 @@ export async function POST(req: NextRequest) {
       const amount = refundEntity?.amount ? refundEntity.amount / 100 : 0;
       const notesOrderId = refundEntity?.notes?.orderId;
 
-      let order = notesOrderId ? getOrderById(notesOrderId) : null;
+      let order = notesOrderId ? await getOrderById(notesOrderId) : null;
       if (!order && paymentId) {
-        const db = (await import("@/lib/db")).getDb();
-        const found = db.prepare("SELECT * FROM orders WHERE razorpay_payment_id = ?").get(paymentId) as any;
-        if (found) order = getOrderById(found.id);
+        const found = await getDb().prepare("SELECT * FROM orders WHERE razorpay_payment_id = ?").get<{ id: string }>(paymentId);
+        if (found) order = await getOrderById(found.id);
       }
 
       if (order) {
-        logPaymentAudit(order.id, `webhook_${eventType}`, { refundId, amount, paymentId });
+        await logPaymentAudit(order.id, `webhook_${eventType}`, { refundId, amount, paymentId });
 
-        const db = (await import("@/lib/db")).getDb();
+        if (typeof refundId !== "string" || typeof paymentId !== "string" || !Number.isFinite(amount) || amount <= 0) {
+          return NextResponse.json({ error: "Invalid refund event details" }, { status: 400 });
+        }
+        const db = getDb();
         const now = new Date().toISOString();
 
         // Update refund record status if exists, or insert
-        const existingRef = db
-          .prepare("SELECT * FROM refund_records WHERE razorpay_refund_id = ?")
-          .get(refundId) as any;
+        const existingRef = await db
+          .prepare("SELECT * FROM refund_records WHERE razorpay_refund_id = ? AND order_id = ?")
+          .get<{ id: string }>(refundId, order.id);
 
         if (existingRef) {
-          db.prepare(`
+          await db.prepare(`
             UPDATE refund_records
             SET status = 'processed', updated_at = ?
-            WHERE razorpay_refund_id = ?
-          `).run(now, refundId);
+            WHERE razorpay_refund_id = ? AND order_id = ?
+          `).run(now, refundId, order.id);
         } else {
-          db.prepare(`
+          await db.prepare(`
             INSERT INTO refund_records (
               id, order_id, razorpay_refund_id, razorpay_payment_id,
-              amount, currency, status, reason, initiated_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'INR', 'processed', 'Webhook reconciliation', 'razorpay_webhook', ?, ?)
+              amount, amount_paisa, currency, status, reason, idempotency_key,
+              initiated_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'INR', 'processed', 'Webhook reconciliation',
+              ?, 'razorpay_webhook', ?, ?)
+            ON CONFLICT (idempotency_key) DO UPDATE
+            SET status = 'processed', updated_at = EXCLUDED.updated_at
           `).run(
             `ref_${refundId}`,
             order.id,
             refundId,
-            paymentId || null,
+            paymentId,
             amount,
+            Math.round(amount * 100),
+            `rzp_refund_${refundId}`,
             now,
             now
           );
         }
 
         // If total refunds equal or exceed order total, mark order as refunded
-        const totalRefundedRow = db
+        const totalRefundedRow = await db
           .prepare("SELECT COALESCE(SUM(amount), 0) as total FROM refund_records WHERE order_id = ? AND status = 'processed'")
-          .get(order.id) as { total: number };
+          .get<{ total: string | number }>(order.id);
 
-        if (totalRefundedRow.total >= order.total) {
-          db.prepare(`
+        if (Number(totalRefundedRow?.total ?? 0) >= order.total) {
+          await db.prepare(`
             UPDATE orders
             SET order_status = 'refunded', refund_status = 'refunded', updated_at = ?
             WHERE id = ?
@@ -159,8 +168,8 @@ export async function POST(req: NextRequest) {
       const failureReason = refundEntity?.error_description || "Refund failed by bank";
 
       if (refundId) {
-        const db = (await import("@/lib/db")).getDb();
-        db.prepare(`
+        const db = getDb();
+        await db.prepare(`
           UPDATE refund_records
           SET status = 'failed', failure_reason = ?, updated_at = ?
           WHERE razorpay_refund_id = ?

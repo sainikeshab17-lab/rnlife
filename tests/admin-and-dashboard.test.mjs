@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
-import crypto from "node:crypto";
+import { databaseTest } from "./postgres-test-support.mjs";
 import { getDb } from "../src/lib/db/index.ts";
 import {
   hashPassword,
@@ -13,15 +13,11 @@ import {
 import {
   isValidAdminTransition,
   requiresRefund,
-  getValidNextStatuses,
 } from "../src/lib/order-status-machine.ts";
 import { writeAuditLog, getAuditLogs } from "../src/lib/db/audit.ts";
 import {
   createPendingOrder,
-  getOrderById,
-  markOrderAsPaid,
   checkAndReserveInventory,
-  releaseInventoryReservation,
 } from "../src/lib/db/orders.ts";
 import { generateOrderNumber } from "../src/services/checkout-service.ts";
 import { PRODUCTS } from "../src/data/mock-data.ts";
@@ -37,18 +33,18 @@ describe("Phase 3: Secure Admin Authentication & Password Hashing", () => {
     assert.strictEqual(verifyPassword("", hashed), false);
   });
 
-  test("Rejects creation of admin user with password under 12 characters", () => {
-    const shortResult = createAdminUser("short@rnl.in", "Short", "weak123");
+  test("Rejects creation of admin user with password under 12 characters", async () => {
+    const shortResult = await createAdminUser("short@rnl.in", "Short", "weak123");
     assert.strictEqual(shortResult.success, false);
     assert.match(shortResult.error, /at least 12 characters/i);
   });
 
-  test("Creates and retrieves admin user idempotently without password leakage", () => {
+  databaseTest("Creates and retrieves admin user idempotently without password leakage", async () => {
     const email = `admin_test_${Date.now()}@rightnowlife.in`;
-    const createRes = createAdminUser(email, "Test Lead", "SecurePassphrase123#");
+    const createRes = await createAdminUser(email, "Test Lead", "SecurePassphrase123#");
     assert.strictEqual(createRes.success, true);
 
-    const retrieved = getAdminByEmail(email);
+    const retrieved = await getAdminByEmail(email);
     assert.ok(retrieved);
     assert.strictEqual(retrieved.email, email);
     assert.strictEqual(retrieved.name, "Test Lead");
@@ -58,27 +54,27 @@ describe("Phase 3: Secure Admin Authentication & Password Hashing", () => {
     assert.strictEqual(verifyPassword("SecurePassphrase123#", retrieved.password_hash), true);
 
     // Duplicate creation must be blocked
-    const duplicate = createAdminUser(email, "Dupe", "SecurePassphrase123#");
+    const duplicate = await createAdminUser(email, "Dupe", "SecurePassphrase123#");
     assert.strictEqual(duplicate.success, false);
   });
 
-  test("Session lifecycle: generates token, hashes in DB, and revokes cleanly", () => {
+  databaseTest("Session lifecycle: generates token, hashes in DB, and revokes cleanly", async () => {
     const email = `session_adm_${Date.now()}@rightnowlife.in`;
-    createAdminUser(email, "Session Tester", "SecurePassphrase123#");
-    const admin = getAdminByEmail(email);
+    await createAdminUser(email, "Session Tester", "SecurePassphrase123#");
+    const admin = await getAdminByEmail(email);
     assert.ok(admin);
 
-    const rawToken = createSession(admin.id, "127.0.0.1", "NodeTest/1.0");
+    const rawToken = await createSession(admin.id, "127.0.0.1", "NodeTest/1.0");
     assert.ok(rawToken);
     assert.strictEqual(rawToken.length, 64); // 32 bytes hex
 
     const db = getDb();
     // Raw token must NOT exist in the database (only hashed token stored)
-    const rawInDb = db.prepare("SELECT * FROM admin_sessions WHERE token_hash = ?").get(rawToken);
+    const rawInDb = await db.prepare("SELECT * FROM admin_sessions WHERE token_hash = ?").get(rawToken);
     assert.strictEqual(rawInDb, undefined);
 
     // Revocation clears the session
-    revokeSession(rawToken);
+    await revokeSession(rawToken);
   });
 });
 
@@ -108,9 +104,9 @@ describe("Phase 3: Order Status State Machine & Refund Safety", () => {
     assert.strictEqual(requiresRefund("pending_payment", "cancelled"), false);
   });
 
-  test("Order detail endpoint returns status transition history and audit timestamps", () => {
+  databaseTest("Order detail endpoint returns status transition history and audit timestamps", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Status History Customer",
       customerEmail: "history_test@rightnowlife.in",
@@ -147,12 +143,12 @@ describe("Phase 3: Order Status State Machine & Refund Safety", () => {
     const db = getDb();
     // Simulate recording status transition in order_status_history
     const histId = `sh_${Date.now()}`;
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO order_status_history (id, order_id, from_status, to_status, actor, note, created_at)
       VALUES (?, ?, 'pending_payment', 'cancelled', 'admin@rightnowlife.in', 'Customer requested cancellation', ?)
     `).run(histId, order.id, new Date().toISOString());
 
-    const historyRows = db
+    const historyRows = await db
       .prepare("SELECT * FROM order_status_history WHERE order_id = ?")
       .all(order.id);
 
@@ -163,29 +159,29 @@ describe("Phase 3: Order Status State Machine & Refund Safety", () => {
 });
 
 describe("Phase 3: Inventory Management, Adjustments & Concurrency", () => {
-  test("Prevents overselling when requested quantity exceeds available stock", () => {
+  databaseTest("Prevents overselling when requested quantity exceeds available stock", async () => {
     const db = getDb();
     // Check initial stock for design 01 size XXL
-    const inv = db
+    const inv = await db
       .prepare("SELECT stock, reserved FROM inventory WHERE product_id = ? AND size = ?")
       .get("rnl-design-01", "XXL");
 
     const available = inv.stock - inv.reserved;
 
     // Requesting more than available must fail cleanly
-    const excessCheck = checkAndReserveInventory([
+    const excessCheck = await checkAndReserveInventory([
       { productId: "rnl-design-01", size: "XXL", quantity: available + 50 },
     ]);
     assert.strictEqual(excessCheck.ok, false);
     assert.match(excessCheck.error, /Insufficient stock/i);
   });
 
-  test("Records inventory adjustment with actor, before/after stock, and reason in audit table", () => {
+  databaseTest("Records inventory adjustment with actor, before/after stock, and reason in audit table", async () => {
     const db = getDb();
     const productId = "rnl-design-02";
     const size = "M";
 
-    const beforeRow = db
+    const beforeRow = await db
       .prepare("SELECT stock FROM inventory WHERE product_id = ? AND size = ?")
       .get(productId, size);
 
@@ -195,7 +191,7 @@ describe("Phase 3: Inventory Management, Adjustments & Concurrency", () => {
     const actor = "warehouse_lead@rightnowlife.in";
 
     // Update stock
-    db.prepare("UPDATE inventory SET stock = ? WHERE product_id = ? AND size = ?").run(
+    await db.prepare("UPDATE inventory SET stock = ? WHERE product_id = ? AND size = ?").run(
       newStock,
       productId,
       size
@@ -203,13 +199,13 @@ describe("Phase 3: Inventory Management, Adjustments & Concurrency", () => {
 
     // Record adjustment audit
     const adjId = `iadj_test_${Date.now()}`;
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO inventory_adjustments (id, product_id, size, prev_stock, new_stock, delta, reason, actor, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(adjId, productId, size, beforeRow.stock, newStock, delta, reason, actor, new Date().toISOString());
 
     // Verify audit entry
-    const recorded = db
+    const recorded = await db
       .prepare("SELECT * FROM inventory_adjustments WHERE id = ?")
       .get(adjId);
 
@@ -222,13 +218,13 @@ describe("Phase 3: Inventory Management, Adjustments & Concurrency", () => {
 });
 
 describe("Phase 3: Immutable Audit Logging & Pricing Lockdown", () => {
-  test("Writes and retrieves audit log entries with metadata and before/after values", () => {
+  databaseTest("Writes and retrieves audit log entries with metadata and before/after values", async () => {
     const actor = "governance@rightnowlife.in";
     const action = "product_visibility_toggled";
     const entityType = "product";
     const entityId = "rnl-design-03";
 
-    writeAuditLog({
+    await writeAuditLog({
       actor,
       action,
       entityType,
@@ -238,7 +234,7 @@ describe("Phase 3: Immutable Audit Logging & Pricing Lockdown", () => {
       metadata: { reason: "Seasonal rotation" },
     });
 
-    const { logs, total } = getAuditLogs({ entityType, entityId });
+    const { logs, total } = await getAuditLogs({ entityType, entityId });
     assert.ok(total >= 1);
     const found = logs.find((l) => l.action === action);
     assert.ok(found);
@@ -255,25 +251,27 @@ describe("Phase 3: Immutable Audit Logging & Pricing Lockdown", () => {
     }
   });
 
-  test("Dashboard calculation logic computes gross vs net sales accurately", () => {
+  databaseTest("Dashboard calculation logic computes gross vs net sales accurately", async () => {
     const db = getDb();
 
     // Sum paid and refund_pending orders
-    const grossRow = db.prepare(`
+    const grossRow = await db.prepare(`
       SELECT COALESCE(SUM(total), 0) as gross
       FROM orders
       WHERE payment_status IN ('paid', 'refund_pending')
     `).get();
 
-    const refundRow = db.prepare(`
+    const refundRow = await db.prepare(`
       SELECT COALESCE(SUM(total), 0) as refunded
       FROM orders
       WHERE order_status = 'refunded'
     `).get();
 
-    const netSales = grossRow.gross - refundRow.refunded;
-    assert.ok(typeof grossRow.gross === "number");
+    const grossSales = Number(grossRow.gross);
+    const refundedSales = Number(refundRow.refunded);
+    const netSales = grossSales - refundedSales;
+    assert.ok(Number.isFinite(grossSales));
     assert.ok(typeof netSales === "number");
-    assert.ok(grossRow.gross >= netSales); // Net sales cannot exceed gross sales
+    assert.ok(grossSales >= netSales); // Net sales cannot exceed gross sales
   });
 });

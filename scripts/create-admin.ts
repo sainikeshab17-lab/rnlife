@@ -1,30 +1,36 @@
-import { getDb } from "../src/lib/db/index";
 import { createAdminUser, getAdminByEmail } from "../src/lib/auth/admin-auth";
+import dotenv from "dotenv";
 
-const email = process.argv[2] || process.env.INITIAL_ADMIN_EMAIL || "admin@rightnowlife.in";
-const password = process.argv[3] || process.env.INITIAL_ADMIN_PASSWORD || "RightNowLife@Admin2026";
-const name = process.argv[4] || process.env.INITIAL_ADMIN_NAME || "Store Administrator";
-const role = process.argv[5] || process.env.INITIAL_ADMIN_ROLE || "super_admin";
+dotenv.config({ path: ".env.local" });
+dotenv.config();
 
-console.log("==> Initializing RIGHTNOWLIFE Database & Initial Admin User...");
+async function main() {
+  const email = process.argv[2] || process.env.INITIAL_ADMIN_EMAIL;
+  const password = process.argv[3] || process.env.INITIAL_ADMIN_PASSWORD;
+  const name = process.argv[4] || process.env.INITIAL_ADMIN_NAME || "Store Administrator";
+  const role = process.argv[5] || process.env.INITIAL_ADMIN_ROLE || "super_admin";
 
-// Ensure database schema and migrations run
-getDb();
+  if (!email || !password) {
+    throw new Error("Provide the initial admin email and password through arguments or environment variables.");
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required to create an admin in PostgreSQL.");
+  }
 
-const existing = getAdminByEmail(email);
-if (existing) {
-  console.log(`[INFO] Admin user '${email}' already exists. (ID: ${existing.id}, Role: ${existing.role})`);
-  process.exit(0);
+  console.log("Checking PostgreSQL for the initial RIGHTNOWLIFE admin account...");
+  if (await getAdminByEmail(email)) {
+    console.log("[INFO] An active admin account already exists for that email.");
+    return;
+  }
+
+  const result = await createAdminUser(email, name, password, role);
+  if (!result.success) throw new Error(result.error || "Unable to create admin account.");
+
+  console.log("[SUCCESS] Initial admin account created. Credentials were not logged.");
 }
 
-const result = createAdminUser(email, name, password, role);
-if (!result.success) {
-  console.error(`[ERROR] Failed to create admin user: ${result.error}`);
-  process.exit(1);
-}
-
-console.log(`[SUCCESS] Admin user created successfully:`);
-console.log(`  Email: ${email}`);
-console.log(`  Name:  ${name}`);
-console.log(`  Role:  ${role}`);
-console.log(`  Note:  Never log or commit raw passwords.`);
+main().catch((error: unknown) => {
+  const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
+  console.error(`[setup-admin] Failed to create initial admin (database code ${code}).`);
+  process.exitCode = 1;
+});

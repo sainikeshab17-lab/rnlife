@@ -12,9 +12,9 @@ export async function GET(
     const email = searchParams.get("email");
 
     // Lookup by internal ID or Order Number
-    let order = getOrderById(id);
+    let order = await getOrderById(id);
     if (!order) {
-      order = getOrderByNumber(id);
+      order = await getOrderByNumber(id);
     }
 
     if (!order) {

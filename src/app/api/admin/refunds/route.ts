@@ -13,11 +13,11 @@ export const dynamic = "force-dynamic";
  * List all refund records across orders.
  */
 export async function GET(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const db = getDb();
-  const refunds = db
+  const refunds = await db
     .prepare(`
       SELECT r.*, o.order_number, o.customer_name, o.customer_email
       FROM refund_records r
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
  * Admin initiates an online refund for an order via Razorpay API.
  */
 export async function POST(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Order ID and a positive refund amount are required." }, { status: 400 });
   }
 
-  const order = getOrderById(orderId);
+  const order = await getOrderById(orderId);
   if (!order) {
     return NextResponse.json({ error: "Order not found." }, { status: 404 });
   }
@@ -59,11 +59,12 @@ export async function POST(req: NextRequest) {
   const db = getDb();
 
   // Validate amount does not exceed remaining refundable balance
-  const existingRefundsRow = db
+  const existingRefundsRow = await db
     .prepare("SELECT COALESCE(SUM(amount), 0) as total FROM refund_records WHERE order_id = ? AND status != 'failed'")
-    .get(orderId) as { total: number };
+    .get<{ total: string | number }>(orderId);
+  const alreadyRefunded = Number(existingRefundsRow?.total ?? 0);
 
-  const remainingRefundable = order.total - existingRefundsRow.total;
+  const remainingRefundable = order.total - alreadyRefunded;
   if (amount > remainingRefundable) {
     return NextResponse.json(
       { error: `Refund amount ₹${amount} exceeds remaining refundable balance ₹${remainingRefundable}.` },
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!rzpResult.success) {
-    recordRefund({
+    await recordRefund({
       orderId: order.id,
       returnId: returnId || null,
       razorpayPaymentId: order.razorpay_payment_id,
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Record successful/pending refund
-  const refundRec = recordRefund({
+  const refundRec = await recordRefund({
     orderId: order.id,
     returnId: returnId || null,
     razorpayRefundId: rzpResult.refundId,
@@ -116,15 +117,15 @@ export async function POST(req: NextRequest) {
   });
 
   // Check if fully refunded
-  const newTotalRefunded = existingRefundsRow.total + amount;
+  const newTotalRefunded = alreadyRefunded + amount;
   if (newTotalRefunded >= order.total) {
-    db.prepare(`
+    await db.prepare(`
       UPDATE orders
       SET order_status = 'refunded', refund_status = 'refunded', refund_id = ?, updated_at = ?
       WHERE id = ?
     `).run(rzpResult.refundId || null, new Date().toISOString(), order.id);
   } else {
-    db.prepare(`
+    await db.prepare(`
       UPDATE orders
       SET refund_status = 'partially_refunded', refund_id = ?, updated_at = ?
       WHERE id = ?
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
 
   // If return request linked, update return status to completed
   if (returnId) {
-    db.prepare(`
+    await db.prepare(`
       UPDATE returns
       SET status = 'completed', updated_at = ?
       WHERE id = ?
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
   // Send customer email notification
   sendRefundConfirmationEmail(order, amount, rzpResult.refundId || refundRec.id).catch(console.error);
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: "refund_issued",
     entityType: "order",

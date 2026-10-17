@@ -10,11 +10,11 @@ export const dynamic = "force-dynamic";
  * Admin decision on cancellation request.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const order = getOrderById(id);
+  const order = await getOrderById(id);
   if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
   const body = await req.json();
@@ -24,12 +24,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Field 'approved' must be a boolean." }, { status: 400 });
   }
 
-  const result = decideOrderCancellation(id, approved, admin.email, note);
+  const result = await decideOrderCancellation(id, approved, admin.email, note);
   if (!result.success) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: approved ? "order_cancellation_approved" : "order_cancellation_rejected",
     entityType: "order",
@@ -39,6 +39,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 
-  const updated = getOrderById(id);
+  const updated = await getOrderById(id);
   return NextResponse.json({ success: true, order: updated });
 }

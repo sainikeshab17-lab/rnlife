@@ -11,11 +11,11 @@ export const dynamic = "force-dynamic";
  * List transactional notification queue and logs.
  */
 export async function GET(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const db = getDb();
-  const jobs = db
+  const jobs = await db
     .prepare("SELECT * FROM notification_jobs ORDER BY created_at DESC LIMIT 100")
     .all() as DbNotificationJob[];
 
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
  * Retry a failed or pending notification job.
  */
 export async function POST(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   const result = await processNotificationJob(jobId);
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: "notification_retry",
     entityType: "notification_job",

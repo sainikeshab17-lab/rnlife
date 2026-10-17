@@ -1,6 +1,7 @@
-import { test, describe, before, after } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert";
 import crypto from "node:crypto";
+import { databaseTest } from "./postgres-test-support.mjs";
 import {
   calculateTrustedOrderPricing,
   CheckoutItemSchema,
@@ -17,10 +18,7 @@ import {
   markOrderAsPaid,
   markOrderPaymentFailed,
   getOrdersByEmail,
-  checkAndReserveInventory,
-  releaseInventoryReservation,
 } from "../src/lib/db/orders.ts";
-import { getDb } from "../src/lib/db/index.ts";
 
 describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
   test("Server strictly enforces ₹999 price per T-shirt and calculates correct shipping", () => {
@@ -196,9 +194,9 @@ describe("Phase 2: Cryptographic Razorpay Signature Verification", () => {
 });
 
 describe("Phase 2: Database Order Management & Idempotency", () => {
-  test("Creates pending order in relational database and verifies relations", () => {
+  databaseTest("Creates pending order in relational database and verifies relations", async () => {
     const orderNumber = generateOrderNumber();
-    const { order, guestToken } = createPendingOrder({
+    const { order, guestToken } = await createPendingOrder({
       orderNumber,
       customerName: "Devika Rao",
       customerEmail: "devika@rightnowlife.in",
@@ -239,16 +237,16 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
     assert.ok(guestToken);
 
     // Fetch order back with relations
-    const fetched = getOrderById(order.id);
+    const fetched = await getOrderById(order.id);
     assert.ok(fetched);
     assert.strictEqual(fetched.items.length, 1);
     assert.strictEqual(fetched.items[0].price, 999);
     assert.strictEqual(fetched.address?.city, "Bengaluru");
   });
 
-  test("Idempotently transitions order to paid without duplicate deductions", () => {
+  databaseTest("Idempotently transitions order to paid without duplicate deductions", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Kabir Malhotra",
       customerEmail: "kabir@rightnowlife.in",
@@ -284,23 +282,23 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
     });
 
     // 1st transition
-    const firstCall = markOrderAsPaid(order.id, "pay_kabir_123", "sig_123");
+    const firstCall = await markOrderAsPaid(order.id, "pay_kabir_123", "sig_123");
     assert.strictEqual(firstCall.success, true);
     assert.strictEqual(firstCall.alreadyPaid, false);
 
-    const paidOrder = getOrderById(order.id);
+    const paidOrder = await getOrderById(order.id);
     assert.strictEqual(paidOrder?.payment_status, "paid");
     assert.strictEqual(paidOrder?.order_status, "paid");
 
     // 2nd duplicate transition (idempotent duplicate callback)
-    const secondCall = markOrderAsPaid(order.id, "pay_kabir_123", "sig_123");
+    const secondCall = await markOrderAsPaid(order.id, "pay_kabir_123", "sig_123");
     assert.strictEqual(secondCall.success, true);
     assert.strictEqual(secondCall.alreadyPaid, true); // Handled idempotently
   });
 
-  test("Handles payment failure cleanly and preserves order history", () => {
+  databaseTest("Handles payment failure cleanly and preserves order history", async () => {
     const orderNumber = generateOrderNumber();
-    const { order } = createPendingOrder({
+    const { order } = await createPendingOrder({
       orderNumber,
       customerName: "Pooja S",
       customerEmail: "pooja@rightnowlife.in",
@@ -334,15 +332,15 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
       },
     });
 
-    markOrderPaymentFailed(order.id, "Bank network timeout");
-    const failedOrder = getOrderById(order.id);
+    await markOrderPaymentFailed(order.id, "Bank network timeout");
+    const failedOrder = await getOrderById(order.id);
     assert.strictEqual(failedOrder?.payment_status, "payment_failed");
     assert.strictEqual(failedOrder?.order_status, "payment_failed");
   });
 
-  test("Retrieves customer order history correctly by email", () => {
+  databaseTest("Retrieves customer order history correctly by email", async () => {
     const email = "customer_test@rightnowlife.in";
-    createPendingOrder({
+    await createPendingOrder({
       orderNumber: generateOrderNumber(),
       customerName: "Test Customer",
       customerEmail: email,
@@ -376,7 +374,7 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
       },
     });
 
-    const orders = getOrdersByEmail(email);
+    const orders = await getOrdersByEmail(email);
     assert.ok(orders.length >= 1);
     assert.strictEqual(orders[0].customer_email, email);
   });

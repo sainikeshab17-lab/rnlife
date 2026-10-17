@@ -108,10 +108,10 @@ export default function HomePage() {
         <div className="mb-8 flex items-end justify-between gap-4">
           <div>
             <p className="mb-1 text-[10px] font-mono font-semibold uppercase tracking-widest text-neutral-500">
-              The full collection
+              RIGHTNOWLIFE / 08 designs
             </p>
             <h2 className="text-2xl font-black uppercase tracking-tight sm:text-3xl">
-              All designs — ₹999 each
+              Shop all 8 designs — ₹999 each
             </h2>
           </div>
           <Link href="/shop" className="text-xs font-semibold text-[#0876A8] hover:underline">

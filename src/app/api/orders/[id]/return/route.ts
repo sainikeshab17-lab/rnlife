@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const order = getOrderById(id);
+    const order = await getOrderById(id);
 
     if (!order) {
       return NextResponse.json({ error: "Order not found." }, { status: 404 });
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    const result = requestReturnOrExchange({
+    const result = await requestReturnOrExchange({
       orderId: order.id,
       type,
       reason,
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    const updated = getOrderById(order.id);
+    const updated = await getOrderById(order.id);
     return NextResponse.json({
       success: true,
       returnId: result.returnId,

@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     const pricing = pricingResult.pricing;
 
     // 3. Check and reserve inventory
-    const inventoryCheck = checkAndReserveInventory(
+    const inventoryCheck = await checkAndReserveInventory(
       items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
     );
 
@@ -52,7 +52,9 @@ export async function POST(req: NextRequest) {
 
     // 4. Create pending order in database
     const orderNumber = generateOrderNumber();
-    const { order, guestToken } = createPendingOrder({
+    let createdOrder: Awaited<ReturnType<typeof createPendingOrder>>;
+    try {
+      createdOrder = await createPendingOrder({
       orderNumber,
       customerName,
       customerEmail,
@@ -64,8 +66,15 @@ export async function POST(req: NextRequest) {
       paymentMethod: "Razorpay (UPI / Cards / NetBanking)",
       userId: userId || null,
       items: pricing.items,
-      address,
-    });
+        address,
+      });
+    } catch (error) {
+      await releaseInventoryReservation(
+        items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
+      );
+      throw error;
+    }
+    const { order, guestToken } = createdOrder;
 
     // 5. Create Razorpay order on server
     let razorpayOrderId: string;
@@ -91,10 +100,10 @@ export async function POST(req: NextRequest) {
         razorpayOrderId = rzpOrder.id;
       } catch (err: any) {
         // Release reserved inventory if Razorpay order generation fails
-        releaseInventoryReservation(
+        await releaseInventoryReservation(
           items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
         );
-        logPaymentAudit(order.id, "razorpay_order_creation_failed", {
+        await logPaymentAudit(order.id, "razorpay_order_creation_failed", {
           error: err?.message || "Razorpay API error",
         });
 
@@ -116,9 +125,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Update order with Razorpay order ID
-    updateOrderRazorpayId(order.id, razorpayOrderId);
+    await updateOrderRazorpayId(order.id, razorpayOrderId);
 
-    logPaymentAudit(order.id, "order_created", {
+    await logPaymentAudit(order.id, "order_created", {
       orderNumber: order.order_number,
       razorpayOrderId,
       amount: pricing.total,

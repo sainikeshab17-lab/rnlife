@@ -1,5 +1,19 @@
 import { Product, Collection, SizeMeasurement, Order, StaffMember, User } from "@/types";
 
+const designGallery = (designNumber: number): string[] => {
+  const design = String(designNumber).padStart(2, "0");
+  const directory = "/products/tshirt_product_images_high_quality";
+
+  return [
+    `${directory}/design_${design}_01_front_view.jpg`,
+    `${directory}/design_${design}_02_back_view.jpg`,
+    `${directory}/design_${design}_03_side_view.jpg`,
+    `${directory}/design_${design}_04_print_closeup.jpg`,
+    `${directory}/design_${design}_05_detail_or_mockup_1.jpg`,
+    `${directory}/design_${design}_06_detail_or_mockup_2.jpg`,
+  ];
+};
+
 export const BRAND_INFO = {
   name: "RIGHTNOWLIFE",
   tagline: "WEAR WHAT YOU FEEL.",
@@ -25,7 +39,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "The latest seasonal iteration of high-density graphic & boxy silhouettes.",
     description:
       "Fresh off the loom. Heavyweight combed cotton tees cut with contemporary drop-shoulder proportions and tactile print finishes.",
-    heroImage: "/products/design_01_front.png",
+    heroImage: designGallery(1)[0],
     featuredProductCount: 2,
   },
   {
@@ -36,7 +50,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Art-driven back prints, chest signatures, and cultural typographic motifs.",
     description:
       "Bold visual statements rendered in high-density plastisol and puff prints that retain their texture wash after wash.",
-    heroImage: "/products/design_02_front.png",
+    heroImage: designGallery(2)[0],
     featuredProductCount: 2,
   },
   {
@@ -47,7 +61,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Relaxed drop shoulders, boxy drape, and substantial 260+ GSM fabric weight.",
     description:
       "Engineered with wider sleeves and a structured torso for an effortless streetwear drape that never clings.",
-    heroImage: "/products/design_03_front.png",
+    heroImage: designGallery(3)[0],
     featuredProductCount: 2,
   },
   {
@@ -58,7 +72,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Ultra-heavyweight 280 GSM luxury combed cotton in timeless neutrals.",
     description:
       "No unnecessary graphics. Pure silhouette, ribbed collar integrity, and unmatched tactile comfort in black, chalk white, and mineral tones.",
-    heroImage: "/products/design_04_front.png",
+    heroImage: designGallery(4)[0],
     featuredProductCount: 1,
   },
   {
@@ -69,7 +83,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Large scale artworks reflecting urban grit, retro nostalgia, and modern moods.",
     description:
       "Experimental artwork series curated in limited micro-batches for collectors and everyday stylists.",
-    heroImage: "/products/design_05_front.png",
+    heroImage: designGallery(5)[0],
     featuredProductCount: 1,
   },
 ];
@@ -78,7 +92,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-01",
     slug: "rightnowlife-design-01",
-    name: "DESIGN 01 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 01",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 01 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -87,7 +101,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_01_front.png", "/products/design_01_side.png", "/products/design_01_back.png", "/products/design_01_close_up.png"],
+        images: designGallery(1),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -114,7 +128,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-02",
     slug: "rightnowlife-design-02",
-    name: "DESIGN 02 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 02",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 02 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -123,7 +137,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_02_front.png", "/products/design_02_side.png", "/products/design_02_back.png", "/products/design_02_close_up.png"],
+        images: designGallery(2),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -150,7 +164,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-03",
     slug: "rightnowlife-design-03",
-    name: "DESIGN 03 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 03",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 03 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -159,7 +173,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_03_front.png", "/products/design_03_side.png", "/products/design_03_back.png", "/products/design_03_close_up.png"],
+        images: designGallery(3),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -186,7 +200,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-04",
     slug: "rightnowlife-design-04",
-    name: "DESIGN 04 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 04",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 04 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -195,7 +209,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_04_front.png", "/products/design_04_side.png", "/products/design_04_back.png", "/products/design_04_close_up.png"],
+        images: designGallery(4),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -222,7 +236,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-05",
     slug: "rightnowlife-design-05",
-    name: "DESIGN 05 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 05",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 05 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -231,7 +245,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_05_front.png", "/products/design_05_side.png", "/products/design_05_back.png", "/products/design_05_close_up.png"],
+        images: designGallery(5),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -258,7 +272,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-06",
     slug: "rightnowlife-design-06",
-    name: "DESIGN 06 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 06",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 06 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -267,7 +281,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_06_front.png", "/products/design_06_side.png", "/products/design_06_back.png", "/products/design_06_close_up.png"],
+        images: designGallery(6),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -294,7 +308,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-07",
     slug: "rightnowlife-design-07",
-    name: "DESIGN 07 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 07",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 07 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -303,7 +317,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_07_front.png", "/products/design_07_side.png", "/products/design_07_back.png", "/products/design_07_close_up.png"],
+        images: designGallery(7),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],
@@ -330,7 +344,7 @@ export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-08",
     slug: "rightnowlife-design-08",
-    name: "DESIGN 08 — GRAPHIC RAGLAN TEE",
+    name: "RIGHTNOWLIFE Design 08",
     tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
     description: "Meet Design 08 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
     price: 999,
@@ -339,7 +353,7 @@ export const PRODUCTS: Product[] = [
       {
         name: "As pictured",
         hex: "#F5F4F0",
-        images: ["/products/design_08_front.png", "/products/design_08_side.png", "/products/design_08_back.png", "/products/design_08_close_up.png"],
+        images: designGallery(8),
       },
     ],
     sizes: ["S", "M", "L", "XL", "XXL"],

@@ -1,5 +1,7 @@
--- RIGHTNOWLIFE Relational Database Schema
--- Compatible with SQLite and PostgreSQL
+-- Legacy partial bootstrap schema retained for historical reference only.
+-- Do not use this file to create a PostgreSQL database: it omits runtime tables.
+-- The complete, versioned PostgreSQL schema is in
+-- supabase/migrations/20261017000000_supabase_init.sql.
 
 CREATE TABLE IF NOT EXISTS orders (
   id VARCHAR(64) PRIMARY KEY,

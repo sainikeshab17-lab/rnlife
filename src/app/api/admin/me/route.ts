@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /** GET /api/admin/me — returns current admin info from valid session */
 export async function GET(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

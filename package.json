@@ -6,16 +6,23 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "node tests/run-suite.mjs",
-    "setup-admin": "node scripts/run-create-admin.mjs"
+    "test:db-schema": "node --test tests/postgres-migration.test.mjs tests/postgres-import.test.mjs tests/postgres-migration-runner.test.mjs tests/postgres-sql.test.mjs",
+    "setup-admin": "node scripts/run-create-admin.mjs",
+    "db:backup": "node scripts/backup-sqlite.mjs",
+    "db:migrate": "node scripts/migrate-postgres.mjs",
+    "db:import": "node scripts/import-sqlite-to-postgres.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@prisma/client": "^6.19.3",
+    "@types/pg": "^8.23.1",
     "clsx": "^2.1.1",
+    "dotenv": "^18.0.8",
     "lucide-react": "^1.16.0",
     "next": "^16.4.2",
+    "pg": "^8.23.1",
     "razorpay": "^2.9.8",
     "react": "19.0.0",
     "react-dom": "19.0.0",
@@ -31,6 +38,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.4.2",
     "postcss": "^8.5.0",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"
   }

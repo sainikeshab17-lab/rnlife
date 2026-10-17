@@ -5,12 +5,12 @@ import { writeAuditLog } from "@/lib/db/audit";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const admin = validateSession(req);
+  const admin = await validateSession(req);
   const token = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
 
   if (admin && token) {
-    revokeSession(token);
-    writeAuditLog({
+    await revokeSession(token);
+    await writeAuditLog({
       actor: admin.email,
       action: "admin_logout",
       entityType: "admin_session",

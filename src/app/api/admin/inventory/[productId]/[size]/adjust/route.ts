@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
-import { getDb, DbInventoryRow } from "@/lib/db/index";
+import { getDb, DbInventoryRow, withTransaction } from "@/lib/db/index";
 import { writeAuditLog } from "@/lib/db/audit";
 import { randomBytes } from "crypto";
 import { z } from "zod";
@@ -24,13 +24,13 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ productId: string; size: string }> }
 ) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { productId, size } = await params;
   const db = getDb();
 
-  const row = db.prepare("SELECT * FROM inventory WHERE product_id = ? AND size = ?").get(productId, size) as DbInventoryRow | undefined;
+  const row = await db.prepare("SELECT * FROM inventory WHERE product_id = ? AND size = ?").get<DbInventoryRow>(productId, size);
   if (!row) return NextResponse.json({ error: "Inventory row not found." }, { status: 404 });
 
   const body = await req.json();
@@ -53,16 +53,25 @@ export async function POST(
   const now = new Date().toISOString();
 
   // Update inventory
-  db.prepare("UPDATE inventory SET stock = ? WHERE product_id = ? AND size = ?").run(new_stock, productId, size);
-
   // Record adjustment
   const adjId = `iadj_${randomBytes(8).toString("hex")}`;
-  db.prepare(`
-    INSERT INTO inventory_adjustments (id, product_id, size, prev_stock, new_stock, delta, reason, actor, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(adjId, productId, size, prev_stock, new_stock, delta, reason, admin.email, now);
+  await withTransaction(async (transaction) => {
+    const locked = await transaction.prepare(
+      "SELECT stock, reserved FROM inventory WHERE product_id = ? AND size = ? FOR UPDATE"
+    ).get<DbInventoryRow>(productId, size);
+    if (!locked) throw new Error("Inventory row disappeared during adjustment.");
+    if (new_stock < locked.reserved) {
+      throw new Error("Stock adjustment would go below the currently reserved quantity.");
+    }
+    await transaction.prepare("UPDATE inventory SET stock = ? WHERE product_id = ? AND size = ?")
+      .run(new_stock, productId, size);
+    await transaction.prepare(`
+      INSERT INTO inventory_adjustments (id, product_id, size, prev_stock, new_stock, delta, reason, actor, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(adjId, productId, size, locked.stock, new_stock, new_stock - locked.stock, reason, admin.email, now);
+  });
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: "inventory_adjusted",
     entityType: "inventory",
@@ -87,13 +96,13 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ productId: string; size: string }> }
 ) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { productId, size } = await params;
   const db = getDb();
 
-  const history = db.prepare(`
+  const history = await db.prepare(`
     SELECT * FROM inventory_adjustments
     WHERE product_id = ? AND size = ?
     ORDER BY created_at DESC

@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
 
     // If staff/admin role requested
     if (role === "admin" || role === "seller") {
-      const all = getAllOrders();
+      const all = await getAllOrders();
       return NextResponse.json({ orders: all });
     }
 
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const orders = getOrdersByEmail(email);
+    const orders = await getOrdersByEmail(email);
     return NextResponse.json({ orders });
   } catch (err: any) {
     console.error("Error in GET /api/orders:", err);

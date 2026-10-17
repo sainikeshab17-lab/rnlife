@@ -13,30 +13,30 @@ export const dynamic = "force-dynamic";
  * List all return and exchange requests.
  */
 export async function GET(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const db = getDb();
-  const returnRows = db
+  const returnRows = await db
     .prepare(`
       SELECT r.*, o.order_number, o.customer_name, o.customer_email
       FROM returns r
       JOIN orders o ON r.order_id = o.id
       ORDER BY r.created_at DESC
     `)
-    .all() as any[];
+    .all<Record<string, unknown>>();
 
-  const returns = returnRows.map((ret) => {
-    const items = db
+  const returns = await Promise.all(returnRows.map(async (ret) => {
+    const items = await db
       .prepare(`
         SELECT ri.*, oi.product_name, oi.price
         FROM return_items ri
         JOIN order_items oi ON ri.order_item_id = oi.id
         WHERE ri.return_id = ?
       `)
-      .all(ret.id) as DbReturnItem[];
+      .all<DbReturnItem>(String(ret.id));
     return { ...ret, items };
-  });
+  }));
 
   return NextResponse.json({ returns });
 }
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
  * Update return request status or record inspection condition for items.
  */
 export async function PATCH(req: NextRequest) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const db = getDb();
@@ -57,7 +57,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Missing returnId." }, { status: 400 });
   }
 
-  const existing = db.prepare("SELECT * FROM returns WHERE id = ?").get(returnId) as DbReturn | undefined;
+  const existing = await db.prepare("SELECT * FROM returns WHERE id = ?").get<DbReturn>(returnId);
   if (!existing) {
     return NextResponse.json({ error: "Return request not found." }, { status: 404 });
   }
@@ -68,7 +68,7 @@ export async function PATCH(req: NextRequest) {
   if (Array.isArray(inspections)) {
     for (const insp of inspections) {
       if (insp.returnItemId && insp.condition) {
-        inspectReturnItem({
+        await inspectReturnItem({
           returnItemId: insp.returnItemId,
           condition: insp.condition,
           actorEmail: admin.email,
@@ -79,25 +79,25 @@ export async function PATCH(req: NextRequest) {
 
   // Update return status if provided
   if (status && status !== existing.status) {
-    db.prepare(`
+    await db.prepare(`
       UPDATE returns
       SET status = ?, admin_note = COALESCE(?, admin_note), updated_at = ?
       WHERE id = ?
     `).run(status, adminNote || null, now, returnId);
 
-    const order = getOrderById(existing.order_id);
+    const order = await getOrderById(existing.order_id);
     if (order) {
       sendReturnStatusEmail(order, existing.type, status, adminNote).catch(console.error);
     }
   } else if (adminNote) {
-    db.prepare(`
+    await db.prepare(`
       UPDATE returns
       SET admin_note = ?, updated_at = ?
       WHERE id = ?
     `).run(adminNote, now, returnId);
   }
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: "return_request_updated",
     entityType: "return",
@@ -107,8 +107,9 @@ export async function PATCH(req: NextRequest) {
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 
-  const updatedReturn = db.prepare("SELECT * FROM returns WHERE id = ?").get(returnId) as DbReturn;
-  const items = db.prepare("SELECT * FROM return_items WHERE return_id = ?").all(returnId);
+  const updatedReturn = await db.prepare("SELECT * FROM returns WHERE id = ?").get<DbReturn>(returnId);
+  if (!updatedReturn) throw new Error("Updated return could not be retrieved.");
+  const items = await db.prepare("SELECT * FROM return_items WHERE return_id = ?").all(returnId);
 
   return NextResponse.json({ success: true, return: { ...updatedReturn, items } });
 }

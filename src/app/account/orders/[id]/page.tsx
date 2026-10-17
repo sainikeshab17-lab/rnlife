@@ -21,9 +21,9 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
   const { token, email } = await searchParams;
 
   // Retrieve from live database
-  let dbOrder = getOrderById(id);
+  let dbOrder = await getOrderById(id);
   if (!dbOrder) {
-    dbOrder = getOrderByNumber(id);
+    dbOrder = await getOrderByNumber(id);
   }
 
   if (!dbOrder) {

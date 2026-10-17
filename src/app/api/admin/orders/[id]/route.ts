@@ -5,23 +5,24 @@ import { writeAuditLog } from "@/lib/db/audit";
 
 export const dynamic = "force-dynamic";
 
-function fetchOrderWithDetails(orderId: string) {
+async function fetchOrderWithDetails(orderId: string) {
   const db = getDb();
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as DbOrder | undefined;
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
   if (!order) return null;
-  const items = db.prepare("SELECT * FROM order_items WHERE order_id = ?").all(orderId) as DbOrderItem[];
-  const address = db.prepare("SELECT * FROM order_addresses WHERE order_id = ?").get(orderId) as DbOrderAddress | null;
-  const history = db.prepare("SELECT * FROM order_status_history WHERE order_id = ? ORDER BY created_at ASC").all(orderId) as DbOrderStatusHistory[];
+  const items = await db.prepare("SELECT * FROM order_items WHERE order_id = ?").all<DbOrderItem>(orderId);
+  const address = (await db.prepare("SELECT * FROM order_addresses WHERE order_id = ?")
+    .get<DbOrderAddress>(orderId)) ?? null;
+  const history = await db.prepare("SELECT * FROM order_status_history WHERE order_id = ? ORDER BY created_at ASC").all<DbOrderStatusHistory>(orderId);
   return { ...order, items, address, history };
 }
 
 /** GET /api/admin/orders/[id] */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const order = fetchOrderWithDetails(id);
+  const order = await fetchOrderWithDetails(id);
   if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
   return NextResponse.json({ order });
@@ -29,12 +30,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 /** PATCH /api/admin/orders/[id] — update tracking info, dates, and/or notes */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const db = getDb();
-  const existing = db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as DbOrder | undefined;
+  const existing = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(id);
   if (!existing) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
   const body = await req.json();
@@ -75,14 +76,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   args.push(new Date().toISOString());
   args.push(id);
 
-  db.prepare(`UPDATE orders SET ${updates.join(", ")} WHERE id = ?`).run(...args);
+  await db.prepare(`UPDATE orders SET ${updates.join(", ")} WHERE id = ?`).run(...args);
 
   // If tracking number was newly added or changed, add a shipping event and queue notification
   if (tracking_number && tracking_number !== existing.tracking_number) {
     const { addShippingEvent } = await import("@/lib/db/orders");
     const { sendShippingUpdateEmail } = await import("@/services/notification-service");
 
-    addShippingEvent({
+    await addShippingEvent({
       orderId: id,
       status: "Dispatched",
       location: "Fulfillment Centre",
@@ -90,7 +91,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       occurredAt: dispatch_date || new Date().toISOString(),
     });
 
-    const updatedOrder = fetchOrderWithDetails(id);
+    const updatedOrder = await fetchOrderWithDetails(id);
     if (updatedOrder) {
       sendShippingUpdateEmail(
         updatedOrder,
@@ -101,7 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
   }
 
-  writeAuditLog({
+  await writeAuditLog({
     actor: admin.email,
     action: "order_fulfilment_updated",
     entityType: "order",
@@ -116,6 +117,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 
-  const updated = fetchOrderWithDetails(id);
+  const updated = await fetchOrderWithDetails(id);
   return NextResponse.json({ order: updated });
 }

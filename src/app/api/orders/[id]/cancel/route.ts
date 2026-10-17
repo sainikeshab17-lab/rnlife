@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const order = getOrderById(id);
+    const order = await getOrderById(id);
 
     if (!order) {
       return NextResponse.json({ error: "Order not found." }, { status: 404 });
@@ -43,12 +43,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    const result = requestOrderCancellation(order.id, reason.trim());
+    const result = await requestOrderCancellation(order.id, reason.trim());
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    const updated = getOrderById(order.id);
+    const updated = await getOrderById(order.id);
     return NextResponse.json({
       success: true,
       message: "Cancellation request received and pending store review.",

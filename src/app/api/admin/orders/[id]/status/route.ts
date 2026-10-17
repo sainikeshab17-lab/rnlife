@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
-import { getDb, DbOrder } from "@/lib/db/index";
+import { getDb, DbOrder, withTransaction } from "@/lib/db/index";
 import { isValidAdminTransition, requiresRefund } from "@/lib/order-status-machine";
 import { writeAuditLog } from "@/lib/db/audit";
 import { releaseInventoryReservation } from "@/lib/db/orders";
@@ -24,13 +24,13 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const admin = requireAdminAuth(req);
+  const admin = await requireAdminAuth(req);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const db = getDb();
 
-  const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as DbOrder | undefined;
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(id);
   if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
   const body = await req.json();
@@ -63,37 +63,42 @@ export async function POST(
   const now = new Date().toISOString();
   const refundNeeded = requiresRefund(order.order_status, newStatus);
 
-  // Run update in a single exec block (SQLite is synchronous)
-  db.prepare(`
-    UPDATE orders
-    SET order_status = ?,
-        refund_status = CASE WHEN ? = 1 THEN 'refund_pending' ELSE refund_status END,
-        cancelled_reason = CASE WHEN ? = 'cancelled' THEN ? ELSE cancelled_reason END,
-        updated_at = ?
-    WHERE id = ?
-  `).run(
-    newStatus,
-    refundNeeded ? 1 : 0,
-    newStatus,
-    note ?? null,
-    now,
-    id
-  );
+  await withTransaction(async (transaction) => {
+    const current = await transaction.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE")
+      .get<DbOrder>(id);
+    if (!current || current.order_status !== order.order_status) {
+      throw new Error("Order status changed while the update was being processed.");
+    }
 
-  // Release inventory reservation for cancellations of unpaid orders
-  if (newStatus === "cancelled" && order.payment_status === "pending_payment") {
-    const items = db.prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?").all(id) as Array<{ product_id: string; size: string; quantity: number }>;
-    releaseInventoryReservation(items.map(i => ({ productId: i.product_id, size: i.size, quantity: i.quantity })));
-  }
+    await transaction.prepare(`
+      UPDATE orders
+      SET order_status = ?,
+          refund_status = CASE WHEN ? = 1 THEN 'refund_pending' ELSE refund_status END,
+          cancelled_reason = CASE WHEN ? = 'cancelled' THEN ? ELSE cancelled_reason END,
+          updated_at = ?
+      WHERE id = ?
+    `).run(newStatus, refundNeeded ? 1 : 0, newStatus, note ?? null, now, id);
 
-  // Record status history
-  const histId = `sh_${randomBytes(8).toString("hex")}`;
-  db.prepare(`
-    INSERT INTO order_status_history (id, order_id, from_status, to_status, actor, note, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(histId, id, order.order_status, newStatus, admin.email, note ?? null, now);
+    if (newStatus === "cancelled" && current.payment_status === "pending_payment") {
+      const items = await transaction.prepare(
+        "SELECT product_id, size, quantity FROM order_items WHERE order_id = ?"
+      ).all<{ product_id: string; size: string; quantity: number }>(id);
+      for (const item of items) {
+        await transaction.prepare(`
+          UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+          WHERE product_id = ? AND size = ?
+        `).run(item.quantity, item.product_id, item.size);
+      }
+    }
 
-  writeAuditLog({
+    const histId = `sh_${randomBytes(8).toString("hex")}`;
+    await transaction.prepare(`
+      INSERT INTO order_status_history (id, order_id, from_status, to_status, actor, note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(histId, id, current.order_status, newStatus, admin.email, note ?? null, now);
+  });
+
+  await writeAuditLog({
     actor: admin.email,
     action: "order_status_changed",
     entityType: "order",
@@ -104,7 +109,8 @@ export async function POST(
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 
-  const updated = db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as DbOrder;
+  const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(id);
+  if (!updated) throw new Error("Updated order could not be retrieved.");
 
   return NextResponse.json({
     success: true,
