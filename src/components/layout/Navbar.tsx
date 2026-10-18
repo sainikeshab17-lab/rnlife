@@ -128,15 +128,9 @@ export function Navbar() {
               </button>
             </div>
 
-            {/* Brand Logo with 4-Color RN Emblem */}
+            {/* Brand Logo with official RIGHTNOWLIFE emblem */}
             <div className="flex-1 lg:flex-none flex items-center justify-center lg:justify-start">
-              <Link href="/" aria-label="RIGHTNOWLIFE home" className="flex items-center">
-  <img
-    src="/images/rnllogo.jpg"
-    alt="RIGHTNOWLIFE"
-    className="h-14 w-14 object-contain transition-all duration-500 sm:h-16 sm:w-16"
-  />
-</Link>
+              <BrandLogo size="lg" showWordmark={false} iconClassName="h-14 w-14 sm:h-16 sm:w-16" />
             </div>
 
             {/* Desktop Navigation Links */}
@@ -304,13 +298,7 @@ export function Navbar() {
             />
             <div ref={mobileMenuPanelRef} role="dialog" aria-modal="true" aria-label="Main navigation" className="fixed inset-y-0 left-0 w-4/5 max-w-xs bg-white shadow-xl flex flex-col p-6 animate-in slide-in-from-left duration-250">
               <div className="flex items-center justify-between pb-5 border-b border-neutral-200">
-                <Link href="/" aria-label="RIGHTNOWLIFE home" className="flex items-center">
-  <img
-    src="/images/rnllogo.jpg"
-    alt="RIGHTNOWLIFE"
-    className="h-16 w-16 object-contain"
-  />
-</Link>
+                <BrandLogo size="lg" showWordmark={false} iconClassName="h-16 w-16" />
                 <button
                   onClick={closeMobileMenu}
                   className="p-1 text-neutral-500 hover:text-black"

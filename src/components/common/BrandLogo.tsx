@@ -8,6 +8,7 @@ interface BrandLogoProps {
   size?: "sm" | "md" | "lg";
   showWordmark?: boolean;
   className?: string;
+  iconClassName?: string;
   tone?: "dark" | "light";
 }
 
@@ -15,6 +16,7 @@ export function BrandLogo({
   size = "md",
   showWordmark = true,
   className = "",
+  iconClassName = "",
   tone = "dark",
 }: BrandLogoProps) {
   const iconSizes = {
@@ -35,8 +37,15 @@ export function BrandLogo({
       className={`inline-flex items-center gap-2.5 group transition-transform duration-200 active:scale-95 ${className}`}
       aria-label="RIGHTNOWLIFE Home"
     >
-      <div className={`relative ${iconSizes} shrink-0`}>
-        <Image src="/logo.svg" alt="" fill sizes="40px" aria-hidden="true" />
+      <div className={`relative ${iconSizes} shrink-0 ${iconClassName}`}>
+        <Image
+          src="/images/rnllogo.jpg"
+          alt=""
+          fill
+          sizes="40px"
+          aria-hidden="true"
+          className="object-contain"
+        />
       </div>
 
       {showWordmark && (

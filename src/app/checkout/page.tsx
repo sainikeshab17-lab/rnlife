@@ -178,7 +178,7 @@ export default function CheckoutPage() {
           currency: data.currency,
           name: "RIGHTNOWLIFE",
           description: `Streetwear Order #${data.orderNumber}`,
-          image: "/logo.svg",
+          image: "/images/rnllogo.jpg",
           order_id: data.razorpayOrderId,
           prefill: {
             name: addressForm.fullName,
