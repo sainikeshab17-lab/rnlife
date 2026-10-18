@@ -9,13 +9,26 @@ import { FilterSidebar, FilterState } from "@/components/product/FilterSidebar";
 import { PRODUCTS } from "@/data/mock-data";
 import { Product } from "@/types";
 
+const DEFAULT_PRODUCT_ORDER: Record<string, number> = {
+  "go-crazy-about-me": 0,
+  "friday-mode": 1,
+  "bitch-i-am-the-secret-ingredient": 2,
+  "monday-tired-messy-no-motivation": 3,
+  "phirse-bolo": 4,
+  "prayers-become-reality": 5,
+  "i-love-sarcasm": 6,
+  "hot-girls-do-yoga": 7,
+};
+
 function ShopContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
   const initialCollection = searchParams.get("collection") || "all";
+  const initialCategory = searchParams.get("category") || "all";
 
   const [filters, setFilters] = useState<FilterState>({
     collection: initialCollection,
+    category: initialCategory,
     fit: "all",
     size: "all",
     color: "all",
@@ -28,6 +41,15 @@ function ShopContent() {
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
+  const categoryLabels = [
+    { name: "Hot Girl Stuff", slug: "hot-girl-stuff" },
+    { name: "Monday to Friday", slug: "monday-to-friday" },
+    { name: "Social Battery", slug: "social-battery" },
+    { name: "Relationship Status", slug: "relationship-status" },
+    { name: "Brutally Honest", slug: "brutally-honest" },
+    { name: "Everyday Chaos", slug: "everyday-chaos" },
+    { name: "Friday Mode", slug: "friday-mode" },
+  ];
 
   // Filter & Sort Logic
   const filteredProducts = useMemo(() => {
@@ -45,6 +67,11 @@ function ShopContent() {
 
     if (filters.collection !== "all") {
       result = result.filter((p) => p.collectionSlug === filters.collection);
+    }
+
+    if (filters.category !== "all") {
+      const normalized = filters.category.toLowerCase();
+      result = result.filter((p) => p.category.toLowerCase().replace(/[^a-z]+/g, "-") === normalized);
     }
 
     if (filters.fit !== "all") {
@@ -81,6 +108,11 @@ function ShopContent() {
       result.sort((a, b) => a.price - b.price);
     } else if (filters.sortBy === "price-desc") {
       result.sort((a, b) => b.price - a.price);
+    } else if (filters.sortBy === "featured") {
+      result.sort(
+        (a, b) =>
+          DEFAULT_PRODUCT_ORDER[a.slug] - DEFAULT_PRODUCT_ORDER[b.slug]
+      );
     }
 
     return result;
@@ -93,6 +125,7 @@ function ShopContent() {
   const handleResetFilters = () => {
     setFilters({
       collection: "all",
+      category: "all",
       fit: "all",
       size: "all",
       color: "all",
@@ -146,16 +179,26 @@ function ShopContent() {
 
           <div className="flex-1">
             {/* Active search chip */}
-            {searchQuery && (
-              <div className="mb-6 flex items-center gap-2 p-3 bg-[#F5F4F0] border border-[#E5E5E5] text-xs">
-                <span>
-                  Filtering results for: <strong>&ldquo;{searchQuery}&rdquo;</strong>
-                </span>
+            {(searchQuery || filters.category !== "all") && (
+              <div className="mb-6 flex flex-wrap items-center gap-2 p-3 bg-[#F5F4F0] border border-[#E5E5E5] text-xs">
+                {searchQuery && (
+                  <span>
+                    Filtering results for: <strong>&ldquo;{searchQuery}&rdquo;</strong>
+                  </span>
+                )}
+                {filters.category !== "all" && (
+                  <span>
+                    Category: <strong>{categoryLabels.find((c) => c.slug === filters.category)?.name || filters.category}</strong>
+                  </span>
+                )}
                 <button
-                  onClick={() => setSearchQuery("")}
+                  onClick={() => {
+                    setSearchQuery("");
+                    setFilters((prev) => ({ ...prev, category: "all" }));
+                  }}
                   className="text-[#858585] hover:text-[#111111] underline font-bold ml-auto transition-colors"
                 >
-                  Clear Search
+                  Clear filters
                 </button>
               </div>
             )}

@@ -16,6 +16,7 @@ function SearchPageContent() {
   const [searchQuery, setSearchQuery] = useState(q);
   const [filters, setFilters] = useState<FilterState>({
     collection: "all",
+    category: "all",
     fit: "all",
     size: "all",
     color: "all",
@@ -42,6 +43,11 @@ function SearchPageContent() {
 
     if (filters.collection !== "all") {
       result = result.filter((p) => p.collectionSlug === filters.collection);
+    }
+
+    if (filters.category !== "all") {
+      const normalized = filters.category.toLowerCase();
+      result = result.filter((p) => p.category.toLowerCase().replace(/[^a-z]+/g, "-") === normalized);
     }
 
     if (filters.fit !== "all") {
@@ -86,6 +92,7 @@ function SearchPageContent() {
   const handleReset = () => {
     setFilters({
       collection: "all",
+      category: "all",
       fit: "all",
       size: "all",
       color: "all",

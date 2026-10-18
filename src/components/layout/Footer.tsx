@@ -78,8 +78,11 @@ export function Footer() {
           <ul className="space-y-2 text-xs text-neutral-200">
             <li><Link href="/size-guide" className="hover:text-[#FFB900]">Size guide</Link></li>
             <li><Link href="/shipping" className="hover:text-[#FFB900]">Shipping</Link></li>
-            <li><Link href="/returns" className="hover:text-[#FFB900]">Returns & exchanges</Link></li>
+            <li><Link href="/returns" className="hover:text-[#FFB900]">Returns & refunds</Link></li>
             <li><Link href="/contact" className="hover:text-[#FFB900]">Contact</Link></li>
+            <li><Link href="/about" className="hover:text-[#FFB900]">About us</Link></li>
+            <li><Link href="/privacy" className="hover:text-[#FFB900]">Privacy policy</Link></li>
+            <li><Link href="/terms" className="hover:text-[#FFB900]">Terms & conditions</Link></li>
           </ul>
         </div>
       </div>

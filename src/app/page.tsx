@@ -3,14 +3,14 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { ProductGrid } from "@/components/product/ProductGrid";
-import { BRAND_INFO, COLLECTIONS, PRODUCTS } from "@/data/mock-data";
+import { BRAND_INFO, PRODUCT_CATEGORIES, PRODUCTS } from "@/data/mock-data";
 
 const allProducts = PRODUCTS;
-const featuredCollections = COLLECTIONS.slice(0, 3).map((collection) => ({
-  ...collection,
-  image: PRODUCTS.find((product) => product.collectionSlug === collection.slug)?.colors[0]?.images[0],
-}));
 const heroProduct = PRODUCTS[0];
+const categoryCards = PRODUCT_CATEGORIES.map((category) => ({
+  ...category,
+  count: PRODUCTS.filter((product) => product.category === category.name).length,
+}));
 
 export default function HomePage() {
   return (
@@ -55,47 +55,46 @@ export default function HomePage() {
         </Link>
       </section>
 
-      {/* ── COLLECTIONS ── */}
-      <section id="collections" className="border-y border-[#E5E5E5] bg-[#FFFFFF]">
+      {/* ── CATEGORIES ── */}
+      <section id="categories" className="border-y border-[#E5E5E5] bg-[#FFFFFF]">
         <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 md:py-12 lg:px-8">
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
               <p className="mb-1 text-[10px] font-mono font-semibold uppercase tracking-widest text-neutral-500">
-                Shop by edit
+                Shop by vibe
               </p>
-              <h2 className="text-2xl font-black uppercase tracking-tight sm:text-3xl">Find your fit</h2>
+              <h2 className="text-2xl font-black uppercase tracking-tight sm:text-3xl">Categories</h2>
             </div>
-            <Link href="/categories" className="text-xs font-semibold text-[#0876A8] hover:underline">
-              All collections <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
+            <Link href="/shop" className="text-xs font-semibold text-[#0876A8] hover:underline">
+              Browse the shop <ArrowRight className="ml-1 inline h-3.5 w-3.5" />
             </Link>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {featuredCollections.map((collection, index) => (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {categoryCards.map((category) => (
               <Link
-                key={collection.id}
-                href={`/collections/${collection.slug}`}
-                className="group relative aspect-[1.65] overflow-hidden bg-white sm:aspect-[1.12]"
+                key={category.slug}
+                href={`/shop?category=${category.slug}`}
+                className="group relative aspect-[1.3] overflow-hidden bg-white"
               >
-                {collection.image && (
-                  <Image
-                    src={collection.image}
-                    alt=""
-                    fill
-                    className="img-morph object-cover object-center"
-                    sizes="(max-width: 640px) 100vw, 33vw"
-                  />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
-                <div className="absolute inset-x-4 bottom-4 flex items-end justify-between text-white">
-                  <span>
-                    <span className="mb-1 block text-[9px] font-mono uppercase tracking-widest text-white/75">
-                      0{index + 1} / Collection
+                <Image
+                  src={category.image}
+                  alt={category.name}
+                  fill
+                  className="img-morph object-cover object-center"
+                  sizes="(max-width: 640px) 100vw, 50vw"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                <div className="absolute inset-x-4 bottom-4 text-white">
+                  <div className="mb-1 flex items-center justify-between gap-3 text-[9px] font-mono uppercase tracking-widest text-white/80">
+                    <span>{category.count} {category.count === 1 ? "tee" : "tees"}</span>
+                    <span>Explore</span>
+                  </div>
+                  <div className="flex items-end justify-between gap-3">
+                    <span className="text-lg font-bold uppercase tracking-tight">{category.name}</span>
+                    <span className="grid h-8 w-8 place-items-center rounded-full border border-white/70 transition-colors group-hover:border-[#FFB900] group-hover:bg-[#FFB900] group-hover:text-[#111111]">
+                      <ArrowRight className="h-4 w-4" />
                     </span>
-                    <span className="text-lg font-bold uppercase tracking-tight">{collection.name}</span>
-                  </span>
-                  <span className="grid h-8 w-8 place-items-center rounded-full border border-white/70 transition-colors group-hover:border-[#FFB900] group-hover:bg-[#FFB900] group-hover:text-[#111111]">
-                    <ArrowRight className="h-4 w-4" />
-                  </span>
+                  </div>
                 </div>
               </Link>
             ))}

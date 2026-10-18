@@ -31,6 +31,9 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
   const primaryImage = currentColor?.images[0] || product.colors[0]?.images[0] || "";
   const hoverImage =
     currentColor?.images[1] || product.colors[0]?.images[1] || primaryImage;
+  const primaryImageAlt = currentColor?.imageAlts?.[0] || product.name;
+  const hoverImageAlt =
+    currentColor?.imageAlts?.[1] || `${product.name} alternate view`;
 
   const discountPercent = product.compareAtPrice
     ? Math.round(
@@ -77,7 +80,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
           {/* Primary image */}
           <Image
             src={primaryImage}
-            alt={product.name}
+            alt={primaryImageAlt}
             fill
             priority={priority}
             className={`img-morph object-cover object-top transition-opacity duration-400 ${
@@ -90,7 +93,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
           {hoverImage !== primaryImage && (
             <Image
               src={hoverImage}
-              alt={`${product.name} alternate view`}
+              alt={hoverImageAlt}
               fill
               className={`object-cover object-top transition-opacity duration-400 ${
                 isHovered ? "opacity-100" : "opacity-0"
@@ -204,7 +207,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
         {/* Title */}
         <Link
           href={`/products/${product.slug}`}
-          className="text-xs font-bold uppercase tracking-tight text-[#111111] hover:text-[#0876A8] transition-colors line-clamp-1 leading-snug"
+          className="block min-h-[4.5rem] break-words [overflow-wrap:anywhere] text-xs font-bold uppercase tracking-tight text-[#111111] hover:text-[#0876A8] transition-colors leading-snug"
         >
           {product.name}
         </Link>

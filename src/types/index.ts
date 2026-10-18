@@ -6,12 +6,24 @@ export interface ColorVariant {
   name: string;
   hex: string;
   images: string[];
+  imageAlts?: string[];
 }
+
+export type ProductCategory =
+  | "Hot Girl Stuff"
+  | "Monday to Friday"
+  | "Social Battery"
+  | "Relationship Status"
+  | "Brutally Honest"
+  | "Everyday Chaos"
+  | "Friday Mode";
 
 export interface Product {
   id: string;
   slug: string;
   name: string;
+  printedMessage: string;
+  category: ProductCategory;
   tagline: string;
   description: string;
   price: number;

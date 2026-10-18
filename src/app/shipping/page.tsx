@@ -20,7 +20,7 @@ export default function ShippingPage() {
             SHIPPING POLICY
           </h1>
           <p className="text-xs sm:text-sm text-neutral-600 mt-2">
-            Pan-India express air courier shipping for all RightNowLife streetwear drops.
+            Last updated: 16 October 2026. Thank you for shopping at RightNowLife. This Shipping Policy explains how orders placed through our website are processed and delivered.
           </p>
         </div>
 
@@ -28,58 +28,42 @@ export default function ShippingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="p-5 bg-[#F5F4F0] border border-neutral-200 space-y-2">
               <Truck className="w-5 h-5 text-black" />
-              <p className="font-bold text-sm text-black uppercase">Free Shipping Threshold</p>
+              <p className="font-bold text-sm text-black uppercase">Order Processing</p>
               <p className="text-neutral-600">
-                Orders above ₹1,499 qualify for 100% FREE express air shipping across India. For orders below ₹1,499, a flat delivery fee of ₹99 applies.
+                We aim to process and dispatch orders as quickly as reasonably possible. Orders are generally processed within 1–2 business days after payment confirmation.
               </p>
             </div>
 
             <div className="p-5 bg-[#F5F4F0] border border-neutral-200 space-y-2">
               <Clock className="w-5 h-5 text-black" />
-              <p className="font-bold text-sm text-black uppercase">Dispatch Timeline</p>
+              <p className="font-bold text-sm text-black uppercase">Delivery Timeline</p>
               <p className="text-neutral-600">
-                All confirmed drop orders are dispatched from our central fulfillment facility within 24 to 48 business hours.
+                We aim to deliver orders within an estimated 3–7 business days after dispatch, depending on the delivery destination and courier service.
               </p>
             </div>
           </div>
 
           <div className="space-y-4">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-black">
-              Estimated Delivery Timeframes
-            </h2>
-            <div className="border border-neutral-200 divide-y divide-neutral-200 bg-white">
-              <div className="p-3 flex justify-between">
-                <span className="font-semibold text-black">Metro Cities (Bengaluru, Mumbai, Delhi NCR, Hyderabad, Chennai)</span>
-                <span className="font-mono text-neutral-700 font-bold">2 - 3 Business Days</span>
-              </div>
-              <div className="p-3 flex justify-between">
-                <span className="font-semibold text-black">Tier-2 Cities & State Capitals</span>
-                <span className="font-mono text-neutral-700 font-bold">3 - 4 Business Days</span>
-              </div>
-              <div className="p-3 flex justify-between">
-                <span className="font-semibold text-black">Rest of India & Remote Postal Zones</span>
-                <span className="font-mono text-neutral-700 font-bold">4 - 6 Business Days</span>
-              </div>
-            </div>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-black">Shipping Information</h2>
+            <p>
+              Available shipping options and applicable charges will be displayed during checkout, where supported. Shipping charges depend on the delivery destination, order details, and available shipping service. If free shipping is offered for a particular order or promotion, the applicable conditions will be displayed on our website.
+            </p>
           </div>
 
           <div className="space-y-3">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-black">
-              Shipment Tracking & Courier Partners
-            </h2>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-black">Tracking & Courier Support</h2>
             <p>
-              We partner with India&apos;s leading air logistics networks including Delhivery, BlueDart, and Shadowfax. Once your parcel is scanned at the hub, an automated tracking SMS and email containing the live Air Waybill (AWB) number will be sent to your registered contact.
+              Once your order has been dispatched, tracking information will be shared through the communication channel available for your order, where supported by our shipping partner. You may use the tracking details provided to check the progress of your shipment.
             </p>
             <p>
-              You can also track your shipment live at any time through your{" "}
-              <Link href="/account/orders" className="font-bold text-black underline">
-                Account Orders Dashboard
-              </Link>.
+              Please refer to the delivery estimate displayed at checkout or communicated with your order, where available. Remote locations, courier delays, weather conditions, public holidays, and other circumstances may affect delivery.
             </p>
           </div>
 
-          <div className="p-4 bg-neutral-100 border border-neutral-200 text-[11px] text-neutral-500 font-mono">
-            [Phase 1 Prototype Content: Policy placeholders reflect development sample terms]
+          <div className="p-5 bg-neutral-100 border border-neutral-200 text-neutral-600">
+            <p>
+              For live order updates, visit your <Link href="/account/orders" className="font-bold text-black underline">Account Orders Dashboard</Link> or contact the team via <a href="mailto:contact@rightnowlife.com" className="font-bold text-black underline">contact@rightnowlife.com</a>.
+            </p>
           </div>
         </div>
       </div>

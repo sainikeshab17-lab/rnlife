@@ -6,15 +6,25 @@ import { ZoomIn, ChevronLeft, ChevronRight, X } from "lucide-react";
 
 interface ProductGalleryProps {
   images: string[];
+  imageAlts?: string[];
   productName: string;
 }
 
-export function ProductGallery({ images, productName }: ProductGalleryProps) {
+export function ProductGallery({
+  images,
+  imageAlts,
+  productName,
+}: ProductGalleryProps) {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
-  const activeImages = images.filter(Boolean);
+  const activeImages = images
+    .map((src, index) => ({
+      src,
+      alt: imageAlts?.[index] || `${productName}, product view ${index + 1}`,
+    }))
+    .filter(({ src }) => Boolean(src));
 
   const currentImage = activeImages[selectedIdx] || activeImages[0];
 
@@ -60,8 +70,8 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
             aria-pressed={selectedIdx === idx}
           >
             <Image
-              src={img}
-              alt={`${productName} thumbnail ${idx + 1}`}
+              src={img.src}
+              alt={img.alt}
               fill
               className="object-cover object-top"
               sizes="68px"
@@ -74,9 +84,9 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
       <div className="relative flex-1 aspect-[4/5] bg-[#FFFFFF] overflow-hidden group">
         {currentImage ? (
           <Image
-            key={currentImage}
-            src={currentImage}
-            alt={`${productName} — View ${selectedIdx + 1}`}
+            key={currentImage.src}
+            src={currentImage.src}
+            alt={currentImage.alt}
             fill
             loading="eager"
             className={`gallery-crossfade object-contain ${isTransitioning ? "opacity-90" : "opacity-100"}`}
@@ -150,8 +160,8 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
 
           <div className="relative w-full max-w-3xl max-h-[88vh] aspect-[4/5]" onClick={(event) => event.stopPropagation()}>
             <Image
-              src={currentImage}
-              alt={productName}
+              src={currentImage.src}
+              alt={currentImage.alt}
               fill
               className="object-contain"
               sizes="100vw"
@@ -191,8 +201,8 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
                 aria-label={`Lightbox view ${idx + 1}`}
               >
                 <Image
-                  src={img}
-                  alt=""
+                  src={img.src}
+                  alt={img.alt}
                   fill
                   className="object-cover object-top"
                   sizes="40px"

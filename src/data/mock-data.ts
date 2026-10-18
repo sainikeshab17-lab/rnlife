@@ -1,17 +1,89 @@
 import { Product, Collection, SizeMeasurement, Order, StaffMember, User } from "@/types";
 
-const designGallery = (designNumber: number): string[] => {
-  const design = String(designNumber).padStart(2, "0");
-  const directory = "/products/tshirt_product_images_high_quality";
+const designGalleryAssets: Record<
+  number,
+  readonly { fileName: string; alt: string }[]
+> = {
+  1: [
+    { fileName: "design_01_02_front.png", alt: "Front product view of the Design 01 raglan tee" },
+    { fileName: "design_01_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 01" },
+    { fileName: "design_01_03_print-closeup.png", alt: "Close-up of the Design 01 chest print" },
+    { fileName: "design_01_04_side-profile.png", alt: "Side profile of a model wearing Design 01" },
+    { fileName: "design_01_05_model.png", alt: "Model wearing Design 01" },
+    { fileName: "design_01_06_garment-details.png", alt: "Fabric and print details of the Design 01 raglan tee" },
+  ],
+  2: [
+    { fileName: "design_02_02_front.png", alt: "Front product view of the Design 02 raglan tee" },
+    { fileName: "design_02_01_model.png", alt: "Model wearing RIGHTNOWLIFE Design 02" },
+    { fileName: "design_02_03_male-model.png", alt: "Model wearing the Design 02 Friday graphic" },
+    { fileName: "design_02_04_alternate-model.png", alt: "Alternate model view wearing Design 02" },
+    { fileName: "design_02_05_lookbook.png", alt: "Lookbook view of RIGHTNOWLIFE Design 02" },
+    { fileName: "design_02_06_model.png", alt: "Full-length model view wearing Design 02" },
+  ],
+  3: [
+    { fileName: "design_03_02_front.png", alt: "Front product view of the Design 03 raglan tee" },
+    { fileName: "design_03_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 03" },
+    { fileName: "design_03_03_print-closeup.png", alt: "Close-up of the Design 03 bottle graphic" },
+    { fileName: "design_03_04_side-profile.png", alt: "Side profile of a model wearing Design 03" },
+    { fileName: "design_03_05_model.png", alt: "Model wearing the Design 03 graphic" },
+    { fileName: "design_03_06_lookbook.png", alt: "Lookbook view of RIGHTNOWLIFE Design 03" },
+  ],
+  4: [
+    { fileName: "design_04_02_front.png", alt: "Front product view of the Design 04 raglan tee" },
+    { fileName: "design_04_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 04" },
+    { fileName: "design_04_03_print-closeup.png", alt: "Close-up of the Design 04 chest graphic" },
+    { fileName: "design_04_04_model.png", alt: "Model wearing RIGHTNOWLIFE Design 04" },
+    { fileName: "design_04_05_lookbook.png", alt: "Lookbook view of the Design 04 graphic tee" },
+    { fileName: "design_04_06_model.png", alt: "Model wearing the Design 04 Monday graphic" },
+  ],
+  5: [
+    { fileName: "design_05_02_front.png", alt: "Front product view of the Design 05 raglan tee" },
+    { fileName: "design_05_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 05" },
+    { fileName: "design_05_03_print-closeup.png", alt: "Close-up of the Design 05 chest print" },
+    { fileName: "design_05_04_model.png", alt: "Model wearing RIGHTNOWLIFE Design 05" },
+    { fileName: "design_05_05_model.png", alt: "Model wearing the Design 05 graphic" },
+    { fileName: "design_05_06_lookbook.png", alt: "Lookbook view of the Design 05 raglan tee" },
+  ],
+  6: [
+    { fileName: "design_06_02_front.png", alt: "Front product view of the Design 06 raglan tee" },
+    { fileName: "design_06_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 06" },
+    { fileName: "design_06_03_print-closeup.png", alt: "Close-up of the Design 06 quote print" },
+    { fileName: "design_06_04_model.png", alt: "Model wearing RIGHTNOWLIFE Design 06" },
+    { fileName: "design_06_05_lookbook.png", alt: "Lookbook view of the Design 06 graphic tee" },
+    { fileName: "design_06_06_side-profile.png", alt: "Side profile of a model wearing Design 06" },
+  ],
+  7: [
+    { fileName: "design_07_02_front.png", alt: "Front product view of the Design 07 raglan tee" },
+    { fileName: "design_07_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 07" },
+    { fileName: "design_07_03_print-closeup.png", alt: "Close-up of the Design 07 sarcasm print" },
+    { fileName: "design_07_04_model.png", alt: "Model wearing RIGHTNOWLIFE Design 07" },
+    { fileName: "design_07_05_lookbook.png", alt: "Lookbook view of the Design 07 graphic tee" },
+    { fileName: "design_07_06_model.png", alt: "Model wearing the Design 07 sarcasm graphic" },
+  ],
+  8: [
+    { fileName: "design_08_02_front.png", alt: "Front product view of the Design 08 raglan tee" },
+    { fileName: "design_08_01_couple.png", alt: "Two models wearing RIGHTNOWLIFE Design 08" },
+    { fileName: "design_08_03_garment-details.png", alt: "Fabric and logo details of the Design 08 raglan tee" },
+    { fileName: "design_08_04_model.png", alt: "Model wearing RIGHTNOWLIFE Design 08" },
+    { fileName: "design_08_05_lookbook.png", alt: "Lookbook view of the Design 08 graphic tee" },
+    { fileName: "design_08_06_model.png", alt: "Model wearing the Design 08 yoga graphic" },
+  ],
+};
 
-  return [
-    `${directory}/design_${design}_01_front_view.jpg`,
-    `${directory}/design_${design}_02_back_view.jpg`,
-    `${directory}/design_${design}_03_side_view.jpg`,
-    `${directory}/design_${design}_04_print_closeup.jpg`,
-    `${directory}/design_${design}_05_detail_or_mockup_1.jpg`,
-    `${directory}/design_${design}_06_detail_or_mockup_2.jpg`,
-  ];
+const designGallery = (
+  designNumber: number
+): { images: string[]; imageAlts: string[] } => {
+  const assets = designGalleryAssets[designNumber];
+  if (!assets) {
+    throw new Error(`No image gallery configured for design ${designNumber}`);
+  }
+
+  return {
+    images: assets.map(
+      ({ fileName }) => `/products/rightnowlife-designs/${fileName}`
+    ),
+    imageAlts: assets.map(({ alt }) => alt),
+  };
 };
 
 export const BRAND_INFO = {
@@ -20,15 +92,25 @@ export const BRAND_INFO = {
   manifesto:
     "Right now is yours. The way you move, what you create, and what you choose to wear. RightNowLife is built around everyday expression — T-shirts designed to be part of your story.",
   aboutStory:
-    "RightNowLife is an independent Indian streetwear label crafting heavyweight graphic, oversized, and essential T-shirts designed for everyday self-expression. We reject mass-market compromises in favor of custom-milled high GSM fabrics, boxy silhouettes, and original artworks that resonate with contemporary urban culture.",
+    "We are passionate about providing high-quality products and exceptional customer service to our valued customers.",
   announcements: [
-     "8 GRAPHIC TEES — ONE PRICE: ₹999",
+    "8 GRAPHIC TEES — ONE PRICE: ₹999",
     "FIND YOUR DESIGN. MAKE IT YOURS.",
     "EXPLORE ALL 8 RIGHTNOWLIFE DESIGNS",
   ],
-  supportEmail: "care@rightnowlife.in",
-  supportHours: "Mon – Sat: 10:00 AM – 7:00 PM IST",
+  supportEmail: "contact@rightnowlife.com",
+  supportResponseTime: "We typically respond within 24 hours during business days.",
 };
+
+export const PRODUCT_CATEGORIES = [
+  { name: "Hot Girl Stuff", slug: "hot-girl-stuff", image: designGallery(8).images[0] },
+  { name: "Monday to Friday", slug: "monday-to-friday", image: designGallery(2).images[0] },
+  { name: "Social Battery", slug: "social-battery", image: designGallery(7).images[0] },
+  { name: "Relationship Status", slug: "relationship-status", image: designGallery(1).images[0] },
+  { name: "Brutally Honest", slug: "brutally-honest", image: designGallery(7).images[0] },
+  { name: "Everyday Chaos", slug: "everyday-chaos", image: designGallery(5).images[0] },
+  { name: "Friday Mode", slug: "friday-mode", image: designGallery(2).images[0] },
+] as const;
 
 export const COLLECTIONS: Collection[] = [
   {
@@ -39,7 +121,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "The latest seasonal iteration of high-density graphic & boxy silhouettes.",
     description:
       "Fresh off the loom. Heavyweight combed cotton tees cut with contemporary drop-shoulder proportions and tactile print finishes.",
-    heroImage: designGallery(1)[0],
+    heroImage: designGallery(1).images[0],
     featuredProductCount: 2,
   },
   {
@@ -50,7 +132,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Art-driven back prints, chest signatures, and cultural typographic motifs.",
     description:
       "Bold visual statements rendered in high-density plastisol and puff prints that retain their texture wash after wash.",
-    heroImage: designGallery(2)[0],
+    heroImage: designGallery(2).images[0],
     featuredProductCount: 2,
   },
   {
@@ -61,7 +143,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Relaxed drop shoulders, boxy drape, and substantial 260+ GSM fabric weight.",
     description:
       "Engineered with wider sleeves and a structured torso for an effortless streetwear drape that never clings.",
-    heroImage: designGallery(3)[0],
+    heroImage: designGallery(3).images[0],
     featuredProductCount: 2,
   },
   {
@@ -72,7 +154,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Ultra-heavyweight 280 GSM luxury combed cotton in timeless neutrals.",
     description:
       "No unnecessary graphics. Pure silhouette, ribbed collar integrity, and unmatched tactile comfort in black, chalk white, and mineral tones.",
-    heroImage: designGallery(4)[0],
+    heroImage: designGallery(4).images[0],
     featuredProductCount: 1,
   },
   {
@@ -83,7 +165,7 @@ export const COLLECTIONS: Collection[] = [
     tagline: "Large scale artworks reflecting urban grit, retro nostalgia, and modern moods.",
     description:
       "Experimental artwork series curated in limited micro-batches for collectors and everyday stylists.",
-    heroImage: designGallery(5)[0],
+    heroImage: designGallery(5).images[0],
     featuredProductCount: 1,
   },
 ];
@@ -91,22 +173,18 @@ export const COLLECTIONS: Collection[] = [
 export const PRODUCTS: Product[] = [
   {
     id: "rnl-design-01",
-    slug: "rightnowlife-design-01",
-    name: "RIGHTNOWLIFE Design 01",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 01 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "go-crazy-about-me",
+    name: "Go Crazy About Me — Raglan Graphic T-Shirt",
+    printedMessage: "Go Crazy About Me",
+    category: "Relationship Status",
+    tagline: "A relationship-status graphic tee for the loudest little obsession.",
+    description: "Go Crazy About Me is a mood-first raglan graphic tee designed for the kind of love that feels instant, loud, and a little dramatic. The oversized fit keeps the message front and center without trying too hard.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(1),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(1) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -122,27 +200,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: true,
     isFeatured: true,
     collectionSlug: "new-drops",
-    tags: ["raglan", "graphic tee", "design 01", "rightnowlife"],
+    tags: ["relationship status", "go crazy about me", "raglan", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-01",
   },
   {
     id: "rnl-design-02",
-    slug: "rightnowlife-design-02",
-    name: "RIGHTNOWLIFE Design 02",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 02 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "monday-tired-messy-no-motivation",
+    name: "Monday: Tired, Messy, No Motivation — Raglan Graphic T-Shirt",
+    printedMessage: "Monday: Tired, Messy, No Motivation",
+    category: "Monday to Friday",
+    tagline: "A Monday graphic tee for the messy, overcaffeinated kind of week.",
+    description: "Monday: Tired, Messy, No Motivation captures the universal mood of the first workday. The design sits on a heavy cotton raglan cut that feels lived in from day one.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(2),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(4) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -158,27 +232,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: true,
     isFeatured: true,
     collectionSlug: "graphic-tees",
-    tags: ["raglan", "graphic tee", "design 02", "rightnowlife"],
+    tags: ["monday", "workweek", "raglan", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-02",
   },
   {
     id: "rnl-design-03",
-    slug: "rightnowlife-design-03",
-    name: "RIGHTNOWLIFE Design 03",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 03 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "i-love-sarcasm",
+    name: "I Love Sarcasm — Raglan Graphic T-Shirt",
+    printedMessage: "I Love Sarcasm",
+    category: "Brutally Honest",
+    tagline: "A dry, deadpan graphic for the brutally honest crowd.",
+    description: "I Love Sarcasm is all sharp wit and zero effort. Built in an oversized silhouette, it pairs as well with coffee runs as it does with weekend plans and low-key chaos.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(3),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(7) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -194,27 +264,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: false,
     isFeatured: true,
     collectionSlug: "oversized-tees",
-    tags: ["raglan", "graphic tee", "design 03", "rightnowlife"],
+    tags: ["sarcasm", "brutally honest", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-03",
   },
   {
     id: "rnl-design-04",
-    slug: "rightnowlife-design-04",
-    name: "RIGHTNOWLIFE Design 04",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 04 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "bitch-i-am-the-secret-ingredient",
+    name: "Bitch, I Am the Secret Ingredient — Burgundy Raglan Graphic T-Shirt",
+    printedMessage: "Bitch, I Am the Secret Ingredient",
+    category: "Hot Girl Stuff",
+    tagline: "Low-key power, loud energy, and all the confidence in the room.",
+    description: "Bitch, I Am the Secret Ingredient is a bold, unapologetic graphic meant for the women who make every room better just by walking in. The oversized cut gives the print room to be the star.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(4),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(3) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -230,27 +296,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: false,
     isFeatured: true,
     collectionSlug: "essentials",
-    tags: ["raglan", "graphic tee", "design 04", "rightnowlife"],
+    tags: ["hot girl stuff", "power", "raglan", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-04",
   },
   {
     id: "rnl-design-05",
-    slug: "rightnowlife-design-05",
-    name: "RIGHTNOWLIFE Design 05",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 05 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "prayers-become-reality",
+    name: "Prayers Become Reality — Raglan Graphic T-Shirt",
+    printedMessage: "Prayers Become Reality",
+    category: "Everyday Chaos",
+    tagline: "A hopeful chaos tee for the days when everything goes sideways and still somehow works.",
+    description: "Prayers Become Reality is a reminder that even in the mess, the good stuff still lands. It captures the steady optimism behind the everyday chaos of modern life.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(5),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(6) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -266,27 +328,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: false,
     isFeatured: true,
     collectionSlug: "statement-prints",
-    tags: ["raglan", "graphic tee", "design 05", "rightnowlife"],
+    tags: ["everyday chaos", "prayers", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-05",
   },
   {
     id: "rnl-design-06",
-    slug: "rightnowlife-design-06",
-    name: "RIGHTNOWLIFE Design 06",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 06 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "hot-girls-do-yoga",
+    name: "Hot Girls Do Yoga — Raglan Graphic T-Shirt",
+    printedMessage: "Hot Girls Do Yoga",
+    category: "Hot Girl Stuff",
+    tagline: "A flexy little reminder that balance can be both stylish and unbothered.",
+    description: "Hot Girls Do Yoga is for the women who can do a downward dog and still look like they own the room. The clean, confident graphic sits on a heavy raglan frame that keeps the mood relaxed.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(6),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(8) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -302,27 +360,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: false,
     isFeatured: true,
     collectionSlug: "graphic-tees",
-    tags: ["raglan", "graphic tee", "design 06", "rightnowlife"],
+    tags: ["hot girl stuff", "yoga", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-06",
   },
   {
     id: "rnl-design-07",
-    slug: "rightnowlife-design-07",
-    name: "RIGHTNOWLIFE Design 07",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 07 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "phirse-bolo",
+    name: "Phirse Bolo? — Raglan Graphic T-Shirt",
+    printedMessage: "Phirse Bolo?",
+    category: "Social Battery",
+    tagline: "A social-battery tee for the conversations you keep replaying.",
+    description: "Phirse Bolo? brings a playful, familiar tone into the collection and works especially well for anyone who likes their humour a little sharper and a lot more personal.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(7),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(5) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -338,27 +392,23 @@ export const PRODUCTS: Product[] = [
     isBestseller: false,
     isFeatured: true,
     collectionSlug: "new-drops",
-    tags: ["raglan", "graphic tee", "design 07", "rightnowlife"],
+    tags: ["social battery", "phirse bolo", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-07",
   },
   {
     id: "rnl-design-08",
-    slug: "rightnowlife-design-08",
-    name: "RIGHTNOWLIFE Design 08",
-    tagline: "A graphic raglan tee from the RIGHTNOWLIFE collection.",
-    description: "Meet Design 08 from RIGHTNOWLIFE. A graphic T-shirt made for everyday self-expression. Explore the front, side, back, and close-up views to see the design from every angle.",
+    slug: "friday-mode",
+    name: "Friday Mode — Raglan Graphic T-Shirt",
+    printedMessage: "Friday Mode",
+    category: "Friday Mode",
+    tagline: "The loudest, easiest way to say the week is officially over.",
+    description: "Friday Mode is the no-explanation tee for the end of the workweek. It lands with the same ease as a good playlist, a long drive, and zero plans beyond the weekend.",
     price: 999,
     fit: "Regular",
-    colors: [
-      {
-        name: "As pictured",
-        hex: "#F5F4F0",
-        images: designGallery(8),
-      },
-    ],
+    colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(2) }],
     sizes: ["S", "M", "L", "XL", "XXL"],
-    fabricComposition: "Fabric details coming soon",
-    gsm: 0,
+    fabricComposition: "Heavyweight combed cotton jersey",
+    gsm: 240,
     printTechnique: "Graphic print",
     sleeve: "Full Sleeve",
     neck: "Crew Neck",
@@ -374,7 +424,7 @@ export const PRODUCTS: Product[] = [
     isBestseller: true,
     isFeatured: true,
     collectionSlug: "oversized-tees",
-    tags: ["raglan", "graphic tee", "design 08", "rightnowlife"],
+    tags: ["friday mode", "weekend", "graphic tee", "rightnowlife"],
     sku: "RNL-DESIGN-08",
   }
 ];

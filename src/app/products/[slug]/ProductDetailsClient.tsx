@@ -44,6 +44,8 @@ export function ProductDetailsClient({
 
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
   const galleryImages = currentColor?.images || product.colors[0]?.images || [];
+  const galleryImageAlts =
+    currentColor?.imageAlts || product.colors[0]?.imageAlts;
 
   const toggleSection = (id: AccordionId) => {
     setOpenSection((prev) => (prev === id ? "" : id));
@@ -93,6 +95,7 @@ export function ProductDetailsClient({
         <div>
           <ProductGallery
             images={galleryImages}
+            imageAlts={galleryImageAlts}
             productName={`${product.name} — ${currentColor.name}`}
           />
         </div>

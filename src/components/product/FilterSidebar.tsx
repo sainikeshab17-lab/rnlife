@@ -6,6 +6,7 @@ import { TShirtFit, TShirtSize } from "@/types";
 
 export interface FilterState {
   collection: string;
+  category: string;
   fit: string;
   size: string;
   color: string;
@@ -75,6 +76,17 @@ export function FilterSidebar({
     { label: "Statement Prints", value: "statement-prints" },
   ];
 
+  const categories = [
+    { label: "All Categories", value: "all" },
+    { label: "Hot Girl Stuff", value: "hot-girl-stuff" },
+    { label: "Monday to Friday", value: "monday-to-friday" },
+    { label: "Social Battery", value: "social-battery" },
+    { label: "Relationship Status", value: "relationship-status" },
+    { label: "Brutally Honest", value: "brutally-honest" },
+    { label: "Everyday Chaos", value: "everyday-chaos" },
+    { label: "Friday Mode", value: "friday-mode" },
+  ];
+
   const fits: { label: string; value: string }[] = [
     { label: "All Fits", value: "all" },
     { label: "Oversized Fit", value: "Oversized" },
@@ -95,6 +107,7 @@ export function FilterSidebar({
 
   const hasActiveFilters =
     filters.collection !== "all" ||
+    filters.category !== "all" ||
     filters.fit !== "all" ||
     filters.size !== "all" ||
     filters.color !== "all" ||
@@ -136,6 +149,28 @@ export function FilterSidebar({
                 className="w-3.5 h-3.5 accent-black"
               />
               <span>{col.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Category */}
+      <div className="space-y-2.5">
+        <p className="text-xs uppercase tracking-wider font-bold text-neutral-800">Category</p>
+        <div className="space-y-1">
+          {categories.map((category) => (
+            <label
+              key={category.value}
+              className="flex items-center gap-2 text-xs text-neutral-600 hover:text-black cursor-pointer py-0.5"
+            >
+              <input
+                type="radio"
+                name="filter-category"
+                checked={filters.category === category.value}
+                onChange={() => onChange({ ...filters, category: category.value })}
+                className="w-3.5 h-3.5 accent-black"
+              />
+              <span>{category.label}</span>
             </label>
           ))}
         </div>

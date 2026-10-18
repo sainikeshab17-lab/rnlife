@@ -1,26 +1,7 @@
 import type { Metadata } from "next";
-import { Bebas_Neue, Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/context/providers";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  display: "swap",
-});
-
-const bebasNeue = Bebas_Neue({
-  weight: "400",
-  subsets: ["latin"],
-  variable: "--font-bebas-neue",
-  display: "swap",
-});
+import { anton, bebasNeue, dmSans, inter, outfit, spaceGrotesk } from "@/lib/fonts";
 
 export const metadata: Metadata = {
   title: "RIGHTNOWLIFE | Independent Streetwear & Premium T-Shirts",
@@ -42,7 +23,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${spaceGrotesk.variable} ${bebasNeue.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${anton.variable} ${bebasNeue.variable} ${dmSans.variable} ${inter.variable} ${outfit.variable} ${spaceGrotesk.variable} h-full antialiased`}
+    >
       <body className="min-h-full flex flex-col bg-white text-[#111111]">
         <Providers>{children}</Providers>
       </body>

@@ -39,12 +39,18 @@ export function BrandLogo({
     >
       <div className={`relative ${iconSizes} shrink-0 ${iconClassName}`}>
         <Image
-          src="/images/rnllogo.jpg"
-          alt=""
-          fill
-          sizes="40px"
-          aria-hidden="true"
-          className="object-contain"
+          src="/brand/rightnowlife-logo.jpg"
+          alt="RIGHTNOWLIFE — Right Now Life"
+          width={1080}
+          height={1080}
+          sizes={
+            size === "lg"
+              ? "64px"
+              : size === "md"
+                ? "32px"
+                : "24px"
+          }
+          className="h-full w-full object-contain"
         />
       </div>
 

@@ -16,6 +16,7 @@ export function CollectionClientView({
 }: CollectionClientViewProps) {
   const [filters, setFilters] = useState<FilterState>({
     collection: collection.slug,
+    category: "all",
     fit: "all",
     size: "all",
     color: "all",
@@ -27,6 +28,11 @@ export function CollectionClientView({
 
   const filteredProducts = useMemo(() => {
     let result = [...initialProducts];
+
+    if (filters.category !== "all") {
+      const normalized = filters.category.toLowerCase();
+      result = result.filter((p) => p.category.toLowerCase().replace(/[^a-z]+/g, "-") === normalized);
+    }
 
     if (filters.fit !== "all") {
       result = result.filter((p) => p.fit === filters.fit);
@@ -70,6 +76,7 @@ export function CollectionClientView({
   const handleReset = () => {
     setFilters({
       collection: collection.slug,
+      category: "all",
       fit: "all",
       size: "all",
       color: "all",

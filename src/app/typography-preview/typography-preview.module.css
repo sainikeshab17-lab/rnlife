@@ -1,0 +1,365 @@
+.page {
+  --brand-yellow: #ffb900;
+  --brand-blue: #0876a8;
+  --brand-green: #079447;
+  --brand-red: #f5141c;
+  --brand-black: #111111;
+  --brand-white: #ffffff;
+  min-height: 100vh;
+  padding: 48px 24px 32px;
+  background: #f7f6f3;
+  color: var(--brand-black);
+}
+
+.pageHeader,
+.options,
+.footer {
+  width: min(100%, 1280px);
+  margin-inline: auto;
+}
+
+.pageHeader {
+  margin-bottom: 32px;
+}
+
+.eyebrow,
+.optionLabel,
+.kicker,
+.productTag,
+.categories {
+  font-family: var(--font-space-grotesk), sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--brand-blue);
+}
+
+.pageTitle {
+  margin: 0;
+  font-family: var(--font-bebas-neue), sans-serif;
+  font-size: clamp(48px, 7vw, 76px);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 0.95;
+}
+
+.intro {
+  max-width: 480px;
+  margin: 12px 0 0;
+  color: #5b5b5b;
+  font-family: var(--font-inter), sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.panel {
+  --heading-font: var(--font-bebas-neue);
+  --subheading-font: var(--font-space-grotesk);
+  --body-font: var(--font-inter);
+  overflow: hidden;
+  border: 1px solid #e1dfda;
+  background: var(--brand-white);
+}
+
+.optionA {
+  --heading-font: var(--font-bebas-neue);
+  --subheading-font: var(--font-space-grotesk);
+  --body-font: var(--font-inter);
+}
+
+.optionB {
+  --heading-font: var(--font-preview-anton);
+  --subheading-font: var(--font-preview-outfit);
+  --body-font: var(--font-preview-dm-sans);
+}
+
+.optionC {
+  --heading-font: var(--font-preview-oswald);
+  --subheading-font: var(--font-preview-manrope);
+  --body-font: var(--font-inter);
+}
+
+.optionD {
+  --heading-font: var(--font-preview-syne);
+  --subheading-font: var(--font-space-grotesk);
+  --body-font: var(--font-preview-dm-sans);
+}
+
+.panelHeader {
+  display: flex;
+  min-height: 78px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eae8e3;
+}
+
+.optionLabel {
+  margin: 0 0 4px;
+  color: var(--brand-red);
+}
+
+.optionName {
+  margin: 0;
+  font-family: var(--font-space-grotesk), sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.fontNames {
+  margin: 0;
+  color: #656565;
+  font-family: var(--font-inter), sans-serif;
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.sample {
+  padding: 22px 22px 18px;
+}
+
+.brand {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+}
+
+.logo {
+  width: 32px;
+  height: 32px;
+}
+
+.brandName {
+  font-family: var(--subheading-font), sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 142px;
+  align-items: center;
+  gap: 14px;
+  padding-block: 23px 18px;
+}
+
+.heroCopy {
+  min-width: 0;
+}
+
+.kicker {
+  margin: 0 0 8px;
+  color: var(--brand-green);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  font-family: var(--subheading-font), sans-serif;
+}
+
+.headline {
+  margin: 0;
+  font-family: var(--heading-font), sans-serif;
+  font-size: clamp(34px, 4.1vw, 51px);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 0.96;
+}
+
+.subheading {
+  margin: 9px 0 0;
+  font-family: var(--subheading-font), sans-serif;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.bodyCopy {
+  max-width: 310px;
+  margin: 10px 0 0;
+  color: #5a5a5a;
+  font-family: var(--body-font), sans-serif;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.shopButton {
+  min-height: 38px;
+  margin-top: 14px;
+  padding: 0 16px;
+  border: 0;
+  background: var(--brand-yellow);
+  color: var(--brand-black);
+  cursor: default;
+  font-family: var(--subheading-font), sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.productCard {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #e7e5e0;
+  background: #fff;
+}
+
+.productImage {
+  position: relative;
+  aspect-ratio: 0.82;
+  overflow: hidden;
+  background: #f2f1ed;
+}
+
+.productPhoto {
+  object-fit: cover;
+}
+
+.productTag {
+  position: absolute;
+  inset: 7px auto auto 7px;
+  padding: 5px 6px;
+  background: var(--brand-blue);
+  color: var(--brand-white);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  font-family: var(--subheading-font), sans-serif;
+}
+
+.productDetails {
+  padding: 9px 2px 3px;
+}
+
+.productName {
+  margin: 0;
+  font-family: var(--subheading-font), sans-serif;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.price {
+  margin: 4px 0 0;
+  color: var(--brand-blue);
+  font-family: var(--body-font), sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 14px;
+  border-top: 1px solid #eae8e3;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  font-family: var(--subheading-font), sans-serif;
+}
+
+.categories span {
+  padding: 7px 8px;
+  border: 1px solid #dedbd5;
+  color: #4c4c4c;
+}
+
+.categories span:nth-child(2) {
+  border-color: var(--brand-red);
+}
+
+.categories span:nth-child(3) {
+  border-color: var(--brand-green);
+}
+
+.footer {
+  padding-top: 18px;
+  color: #6b6b6b;
+  font-family: var(--font-inter), sans-serif;
+  font-size: 10px;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .options {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 680px;
+  }
+
+  .headline {
+    font-size: clamp(38px, 8vw, 56px);
+  }
+}
+
+@media (max-width: 480px) {
+  .page {
+    padding: 32px 14px 24px;
+  }
+
+  .pageHeader {
+    margin-bottom: 22px;
+  }
+
+  .panelHeader {
+    min-height: 72px;
+    padding: 13px 15px;
+  }
+
+  .optionName {
+    font-size: 14px;
+  }
+
+  .fontNames {
+    max-width: 130px;
+    font-size: 9px;
+  }
+
+  .sample {
+    padding: 17px 15px 14px;
+  }
+
+  .hero {
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 10px;
+    padding-block: 19px 15px;
+  }
+
+  .headline {
+    font-size: clamp(30px, 9vw, 42px);
+  }
+
+  .subheading {
+    font-size: 12px;
+  }
+
+  .bodyCopy {
+    font-size: 10px;
+  }
+
+  .shopButton {
+    min-height: 35px;
+    padding-inline: 12px;
+  }
+
+  .categories {
+    gap: 5px;
+    font-size: 7px;
+  }
+
+  .categories span {
+    padding: 6px;
+  }
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Mail, Clock, MapPin, Send, CheckCircle2 } from "lucide-react";
+import { Mail, Clock, Send, CheckCircle2 } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
 import { BRAND_INFO } from "@/data/mock-data";
@@ -24,28 +24,30 @@ export default function ContactPage() {
 
         <div className="py-8 border-b border-neutral-200">
           <span className="text-[11px] uppercase tracking-widest font-mono text-neutral-500 font-bold block mb-1">
-            SUPPORT & STUDIO INQUIRIES
+            CONTACT US
           </span>
           <h1 className="text-3xl sm:text-5xl font-black uppercase tracking-tight font-editorial">
-            CONTACT RIGHTNOWLIFE
+            CONTACT US
           </h1>
           <p className="text-xs sm:text-sm text-neutral-600 mt-2">
-            Have questions about fit, fabric GSM, order status, or drop releases? Reach out to our team.
+            We&apos;d love to hear from you. Whether you have questions about our
+            products, need support, or want to provide feedback, our team is
+            here to help.
           </p>
         </div>
 
         <div className="py-12 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
-          {/* Support Information (5 cols) */}
+          {/* Support Information */}
           <div className="lg:col-span-5 space-y-6">
             <div className="p-6 bg-[#F5F4F0] border border-neutral-200 space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-widest text-black">
-                Customer Care Desk
+                Get in Touch
               </h3>
               <div className="space-y-3 text-xs text-neutral-700">
                 <div className="flex items-start gap-3">
                   <Mail className="w-4 h-4 text-black shrink-0 mt-0.5" />
                   <div>
-                    <span className="text-neutral-500 block">Direct Email:</span>
+                    <span className="text-neutral-500 block">Contact Email:</span>
                     <a href={`mailto:${BRAND_INFO.supportEmail}`} className="font-bold text-black underline">
                       {BRAND_INFO.supportEmail}
                     </a>
@@ -55,20 +57,23 @@ export default function ContactPage() {
                 <div className="flex items-start gap-3">
                   <Clock className="w-4 h-4 text-black shrink-0 mt-0.5" />
                   <div>
-                    <span className="text-neutral-500 block">Support Hours:</span>
-                    <span className="font-semibold text-black">{BRAND_INFO.supportHours}</span>
+                    <span className="text-neutral-500 block">Response Time:</span>
+                    <span className="font-semibold text-black">{BRAND_INFO.supportResponseTime}</span>
                   </div>
                 </div>
+              </div>
 
-                <div className="flex items-start gap-3">
-                  <MapPin className="w-4 h-4 text-black shrink-0 mt-0.5" />
-                  <div>
-                    <span className="text-neutral-500 block">Design Studio:</span>
-                    <span className="text-neutral-800">
-                      RightNowLife Collective, Indiranagar, Bengaluru, Karnataka, India
-                    </span>
-                  </div>
-                </div>
+              <div className="border-t border-neutral-200 pt-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-black">
+                  We can assist with
+                </p>
+                <ul className="mt-2 space-y-1 text-xs text-neutral-700">
+                  <li>Product inquiries and information</li>
+                  <li>Order status and shipping updates</li>
+                  <li>Returns and refund requests</li>
+                  <li>Technical support</li>
+                  <li>General questions and feedback</li>
+                </ul>
               </div>
             </div>
 
@@ -89,7 +94,8 @@ export default function ContactPage() {
                   <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
                   <p className="font-bold text-sm">Message Sent to RightNowLife Team</p>
                   <p className="text-neutral-600">
-                    Thank you, {form.name}. We will get back to your email ({form.email}) within 24 business hours.
+                    Thank you, {form.name}. Our team typically responds within
+                    24 hours during business days.
                   </p>
                 </div>
               ) : (
