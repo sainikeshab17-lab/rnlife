@@ -85,7 +85,6 @@ export default function SellerProductsPage() {
               <option value="all">All Series</option>
               <option value="new-drops">New Drops</option>
               <option value="graphic-tees">Graphic Tees</option>
-              <option value="oversized-tees">Oversized Tees</option>
               <option value="essentials">Essentials</option>
               <option value="statement-prints">Statement Prints</option>
             </select>

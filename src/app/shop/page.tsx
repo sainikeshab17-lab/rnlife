@@ -154,7 +154,7 @@ function ShopContent() {
                 Shop All Tees
               </h1>
               <p className="text-xs text-[#858585] max-w-lg mt-2 leading-relaxed">
-                Heavyweight graphic, oversized, and essential T-shirts — milled from 100% combed cotton jersey.
+                Heavyweight raglan graphic T-shirts — milled from 100% combed cotton jersey. 8 designs. ₹999 each.
               </p>
             </div>
 

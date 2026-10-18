@@ -179,7 +179,7 @@ export function ProductDetailsClient({
             >
               <p className="text-[#858585] leading-relaxed">{product.description}</p>
               <p className="font-semibold text-[#111111] mt-2">
-                Silhouette: {product.fit} Fit · {product.sleeve} · {product.neck}
+                Silhouette: {product.fit} Fit · Raglan T-Shirt
               </p>
             </AccordionSection>
 
@@ -204,8 +204,6 @@ export function ProductDetailsClient({
                     value={product.printTechnique}
                   />
                 )}
-                <SpecRow label="Sleeve" value={product.sleeve} />
-                <SpecRow label="Neckline" value={product.neck} />
               </dl>
             </AccordionSection>
 

@@ -71,7 +71,6 @@ export function FilterSidebar({
     { label: "All Collections", value: "all" },
     { label: "New Drops", value: "new-drops" },
     { label: "Graphic Tees", value: "graphic-tees" },
-    { label: "Oversized Tees", value: "oversized-tees" },
     { label: "Essential Tees", value: "essentials" },
     { label: "Statement Prints", value: "statement-prints" },
   ];
@@ -89,7 +88,6 @@ export function FilterSidebar({
 
   const fits: { label: string; value: string }[] = [
     { label: "All Fits", value: "all" },
-    { label: "Oversized Fit", value: "Oversized" },
     { label: "Relaxed Fit", value: "Relaxed" },
     { label: "Regular Fit", value: "Regular" },
   ];

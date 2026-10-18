@@ -42,8 +42,8 @@ export default function HomePage() {
           className="group relative order-1 aspect-[4/3] overflow-hidden bg-[#FFFFFF] md:order-2 md:aspect-[5/4]"
         >
           <Image
-  src="/images/hero-raglan-campaign.png"
-  alt="RIGHTNOWLIFE Phirse bolo raglan T-shirt campaign"
+            src={heroProduct.colors[0].images[0]}
+            alt={heroProduct.colors[0].imageAlts?.[0] ?? heroProduct.name}
             fill
             loading="eager"
             className="img-morph object-contain object-center"

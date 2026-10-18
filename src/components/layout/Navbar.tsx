@@ -94,7 +94,6 @@ export function Navbar() {
   const navLinks = [
     { label: "Shop All", href: "/shop" },
     { label: "Graphic Tees", href: "/collections/graphic-tees" },
-    { label: "Oversized", href: "/collections/oversized-tees" },
     { label: "Essentials", href: "/collections/essentials" },
     { label: "New Drops", href: "/collections/new-drops" },
   ];

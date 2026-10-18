@@ -101,7 +101,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   Trending Searches
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {["Oversized Tees", "260 GSM", "Acid Wash", "Puff Print", "Drop Shoulder", "White Tee", "Midnight District"].map(
+                  {["Raglan T-Shirt", "260 GSM", "Graphic Print", "Drop Shoulder", "Regular Fit", "Friday Mode", "Go Crazy About Me"].map(
                     (tag) => (
                       <button
                         key={tag}

@@ -34,22 +34,22 @@ export interface Product {
   fabricComposition: string;
   gsm: number;
   printTechnique?: string;
-  sleeve: "Half Sleeve" | "Drop Shoulder" | "Full Sleeve";
-  neck: "Crew Neck" | "Ribbed Collar" | "Mock Neck";
+  sleeve: "Half Sleeve" | "Drop Shoulder";
+  neck: "Ribbed Collar" | "Mock Neck" | "Crew Neck";
   isGraphic: boolean;
   careInstructions: string[];
   stock: number;
   isNewDrop?: boolean;
   isBestseller?: boolean;
   isFeatured?: boolean;
-  collectionSlug: "new-drops" | "graphic-tees" | "oversized-tees" | "essentials" | "statement-prints";
+  collectionSlug: "new-drops" | "graphic-tees" | "essentials" | "statement-prints";
   tags: string[];
   sku: string;
 }
 
 export interface Collection {
   id: string;
-  slug: "new-drops" | "graphic-tees" | "oversized-tees" | "essentials" | "statement-prints";
+  slug: "new-drops" | "graphic-tees" | "essentials" | "statement-prints";
   name: string;
   title: string;
   tagline: string;

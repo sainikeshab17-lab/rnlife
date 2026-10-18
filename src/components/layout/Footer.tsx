@@ -69,8 +69,8 @@ export function Footer() {
           <ul className="space-y-2 text-xs text-neutral-200">
             <li><Link href="/shop" className="hover:text-[#FFB900]">Shop all</Link></li>
             <li><Link href="/collections/graphic-tees" className="hover:text-[#FFB900]">Graphic tees</Link></li>
-            <li><Link href="/collections/oversized-tees" className="hover:text-[#FFB900]">Oversized</Link></li>
             <li><Link href="/collections/essentials" className="hover:text-[#FFB900]">Essentials</Link></li>
+            <li><Link href="/collections/new-drops" className="hover:text-[#FFB900]">New drops</Link></li>
           </ul>
         </div>
         <div>

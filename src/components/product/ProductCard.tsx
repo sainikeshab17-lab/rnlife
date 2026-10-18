@@ -75,7 +75,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
       }}
     >
       {/* Image Container */}
-      <div className="relative aspect-[3/4] w-full bg-[#FFFFFF] overflow-hidden">
+      <div className="relative aspect-[3/4] w-full bg-[#FFFFFF]">
         <Link href={`/products/${product.slug}`} className="relative block w-full h-full">
           {/* Primary image */}
           <Image
@@ -83,7 +83,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
             alt={primaryImageAlt}
             fill
             priority={priority}
-            className={`img-morph object-cover object-top transition-opacity duration-400 ${
+            className={`img-morph object-contain object-center transition-opacity duration-400 ${
               isHovered && hoverImage !== primaryImage ? "opacity-0" : "opacity-100"
             }`}
             sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
@@ -95,7 +95,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
               src={hoverImage}
               alt={hoverImageAlt}
               fill
-              className={`object-cover object-top transition-opacity duration-400 ${
+              className={`object-contain object-center transition-opacity duration-400 ${
                 isHovered ? "opacity-100" : "opacity-0"
               }`}
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"

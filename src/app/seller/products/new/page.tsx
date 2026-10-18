@@ -185,7 +185,6 @@ export default function AddProductPage() {
                   >
                     <option value="new-drops">New Drops (Seasonal)</option>
                     <option value="graphic-tees">Graphic Tees</option>
-                    <option value="oversized-tees">Oversized Tees</option>
                     <option value="essentials">Essential Tees</option>
                     <option value="statement-prints">Statement Prints</option>
                   </select>
@@ -265,7 +264,6 @@ export default function AddProductPage() {
                   >
                     <option value="Drop Shoulder">Drop Shoulder</option>
                     <option value="Half Sleeve">Half Sleeve</option>
-                    <option value="Full Sleeve">Full Sleeve</option>
                   </select>
                 </div>
               </div>
