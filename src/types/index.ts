@@ -1,3 +1,5 @@
+import type { ProductCategory } from "@/data/product-categories";
+
 export type TShirtFit = "Oversized" | "Relaxed" | "Regular";
 
 export type TShirtSize = "XS" | "S" | "M" | "L" | "XL" | "XXL";
@@ -9,14 +11,7 @@ export interface ColorVariant {
   imageAlts?: string[];
 }
 
-export type ProductCategory =
-  | "Hot Girl Stuff"
-  | "Monday to Friday"
-  | "Social Battery"
-  | "Relationship Status"
-  | "Brutally Honest"
-  | "Everyday Chaos"
-  | "Friday Mode";
+export type { ProductCategory } from "@/data/product-categories";
 
 export interface Product {
   id: string;

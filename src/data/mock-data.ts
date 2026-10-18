@@ -1,4 +1,5 @@
 import { Product, Collection, SizeMeasurement, Order, StaffMember, User } from "@/types";
+export { PRODUCT_CATEGORIES } from "@/data/product-categories";
 
 const designGalleryAssets: Record<
   number,
@@ -102,16 +103,6 @@ export const BRAND_INFO = {
   supportResponseTime: "We typically respond within 24 hours during business days.",
 };
 
-export const PRODUCT_CATEGORIES = [
-  { name: "Hot Girl Stuff", slug: "hot-girl-stuff", image: designGallery(8).images[0] },
-  { name: "Monday to Friday", slug: "monday-to-friday", image: designGallery(2).images[0] },
-  { name: "Social Battery", slug: "social-battery", image: designGallery(7).images[0] },
-  { name: "Relationship Status", slug: "relationship-status", image: designGallery(1).images[0] },
-  { name: "Brutally Honest", slug: "brutally-honest", image: designGallery(7).images[0] },
-  { name: "Everyday Chaos", slug: "everyday-chaos", image: designGallery(5).images[0] },
-  { name: "Friday Mode", slug: "friday-mode", image: designGallery(2).images[0] },
-] as const;
-
 export const COLLECTIONS: Collection[] = [
   {
     id: "col-1",
@@ -165,7 +156,7 @@ export const PRODUCTS: Product[] = [
     slug: "go-crazy-about-me",
     name: "Go Crazy About Me — Raglan Graphic T-Shirt",
     printedMessage: "Go Crazy About Me",
-    category: "Relationship Status",
+    category: "hot-girl-stuff",
     tagline: "A relationship-status graphic tee for the loudest little obsession.",
     description: "Go Crazy About Me is a mood-first raglan graphic tee designed for the kind of love that feels instant, loud, and a little dramatic. The regular fit keeps the message front and center without trying too hard.",
     price: 999,
@@ -197,7 +188,7 @@ export const PRODUCTS: Product[] = [
     slug: "monday-tired-messy-no-motivation",
     name: "Monday: Tired, Messy, No Motivation — Raglan Graphic T-Shirt",
     printedMessage: "Monday: Tired, Messy, No Motivation",
-    category: "Monday to Friday",
+    category: "monday-to-friday",
     tagline: "A Monday graphic tee for the messy, overcaffeinated kind of week.",
     description: "Monday: Tired, Messy, No Motivation captures the universal mood of the first workday. The design sits on a heavy cotton raglan cut that feels lived in from day one.",
     price: 999,
@@ -229,7 +220,7 @@ export const PRODUCTS: Product[] = [
     slug: "i-love-sarcasm",
     name: "I Love Sarcasm — Raglan Graphic T-Shirt",
     printedMessage: "I Love Sarcasm",
-    category: "Brutally Honest",
+    category: "everyday-chaos",
     tagline: "A dry, deadpan graphic for the brutally honest crowd.",
     description: "I Love Sarcasm is all sharp wit and zero effort. It pairs as well with coffee runs as it does with weekend plans and low-key chaos.",
     price: 999,
@@ -261,7 +252,7 @@ export const PRODUCTS: Product[] = [
     slug: "bitch-i-am-the-secret-ingredient",
     name: "Bitch, I Am the Secret Ingredient — Burgundy Raglan Graphic T-Shirt",
     printedMessage: "Bitch, I Am the Secret Ingredient",
-    category: "Hot Girl Stuff",
+    category: "brutally-honest",
     tagline: "Low-key power, loud energy, and all the confidence in the room.",
     description: "Bitch, I Am the Secret Ingredient is a bold, unapologetic graphic meant for the women who make every room better just by walking in. The regular-fit cut gives the print room to be the star.",
     price: 999,
@@ -293,7 +284,7 @@ export const PRODUCTS: Product[] = [
     slug: "prayers-become-reality",
     name: "Prayers Become Reality — Raglan Graphic T-Shirt",
     printedMessage: "Prayers Become Reality",
-    category: "Everyday Chaos",
+    category: "social-battery",
     tagline: "A hopeful chaos tee for the days when everything goes sideways and still somehow works.",
     description: "Prayers Become Reality is a reminder that even in the mess, the good stuff still lands. It captures the steady optimism behind the everyday chaos of modern life.",
     price: 999,
@@ -325,7 +316,7 @@ export const PRODUCTS: Product[] = [
     slug: "hot-girls-do-yoga",
     name: "Hot Girls Do Yoga — Raglan Graphic T-Shirt",
     printedMessage: "Hot Girls Do Yoga",
-    category: "Hot Girl Stuff",
+    category: "hot-girl-stuff",
     tagline: "A flexy little reminder that balance can be both stylish and unbothered.",
     description: "Hot Girls Do Yoga is for the women who can do a downward dog and still look like they own the room. The clean, confident graphic sits on a heavy raglan frame that keeps the mood relaxed.",
     price: 999,
@@ -357,7 +348,7 @@ export const PRODUCTS: Product[] = [
     slug: "phirse-bolo",
     name: "Phirse Bolo? — Raglan Graphic T-Shirt",
     printedMessage: "Phirse Bolo?",
-    category: "Social Battery",
+    category: "everyday-chaos",
     tagline: "A social-battery tee for the conversations you keep replaying.",
     description: "Phirse Bolo? brings a playful, familiar tone into the collection and works especially well for anyone who likes their humour a little sharper and a lot more personal.",
     price: 999,
@@ -389,7 +380,7 @@ export const PRODUCTS: Product[] = [
     slug: "friday-mode",
     name: "Friday Mode — Raglan Graphic T-Shirt",
     printedMessage: "Friday Mode",
-    category: "Friday Mode",
+    category: "friday-mode",
     tagline: "The loudest, easiest way to say the week is officially over.",
     description: "Friday Mode is the no-explanation tee for the end of the workweek. It lands with the same ease as a good playlist, a long drive, and zero plans beyond the weekend.",
     price: 999,

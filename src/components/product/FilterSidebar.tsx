@@ -2,13 +2,14 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Filter, X, ChevronDown, Check } from "lucide-react";
-import { TShirtFit, TShirtSize } from "@/types";
+import { ProductCategory, TShirtSize } from "@/types";
+import { PRODUCT_CATEGORIES } from "@/data/mock-data";
 
 export interface FilterState {
   collection: string;
-  category: string;
+  category: "all" | ProductCategory;
   fit: string;
-  size: string;
+  size: "all" | TShirtSize;
   color: string;
   price: "all" | "under-1000" | "1000-1500" | "over-1500";
   sleeve: string;
@@ -75,15 +76,9 @@ export function FilterSidebar({
     { label: "Statement Prints", value: "statement-prints" },
   ];
 
-  const categories = [
+  const categories: { label: string; value: "all" | ProductCategory }[] = [
     { label: "All Categories", value: "all" },
-    { label: "Hot Girl Stuff", value: "hot-girl-stuff" },
-    { label: "Monday to Friday", value: "monday-to-friday" },
-    { label: "Social Battery", value: "social-battery" },
-    { label: "Relationship Status", value: "relationship-status" },
-    { label: "Brutally Honest", value: "brutally-honest" },
-    { label: "Everyday Chaos", value: "everyday-chaos" },
-    { label: "Friday Mode", value: "friday-mode" },
+    ...PRODUCT_CATEGORIES.map(({ name, slug }) => ({ label: name, value: slug })),
   ];
 
   const fits: { label: string; value: string }[] = [

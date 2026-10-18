@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState, useMemo, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { useState, useMemo, useEffect, Suspense } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
 import { ProductGrid } from "@/components/product/ProductGrid";
 import { FilterSidebar, FilterState } from "@/components/product/FilterSidebar";
-import { PRODUCTS } from "@/data/mock-data";
-import { Product } from "@/types";
+import { PRODUCT_CATEGORIES, PRODUCTS } from "@/data/mock-data";
+import { normalizeProductCategory } from "@/data/product-categories";
 
 const DEFAULT_PRODUCT_ORDER: Record<string, number> = {
   "go-crazy-about-me": 0,
@@ -21,14 +21,18 @@ const DEFAULT_PRODUCT_ORDER: Record<string, number> = {
 };
 
 function ShopContent() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
   const initialCollection = searchParams.get("collection") || "all";
-  const initialCategory = searchParams.get("category") || "all";
+  const categoryParam = searchParams.get("category");
+  const initialCategory: FilterState["category"] =
+    normalizeProductCategory(categoryParam) ?? "all";
 
-  const [filters, setFilters] = useState<FilterState>({
+  const [filterState, setFilterState] = useState<FilterState>({
     collection: initialCollection,
-    category: initialCategory,
+    category: "all",
     fit: "all",
     size: "all",
     color: "all",
@@ -41,18 +45,36 @@ function ShopContent() {
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
-  const categoryLabels = [
-    { name: "Hot Girl Stuff", slug: "hot-girl-stuff" },
-    { name: "Monday to Friday", slug: "monday-to-friday" },
-    { name: "Social Battery", slug: "social-battery" },
-    { name: "Relationship Status", slug: "relationship-status" },
-    { name: "Brutally Honest", slug: "brutally-honest" },
-    { name: "Everyday Chaos", slug: "everyday-chaos" },
-    { name: "Friday Mode", slug: "friday-mode" },
-  ];
+  const filters = { ...filterState, category: initialCategory };
+  useEffect(() => {
+    if (categoryParam === null || categoryParam === initialCategory) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+    if (initialCategory === "all") {
+      params.delete("category");
+    } else {
+      params.set("category", initialCategory);
+    }
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [categoryParam, initialCategory, pathname, router, searchParams]);
+
+  const updateSearchParams = (updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null) {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+    const query = params.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
+  };
 
   // Filter & Sort Logic
   const filteredProducts = useMemo(() => {
+    const filters = { ...filterState, category: initialCategory };
     let result = [...PRODUCTS];
 
     if (searchQuery.trim()) {
@@ -70,16 +92,16 @@ function ShopContent() {
     }
 
     if (filters.category !== "all") {
-      const normalized = filters.category.toLowerCase();
-      result = result.filter((p) => p.category.toLowerCase().replace(/[^a-z]+/g, "-") === normalized);
+      result = result.filter((p) => p.category === filters.category);
     }
 
     if (filters.fit !== "all") {
       result = result.filter((p) => p.fit === filters.fit);
     }
 
-    if (filters.size !== "all") {
-      result = result.filter((p) => p.sizes.includes(filters.size as any));
+    const selectedSize = filters.size;
+    if (selectedSize !== "all") {
+      result = result.filter((p) => p.sizes.includes(selectedSize));
     }
 
     if (filters.color !== "all") {
@@ -116,14 +138,14 @@ function ShopContent() {
     }
 
     return result;
-  }, [filters, searchQuery]);
+  }, [filterState, initialCategory, searchQuery]);
 
   const totalProducts = filteredProducts.length;
   const paginatedProducts = filteredProducts.slice(0, currentPage * itemsPerPage);
   const hasMore = paginatedProducts.length < totalProducts;
 
   const handleResetFilters = () => {
-    setFilters({
+    setFilterState({
       collection: "all",
       category: "all",
       fit: "all",
@@ -136,6 +158,7 @@ function ShopContent() {
     });
     setSearchQuery("");
     setCurrentPage(1);
+    updateSearchParams({ q: null, collection: null, category: null });
   };
 
   return (
@@ -170,8 +193,13 @@ function ShopContent() {
           <FilterSidebar
             filters={filters}
             onChange={(newF) => {
-              setFilters(newF);
+              setFilterState(newF);
               setCurrentPage(1);
+              if (newF.category !== filters.category) {
+                updateSearchParams({
+                  category: newF.category === "all" ? null : newF.category,
+                });
+              }
             }}
             onReset={handleResetFilters}
             totalCount={totalProducts}
@@ -188,13 +216,15 @@ function ShopContent() {
                 )}
                 {filters.category !== "all" && (
                   <span>
-                    Category: <strong>{categoryLabels.find((c) => c.slug === filters.category)?.name || filters.category}</strong>
+                    Category: <strong>{PRODUCT_CATEGORIES.find((category) => category.slug === filters.category)?.name || filters.category}</strong>
                   </span>
                 )}
                 <button
                   onClick={() => {
                     setSearchQuery("");
-                    setFilters((prev) => ({ ...prev, category: "all" }));
+                    setFilterState((prev) => ({ ...prev, category: "all" }));
+                    setCurrentPage(1);
+                    updateSearchParams({ q: null, category: null });
                   }}
                   className="text-[#858585] hover:text-[#111111] underline font-bold ml-auto transition-colors"
                 >

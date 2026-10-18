@@ -46,8 +46,7 @@ function SearchPageContent() {
     }
 
     if (filters.category !== "all") {
-      const normalized = filters.category.toLowerCase();
-      result = result.filter((p) => p.category.toLowerCase().replace(/[^a-z]+/g, "-") === normalized);
+      result = result.filter((p) => p.category === filters.category);
     }
 
     if (filters.fit !== "all") {

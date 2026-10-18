@@ -28,7 +28,7 @@ export default function CategoriesPage() {
 
         <div className="py-12 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {PRODUCT_CATEGORIES.map((category, idx) => {
-            const count = PRODUCTS.filter((product) => product.category === category.name).length;
+            const count = PRODUCTS.filter((product) => product.category === category.slug).length;
             return (
               <Link
                 key={category.slug}
