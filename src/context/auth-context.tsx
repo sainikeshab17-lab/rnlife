@@ -35,6 +35,18 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const ADDRESS_STORAGE_KEY = "rnl_customer_addresses_v1";
 
+function getUserRole(
+  appMetadata: Record<string, unknown> | undefined
+): "customer" | "seller" | "admin" {
+  const role = appMetadata?.role;
+
+  if (role === "seller" || role === "admin") {
+    return role;
+  }
+
+  return "customer";
+}
+
 export function AuthProvider({
   children,
 }: {
@@ -86,7 +98,7 @@ export function AuthProvider({
         name: storedName,
         email: authUser.email ?? "",
         phone: authUser.user_metadata?.phone ?? "",
-        role: "customer",
+        role: getUserRole(authUser.app_metadata),
         addresses,
       });
 
@@ -117,7 +129,7 @@ export function AuthProvider({
       "",
     email: authUser.email ?? "",
     phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
-    role: "customer",
+    role: getUserRole(authUser.app_metadata),
     addresses:
       currentUser?.id === authUser.id
         ? currentUser.addresses
@@ -222,17 +234,21 @@ export function AuthProvider({
 
       const authUser = data.user;
 
-      setUser({
-        id: authUser.id,
-        name:
-          authUser.user_metadata?.full_name ??
-          authUser.user_metadata?.name ??
-          "",
-        email: authUser.email ?? "",
-        phone: authUser.user_metadata?.phone ?? "",
-        role: "customer",
-        addresses: [],
-      });
+      setUser((currentUser) => ({
+  id: authUser.id,
+  name:
+    authUser.user_metadata?.full_name ??
+    authUser.user_metadata?.name ??
+    currentUser?.name ??
+    "",
+  email: authUser.email ?? "",
+  phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
+  role: getUserRole(authUser.app_metadata),
+  addresses:
+    currentUser?.id === authUser.id
+      ? currentUser.addresses
+      : [],
+}));
 
       toast({
         type: "success",

@@ -83,7 +83,9 @@ export function SellerLayout({
             </Link>
 
             <div className="flex items-center gap-2 pl-2 border-l border-neutral-700">
-              <span className="font-semibold hidden sm:inline">{user?.name || "Devika Rao"}</span>
+              <span className="font-semibold hidden sm:inline">
+  {user?.name || user?.email || "Seller"}
+</span>
               <button
                 onClick={logout}
                 className="text-neutral-400 hover:text-red-400 p-1"

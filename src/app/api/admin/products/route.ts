@@ -1,117 +1,195 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminAuth } from "@/lib/auth/admin-auth";
-import { getDb, DbProductOverride } from "@/lib/db/index";
-import { PRODUCTS } from "@/data/mock-data";
-import { writeAuditLog } from "@/lib/db/audit";
 import { z } from "zod";
+import { requireAdminAuth } from "@/lib/auth/admin-auth";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/admin/products
- * Returns all 8 products with their DB-backed visibility override status.
- * Price is always ₹999 — it is not returned from DB and cannot be overridden.
- */
+const ProductSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  slug: z.string().trim().min(1).max(220),
+  description: z.string().max(10000).nullable().optional(),
+  category: z.string().trim().min(1).max(100),
+  sku: z.string().trim().min(1).max(100).nullable().optional(),
+  price: z.coerce.number().finite().min(0),
+  compare_at_price: z.coerce.number().finite().min(0).nullable().optional(),
+  images: z.array(z.string().url()).max(20).optional(),
+  sizes: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
+  colors: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
+  stock: z.coerce.number().int().min(0).max(100000).optional(),
+  is_active: z.boolean().optional(),
+});
+
+const UpdateProductSchema = ProductSchema.partial().extend({
+  description: z.string().max(10000).nullable().optional(),
+  compare_at_price: z.coerce.number().finite().min(0).nullable().optional(),
+});
+
+async function authorizedAdmin(req: NextRequest) {
+  const user = await requireAdminAuth(req);
+
+  if (!user) {
+    return {
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  if (user.role !== "admin") {
+    return {
+      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
+  }
+
+  return { user };
+}
+
+// GET /api/admin/products — list all products, including drafts.
 export async function GET(req: NextRequest) {
-  const admin = await requireAdminAuth(req);
-  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   try {
-    const db = getDb();
-    const overrides = await db.prepare("SELECT * FROM product_overrides").all<DbProductOverride>();
-    const overrideMap: Record<string, DbProductOverride> = {};
-    for (const o of overrides) overrideMap[o.product_id] = o;
+    const auth = await authorizedAdmin(req);
+    if (auth.response) return auth.response;
 
-    const products = PRODUCTS.map((p) => {
-      const override = overrideMap[p.id];
-      return {
-        id: p.id,
-        slug: p.slug,
-        name: p.name,
-        sku: p.sku,
-        price: 999, // Always locked
-        fit: p.fit,
-        image: p.colors[0]?.images[0] ?? "",
-        description: override?.custom_description ?? p.description,
-        is_active: override ? override.is_active === 1 : true,
-        updated_by: override?.updated_by ?? null,
-        updated_at: override?.updated_at ?? null,
-      };
-    });
+    const supabase = createAdminSupabaseClient();
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-    return NextResponse.json({ products });
-  } catch (err) {
-    console.error("[admin/products]", err);
-    return NextResponse.json({ error: "Failed to load products." }, { status: 500 });
+    if (error) {
+      console.error("[admin/products GET]", error.message);
+      return NextResponse.json(
+        { error: "Failed to load products." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ products: data ?? [] });
+  } catch (error) {
+    console.error("[admin/products GET]", error);
+    return NextResponse.json(
+      { error: "Failed to load products." },
+      { status: 500 }
+    );
   }
 }
 
-const UpdateProductSchema = z.object({
-  is_active: z.boolean().optional(),
-  custom_description: z.string().max(2000).optional().nullable(),
-});
+// POST /api/admin/products — create a product.
+export async function POST(req: NextRequest) {
+  try {
+    const auth = await authorizedAdmin(req);
+    if (auth.response) return auth.response;
 
-/**
- * PATCH /api/admin/products/[id]
- * Allows updating visibility (is_active) and custom_description.
- * Price changes are rejected — always ₹999.
- */
-export async function PATCH(req: NextRequest) {
-  const admin = await requireAdminAuth(req);
-  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body = await req.json();
+    const parsed = ProductSchema.safeParse(body);
 
-  const url = new URL(req.url);
-  // Product ID extracted from query param since this is a shared route handler
-  const productId = url.searchParams.get("id");
-  if (!productId) return NextResponse.json({ error: "Product ID required." }, { status: 400 });
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid product data.", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
 
-  const product = PRODUCTS.find((p) => p.id === productId);
-  if (!product) return NextResponse.json({ error: "Product not found." }, { status: 404 });
+    const input = parsed.data;
+    const supabase = createAdminSupabaseClient();
 
-  const body = await req.json();
+    const { data, error } = await supabase
+      .from("products")
+      .insert({
+        name: input.name,
+        slug: input.slug,
+        description: input.description ?? null,
+        category: input.category,
+        sku: input.sku ?? null,
+        price: input.price,
+        compare_at_price: input.compare_at_price ?? null,
+        images: input.images ?? [],
+        sizes: input.sizes ?? [],
+        colors: input.colors ?? [],
+        stock: input.stock ?? 0,
+        is_active: input.is_active ?? false,
+      })
+      .select("*")
+      .single();
 
-  // Reject any attempt to change price
-  if (body.price !== undefined) {
+    if (error) {
+      console.error("[admin/products POST]", error.message);
+      const conflict = error.code === "23505";
+
+      return NextResponse.json(
+        {
+          error: conflict
+            ? "A product with this slug or SKU already exists."
+            : "Failed to create product.",
+        },
+        { status: conflict ? 409 : 500 }
+      );
+    }
+
+    return NextResponse.json({ product: data }, { status: 201 });
+  } catch (error) {
+    console.error("[admin/products POST]", error);
     return NextResponse.json(
-      { error: "Product price cannot be changed. All RIGHTNOWLIFE T-shirts are fixed at ₹999." },
-      { status: 422 }
+      { error: "Failed to create product." },
+      { status: 500 }
     );
   }
+}
 
-  const parsed = UpdateProductSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
+// PATCH /api/admin/products?id=<uuid> — update a product.
+export async function PATCH(req: NextRequest) {
+  try {
+    const auth = await authorizedAdmin(req);
+    if (auth.response) return auth.response;
+
+    const productId = new URL(req.url).searchParams.get("id");
+
+    if (!productId) {
+      return NextResponse.json(
+        { error: "Product ID is required." },
+        { status: 400 }
+      );
+    }
+
+    const body = await req.json();
+    const parsed = UpdateProductSchema.safeParse(body);
+
+    if (!parsed.success || Object.keys(parsed.data ?? {}).length === 0) {
+      return NextResponse.json(
+        { error: "Provide valid product fields to update." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = createAdminSupabaseClient();
+    const { data, error } = await supabase
+      .from("products")
+      .update(parsed.data)
+      .eq("id", productId)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("[admin/products PATCH]", error.message);
+      return NextResponse.json(
+        { error: "Failed to update product." },
+        { status: 500 }
+      );
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        { error: "Product not found." },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ product: data });
+  } catch (error) {
+    console.error("[admin/products PATCH]", error);
+    return NextResponse.json(
+      { error: "Failed to update product." },
+      { status: 500 }
+    );
   }
-
-  const { is_active, custom_description } = parsed.data;
-  const db = getDb();
-  const existing = await db.prepare("SELECT * FROM product_overrides WHERE product_id = ?").get<DbProductOverride>(productId);
-  const now = new Date().toISOString();
-
-  const newIsActive = is_active !== undefined ? (is_active ? 1 : 0) : (existing?.is_active ?? 1);
-  const newDesc = custom_description !== undefined ? custom_description : existing?.custom_description ?? null;
-
-  if (existing) {
-    await db.prepare(`
-      UPDATE product_overrides SET is_active = ?, custom_description = ?, updated_by = ?, updated_at = ?
-      WHERE product_id = ?
-    `).run(newIsActive, newDesc, admin.email, now, productId);
-  } else {
-    await db.prepare(`
-      INSERT INTO product_overrides (product_id, is_active, custom_description, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(productId, newIsActive, newDesc, admin.email, now);
-  }
-
-  await writeAuditLog({
-    actor: admin.email,
-    action: "product_updated",
-    entityType: "product",
-    entityId: productId,
-    before: { is_active: existing?.is_active ?? 1, custom_description: existing?.custom_description },
-    after: { is_active: newIsActive, custom_description: newDesc },
-    ipAddress: req.headers.get("x-forwarded-for"),
-  });
-
-  return NextResponse.json({ success: true, product_id: productId, is_active: newIsActive === 1 });
 }

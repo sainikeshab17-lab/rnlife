@@ -212,8 +212,15 @@ export function requireAdminAuth(req: NextRequest): Promise<DbAdminUser | null> 
 // ─── Internal Helpers ─────────────────────────────────────────────────────────
 
 function hashToken(rawToken: string): string {
-  // Use HMAC-SHA256 with a server secret so stored hashes can't be used
-  // even if the DB is compromised (token ≠ hash, and hash uses server secret)
-  const secret = process.env.ADMIN_SESSION_SECRET || "rnl_dev_session_secret_change_in_production";
-  return createHmac("sha256", secret).update(rawToken).digest("hex");
+  const secret = process.env.ADMIN_SESSION_SECRET;
+
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "ADMIN_SESSION_SECRET must be configured with at least 32 characters."
+    );
+  }
+
+  return createHmac("sha256", secret)
+    .update(rawToken)
+    .digest("hex");
 }
