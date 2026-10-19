@@ -57,7 +57,7 @@ export function AccountLayout({ children, title, subtitle }: AccountLayoutProps)
           </div>
 
           <div className="text-xs text-neutral-500 font-mono">
-            Signed in as: <strong className="text-black">{user?.name || "Demo Customer"}</strong>
+            Signed in as: <strong className="text-black">{user?.name || user?.email || "Customer"}</strong>
           </div>
         </div>
 

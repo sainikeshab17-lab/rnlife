@@ -1,15 +1,28 @@
+
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+    useCallback,
+  useMemo,
+} from "react";
 import { User, Address } from "@/types";
-import { DEMO_USER } from "@/data/mock-data";
 import { useToast } from "./toast-context";
+import { createClient } from "@/lib/supabase/client";
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (email: string) => Promise<boolean>;
-  register: (name: string, email: string, phone: string) => Promise<boolean>;
+  register: (
+    name: string,
+    email: string,
+    phone: string
+  ) => Promise<boolean>;
+  verifyOtp: (email: string, token: string) => Promise<boolean>;
   logout: () => void;
   setRole: (role: "customer" | "seller" | "admin") => void;
   addAddress: (address: Omit<Address, "id">) => void;
@@ -20,178 +33,357 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const USER_STORAGE_KEY = "rnl_auth_user_v1";
+const ADDRESS_STORAGE_KEY = "rnl_customer_addresses_v1";
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(DEMO_USER);
+export function AuthProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(USER_STORAGE_KEY);
-      if (stored) {
-        setUser(JSON.parse(stored));
-      } else {
-        setUser(DEMO_USER);
-      }
-    } catch {
-      setUser(DEMO_USER);
-    }
-  }, []);
+  const supabase = useMemo(() => createClient(), []);
 
   const saveUser = useCallback((updated: User | null) => {
     setUser(updated);
-    try {
-      if (updated) {
-        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(updated));
-      } else {
-        localStorage.removeItem(USER_STORAGE_KEY);
-      }
-    } catch {
-      // Ignore
-    }
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+
+      if (!mounted) return;
+
+      if (error || !data.user) {
+        setUser(null);
+        setAuthReady(true);
+        return;
+      }
+
+      const authUser = data.user;
+      const storedName =
+        authUser.user_metadata?.full_name ??
+        authUser.user_metadata?.name ??
+        "";
+
+      let addresses: Address[] = [];
+
+      try {
+        const stored = localStorage.getItem(
+          `${ADDRESS_STORAGE_KEY}:${authUser.id}`
+        );
+        if (stored) addresses = JSON.parse(stored) as Address[];
+      } catch {
+        addresses = [];
+      }
+
+      setUser({
+        id: authUser.id,
+        name: storedName,
+        email: authUser.email ?? "",
+        phone: authUser.user_metadata?.phone ?? "",
+        role: "customer",
+        addresses,
+      });
+
+      setAuthReady(true);
+    };
+
+    void loadUser();
+
+    const {
+  data: { subscription },
+} = supabase.auth.onAuthStateChange((_event, session) => {
+  if (!mounted) return;
+
+  if (!session?.user) {
+    setUser(null);
+    setAuthReady(true);
+    return;
+  }
+
+  const authUser = session.user;
+
+  setUser((currentUser) => ({
+    id: authUser.id,
+    name:
+      authUser.user_metadata?.full_name ??
+      authUser.user_metadata?.name ??
+      currentUser?.name ??
+      "",
+    email: authUser.email ?? "",
+    phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
+    role: "customer",
+    addresses:
+      currentUser?.id === authUser.id
+        ? currentUser.addresses
+        : [],
+  }));
+
+  setAuthReady(true);
+});
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   const login = useCallback(
     async (email: string): Promise<boolean> => {
-      const simulated: User = {
-        ...DEMO_USER,
-        email: email || DEMO_USER.email,
-      };
-      saveUser(simulated);
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: {
+          shouldCreateUser: false,
+        },
+      });
+
+      if (error) {
+        toast({
+          type: "error",
+          title: "Unable to Send Code",
+          message: error.message,
+        });
+        return false;
+      }
+
       toast({
         type: "success",
-        title: "Signed In (Demo)",
-        message: `Welcome back, ${simulated.name}`,
+        title: "Check Your Email",
+        message: "We sent you a verification code.",
       });
+
       return true;
     },
-    [saveUser, toast]
+    [supabase, toast]
   );
 
   const register = useCallback(
-    async (name: string, email: string, phone: string): Promise<boolean> => {
-      const newUser: User = {
-        id: `usr-${Date.now()}`,
-        name,
-        email,
-        phone,
-        role: "customer",
-        addresses: [],
-      };
-      saveUser(newUser);
+    async (
+      name: string,
+      email: string,
+      phone: string
+    ): Promise<boolean> => {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: {
+          shouldCreateUser: true,
+          data: {
+            full_name: name.trim(),
+            phone: phone.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        toast({
+          type: "error",
+          title: "Registration Failed",
+          message: error.message,
+        });
+        return false;
+      }
+
       toast({
         type: "success",
-        title: "Account Created (Demo)",
-        message: `Welcome to RightNowLife, ${name}`,
+        title: "Verify Your Email",
+        message: "We sent you a verification code.",
       });
+
       return true;
+    },
+    [supabase, toast]
+  );
+
+  const verifyOtp = useCallback(
+    async (email: string, token: string): Promise<boolean> => {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: token.trim(),
+        type: "email",
+      });
+
+      if (error || !data.user) {
+        toast({
+          type: "error",
+          title: "Verification Failed",
+          message: error?.message ?? "Please request a new code.",
+        });
+        return false;
+      }
+
+      const authUser = data.user;
+
+      setUser({
+        id: authUser.id,
+        name:
+          authUser.user_metadata?.full_name ??
+          authUser.user_metadata?.name ??
+          "",
+        email: authUser.email ?? "",
+        phone: authUser.user_metadata?.phone ?? "",
+        role: "customer",
+        addresses: [],
+      });
+
+      toast({
+        type: "success",
+        title: "Email Verified",
+        message: "You are now signed in.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const logout = useCallback(async () => {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      toast({
+        type: "error",
+        title: "Sign Out Failed",
+        message: error.message,
+      });
+      return;
+    }
+
+    saveUser(null);
+
+    toast({
+      type: "success",
+      title: "Signed Out",
+      message: "You have been signed out.",
+    });
+  }, [supabase, saveUser, toast]);
+
+  const persistAddresses = useCallback(
+    (updated: User) => {
+      saveUser(updated);
+
+      try {
+        localStorage.setItem(
+          `${ADDRESS_STORAGE_KEY}:${updated.id}`,
+          JSON.stringify(updated.addresses)
+        );
+      } catch {
+        toast({
+          type: "error",
+          title: "Address Not Saved",
+          message: "Your browser could not save this address.",
+        });
+      }
     },
     [saveUser, toast]
   );
 
-  const logout = useCallback(() => {
-    saveUser(null);
-    toast({
-      type: "info",
-      title: "Signed Out",
-      message: "You have been logged out of your session.",
-    });
-  }, [saveUser, toast]);
-
   const setRole = useCallback(
     (role: "customer" | "seller" | "admin") => {
-      if (!user) return;
-      const updated: User = { ...user, role };
-      saveUser(updated);
-      toast({
-        type: "info",
-        title: `Switched to ${role.toUpperCase()} View`,
-        message: `Active demo perspective changed to ${role}`,
-      });
+      if (role !== "customer") {
+        toast({
+          type: "error",
+          title: "Permission Denied",
+          message: "Staff roles must be assigned securely by an administrator.",
+        });
+      }
     },
-    [user, saveUser, toast]
+    [toast]
   );
 
   const addAddress = useCallback(
-    (newAddr: Omit<Address, "id">) => {
+    (newAddress: Omit<Address, "id">) => {
       if (!user) return;
-      const id = `addr-${Date.now()}`;
-      const address: Address = { ...newAddr, id };
-      const addresses = user.addresses.map((a) =>
-        newAddr.isDefault ? { ...a, isDefault: false } : a
-      );
-      const updated: User = {
-        ...user,
-        addresses: [...addresses, address],
+
+      const address: Address = {
+        ...newAddress,
+        id: crypto.randomUUID(),
       };
-      saveUser(updated);
+
+      const existing = user.addresses.map((item) =>
+        address.isDefault ? { ...item, isDefault: false } : item
+      );
+
+      const updated = {
+        ...user,
+        addresses: [...existing, address],
+      };
+
+      persistAddresses(updated);
+
       toast({
         type: "success",
         title: "Address Saved",
         message: `${address.city}, ${address.pinCode}`,
       });
     },
-    [user, saveUser, toast]
+    [user, persistAddresses, toast]
   );
 
   const updateAddress = useCallback(
     (id: string, fields: Partial<Address>) => {
       if (!user) return;
-      const updatedAddresses = user.addresses.map((a) => {
-        if (a.id === id) {
-          return { ...a, ...fields };
-        }
-        if (fields.isDefault) {
-          return { ...a, isDefault: false };
-        }
-        return a;
+
+      const updatedAddresses = user.addresses.map((address) => {
+        if (address.id === id) return { ...address, ...fields };
+        if (fields.isDefault) return { ...address, isDefault: false };
+        return address;
       });
-      saveUser({ ...user, addresses: updatedAddresses });
-      toast({
-        type: "success",
-        title: "Address Updated",
-      });
+
+      persistAddresses({ ...user, addresses: updatedAddresses });
     },
-    [user, saveUser, toast]
+    [user, persistAddresses]
   );
 
   const deleteAddress = useCallback(
     (id: string) => {
       if (!user) return;
-      const filtered = user.addresses.filter((a) => a.id !== id);
-      saveUser({ ...user, addresses: filtered });
+
+      persistAddresses({
+        ...user,
+        addresses: user.addresses.filter((address) => address.id !== id),
+      });
+
       toast({
         type: "info",
         title: "Address Deleted",
+        message: "The saved address was removed.",
       });
     },
-    [user, saveUser, toast]
+    [user, persistAddresses, toast]
   );
 
   const setDefaultAddress = useCallback(
     (id: string) => {
       if (!user) return;
-      const updated = user.addresses.map((a) => ({
-        ...a,
-        isDefault: a.id === id,
-      }));
-      saveUser({ ...user, addresses: updated });
-      toast({
-        type: "success",
-        title: "Default Address Updated",
+
+      persistAddresses({
+        ...user,
+        addresses: user.addresses.map((address) => ({
+          ...address,
+          isDefault: address.id === id,
+        })),
       });
     },
-    [user, saveUser, toast]
+    [user, persistAddresses]
   );
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        isAuthenticated: !!user,
+        isAuthenticated: authReady && !!user,
         login,
         register,
+        verifyOtp,
         logout,
         setRole,
         addAddress,
@@ -207,8 +399,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
+
   if (!context) {
     throw new Error("useAuth must be used within an AuthProvider");
   }
+
   return context;
 }
