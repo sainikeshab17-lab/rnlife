@@ -1,0 +1,946 @@
+﻿
+
+========== src\app\api\checkout\create-order\route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import {
+  CreateCheckoutOrderSchema,
+  calculateTrustedOrderPricing,
+  generateOrderNumber,
+} from "@/services/checkout-service";
+import {
+  checkAndReserveInventory,
+  releaseInventoryReservation,
+  createPendingOrder,
+  updateOrderRazorpayId,
+  logPaymentAudit,
+} from "@/lib/db/orders";
+import { getRazorpayClient, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } from "@/lib/razorpay";
+import { randomUUID } from "crypto";
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+
+    // 1. Validate payload with Zod
+    const validation = CreateCheckoutOrderSchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid checkout request",
+          details: validation.error.flatten().fieldErrors,
+        },
+        { status: 400 }
+      );
+    }
+
+    const { customerName, customerEmail, customerPhone, address, items, promoCode, userId } =
+      validation.data;
+
+    // 2. Server-side trusted price calculation (â‚¹999 per item)
+    const pricingResult = calculateTrustedOrderPricing(items, promoCode);
+    if (!pricingResult.success) {
+      return NextResponse.json({ error: pricingResult.error }, { status: 400 });
+    }
+
+    const pricing = pricingResult.pricing;
+
+    // 3. Check and reserve inventory
+    const inventoryCheck = await checkAndReserveInventory(
+      items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
+    );
+
+    if (!inventoryCheck.ok) {
+      return NextResponse.json({ error: inventoryCheck.error }, { status: 400 });
+    }
+
+    // 4. Create pending order in database
+    const orderNumber = generateOrderNumber();
+    let createdOrder: Awaited<ReturnType<typeof createPendingOrder>>;
+    try {
+      createdOrder = await createPendingOrder({
+      orderNumber,
+      customerName,
+      customerEmail,
+      customerPhone,
+      subtotal: pricing.subtotal,
+      shipping: pricing.shipping,
+      discount: pricing.discount,
+      total: pricing.total,
+      paymentMethod: "Razorpay (UPI / Cards / NetBanking)",
+      userId: userId || null,
+      items: pricing.items,
+        address,
+      });
+    } catch (error) {
+      await releaseInventoryReservation(
+        items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
+      );
+      throw error;
+    }
+    const { order, guestToken } = createdOrder;
+
+    // 5. Create Razorpay order on server
+    let razorpayOrderId: string;
+    const amountInPaisa = Math.round(pricing.total * 100);
+
+    const hasRealRazorpayKeys =
+      RAZORPAY_KEY_ID !== "rzp_test_placeholder_key" &&
+      RAZORPAY_KEY_SECRET !== "rzp_test_placeholder_secret";
+
+    if (hasRealRazorpayKeys) {
+      try {
+        const rzp = getRazorpayClient();
+        const rzpOrder = await rzp.orders.create({
+          amount: amountInPaisa,
+          currency: "INR",
+          receipt: order.order_number,
+          notes: {
+            orderId: order.id,
+            orderNumber: order.order_number,
+            customerEmail: order.customer_email,
+          },
+        });
+        razorpayOrderId = rzpOrder.id;
+      } catch (err: any) {
+        // Release reserved inventory if Razorpay order generation fails
+        await releaseInventoryReservation(
+          items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
+        );
+        await logPaymentAudit(order.id, "razorpay_order_creation_failed", {
+          error: err?.message || "Razorpay API error",
+        });
+
+        console.error("Razorpay orders.create failed:", err);
+        return NextResponse.json(
+          {
+            error: "Unable to initiate payment with Razorpay. Please check credentials or try again.",
+            details: err?.error?.description || err?.message,
+          },
+          { status: 502 }
+        );
+      }
+    } else {
+      // Local development test mode with placeholder keys
+      razorpayOrderId = `order_test_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
+      console.info(
+        `[Razorpay Dev Mode] Generated test order ID ${razorpayOrderId} for amount â‚¹${pricing.total}. Configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env for live test sandbox.`
+      );
+    }
+
+    // Update order with Razorpay order ID
+    await updateOrderRazorpayId(order.id, razorpayOrderId);
+
+    await logPaymentAudit(order.id, "order_created", {
+      orderNumber: order.order_number,
+      razorpayOrderId,
+      amount: pricing.total,
+    });
+
+    // 6. Return minimal public checkout details to client
+    return NextResponse.json({
+      success: true,
+      orderId: order.id,
+      orderNumber: order.order_number,
+      razorpayOrderId,
+      amount: amountInPaisa,
+      currency: "INR",
+      keyId: RAZORPAY_KEY_ID,
+      guestToken,
+      isTestMode: !hasRealRazorpayKeys,
+      pricing: {
+        subtotal: pricing.subtotal,
+        shipping: pricing.shipping,
+        discount: pricing.discount,
+        total: pricing.total,
+      },
+      customer: {
+        name: order.customer_name,
+        email: order.customer_email,
+        phone: order.customer_phone,
+      },
+    });
+  } catch (err: any) {
+    console.error("Error in /api/checkout/create-order:", err);
+    return NextResponse.json(
+      { error: "Internal server error occurred while creating order" },
+      { status: 500 }
+    );
+  }
+}
+
+
+========== src\app\api\checkout\verify-payment\route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { getOrderById, markOrderAsPaid, logPaymentAudit } from "@/lib/db/orders";
+import { verifyPaymentSignature, getRazorpayClient } from "@/lib/razorpay";
+import { sendOrderConfirmationEmail } from "@/services/notification-service";
+
+export const dynamic = "force-dynamic";
+
+const VerifyPaymentSchema = z.object({
+  orderId: z.string().min(1),
+  razorpayOrderId: z.string().min(1),
+  razorpayPaymentId: z.string().min(1),
+  razorpaySignature: z.string().min(1),
+});
+
+export async function POST(req: NextRequest) {
+  try {
+    const body: unknown = await req.json();
+    const validation = VerifyPaymentSchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json({ error: "Invalid payment verification payload." }, { status: 400 });
+    }
+
+    const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = validation.data;
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    // Placeholder configuration must never authorize a paid order.
+    if (!keyId || !keySecret || keyId === "rzp_test_placeholder_key" || keySecret === "rzp_test_placeholder_secret") {
+      return NextResponse.json({ error: "Razorpay payment verification is not configured." }, { status: 503 });
+    }
+
+    const order = await getOrderById(orderId);
+    if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
+
+    if (!order.razorpay_order_id || order.razorpay_order_id !== razorpayOrderId) {
+      await logPaymentAudit(order.id, "payment_mismatch_order_id", {
+        expected: order.razorpay_order_id,
+        received: razorpayOrderId,
+      });
+      return NextResponse.json({ error: "Payment does not match this order." }, { status: 400 });
+    }
+
+    if (order.payment_status === "paid") {
+      return NextResponse.json({
+        success: true,
+        alreadyProcessed: true,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        guestToken: order.guest_token,
+      });
+    }
+
+    const signatureValid = verifyPaymentSignature({
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      secret: keySecret,
+    });
+    if (!signatureValid) {
+      await logPaymentAudit(order.id, "invalid_signature", { razorpayOrderId, razorpayPaymentId });
+      return NextResponse.json({ error: "Payment signature verification failed." }, { status: 400 });
+    }
+
+    let payment: { order_id?: string; amount?: string | number; currency?: string; status?: string };
+    try {
+      payment = await getRazorpayClient().payments.fetch(razorpayPaymentId);
+    } catch {
+      console.error("[payment verify] Razorpay payment fetch failed.");
+      return NextResponse.json({ error: "Unable to confirm payment with Razorpay." }, { status: 502 });
+    }
+
+    const expectedPaisa = Math.round(Number(order.total) * 100);
+    if (
+      payment.order_id !== razorpayOrderId ||
+      payment.amount !== expectedPaisa ||
+      payment.currency !== "INR"
+    ) {
+      await logPaymentAudit(order.id, "payment_details_mismatch", {
+        expectedAmountPaisa: expectedPaisa,
+        receivedAmountPaisa: payment.amount,
+        expectedOrderId: razorpayOrderId,
+        receivedOrderId: payment.order_id,
+        receivedCurrency: payment.currency,
+      });
+      return NextResponse.json({ error: "Payment details do not match the order." }, { status: 400 });
+    }
+
+    // Only captured payments count as paid. An authorized payment is not yet captured.
+    if (payment.status !== "captured") {
+      return NextResponse.json({ error: `Payment is not captured (status: ${payment.status}).` }, { status: 409 });
+    }
+
+    const updateResult = await markOrderAsPaid(order.id, razorpayPaymentId, razorpaySignature);
+    await logPaymentAudit(order.id, "payment_verified_and_paid", {
+      razorpayPaymentId,
+      amount: order.total,
+      currency: "INR",
+    });
+
+    const refreshedOrder = (await getOrderById(order.id)) || order;
+    if (!updateResult.alreadyPaid) {
+      void sendOrderConfirmationEmail(refreshedOrder).catch(() => {
+        console.error("[payment verify] Confirmation email dispatch failed.");
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      orderId: order.id,
+      orderNumber: order.order_number,
+      guestToken: order.guest_token,
+      alreadyPaid: updateResult.alreadyPaid,
+    });
+  } catch {
+    console.error("[POST /api/checkout/verify-payment] Request failed.");
+    return NextResponse.json({ error: "Unable to verify payment." }, { status: 500 });
+  }
+}
+
+
+
+
+========== src\context\auth-context.tsx ==========
+
+"use client";
+
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+    useCallback,
+  useMemo,
+} from "react";
+import { User, Address } from "@/types";
+import { useToast } from "./toast-context";
+import { createClient } from "@/lib/supabase/client";
+
+interface AuthContextType {
+  user: User | null;
+  isAuthenticated: boolean;
+  login: (email: string) => Promise<boolean>;
+  register: (
+    name: string,
+    email: string,
+    phone: string
+  ) => Promise<boolean>;
+  verifyOtp: (email: string, token: string) => Promise<boolean>;
+  logout: () => void;
+  setRole: (role: "customer" | "seller" | "admin") => void;
+  addAddress: (address: Omit<Address, "id">) => void;
+  updateAddress: (id: string, address: Partial<Address>) => void;
+  deleteAddress: (id: string) => void;
+  setDefaultAddress: (id: string) => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const ADDRESS_STORAGE_KEY = "rnl_customer_addresses_v1";
+
+function getUserRole(
+  appMetadata: Record<string, unknown> | undefined
+): "customer" | "seller" | "admin" {
+  const role = appMetadata?.role;
+
+  if (role === "seller" || role === "admin") {
+    return role;
+  }
+
+  return "customer";
+}
+
+export function AuthProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const { toast } = useToast();
+
+  const supabase = useMemo(() => createClient(), []);
+
+  const saveUser = useCallback((updated: User | null) => {
+    setUser(updated);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+
+      if (!mounted) return;
+
+      if (error || !data.user) {
+        setUser(null);
+        setAuthReady(true);
+        return;
+      }
+
+      const authUser = data.user;
+      const storedName =
+        authUser.user_metadata?.full_name ??
+        authUser.user_metadata?.name ??
+        "";
+
+      let addresses: Address[] = [];
+
+      try {
+        const stored = localStorage.getItem(
+          `${ADDRESS_STORAGE_KEY}:${authUser.id}`
+        );
+        if (stored) addresses = JSON.parse(stored) as Address[];
+      } catch {
+        addresses = [];
+      }
+
+      setUser({
+        id: authUser.id,
+        name: storedName,
+        email: authUser.email ?? "",
+        phone: authUser.user_metadata?.phone ?? "",
+        role: getUserRole(authUser.app_metadata),
+        addresses,
+      });
+
+      setAuthReady(true);
+    };
+
+    void loadUser();
+
+    const {
+  data: { subscription },
+} = supabase.auth.onAuthStateChange((_event, session) => {
+  if (!mounted) return;
+
+  if (!session?.user) {
+    setUser(null);
+    setAuthReady(true);
+    return;
+  }
+
+  const authUser = session.user;
+
+  setUser((currentUser) => ({
+    id: authUser.id,
+    name:
+      authUser.user_metadata?.full_name ??
+      authUser.user_metadata?.name ??
+      currentUser?.name ??
+      "",
+    email: authUser.email ?? "",
+    phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
+    role: getUserRole(authUser.app_metadata),
+    addresses:
+      currentUser?.id === authUser.id
+        ? currentUser.addresses
+        : [],
+  }));
+
+  setAuthReady(true);
+});
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const login = useCallback(
+    async (email: string): Promise<boolean> => {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: {
+          shouldCreateUser: false,
+        },
+      });
+
+      if (error) {
+        toast({
+          type: "error",
+          title: "Unable to Send Code",
+          message: error.message,
+        });
+        return false;
+      }
+
+      toast({
+        type: "success",
+        title: "Check Your Email",
+        message: "We sent you a verification code.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const register = useCallback(
+    async (
+      name: string,
+      email: string,
+      phone: string
+    ): Promise<boolean> => {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: {
+          shouldCreateUser: true,
+          data: {
+            full_name: name.trim(),
+            phone: phone.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        toast({
+          type: "error",
+          title: "Registration Failed",
+          message: error.message,
+        });
+        return false;
+      }
+
+      toast({
+        type: "success",
+        title: "Verify Your Email",
+        message: "We sent you a verification code.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const verifyOtp = useCallback(
+    async (email: string, token: string): Promise<boolean> => {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: token.trim(),
+        type: "email",
+      });
+
+      if (error || !data.user) {
+        toast({
+          type: "error",
+          title: "Verification Failed",
+          message: error?.message ?? "Please request a new code.",
+        });
+        return false;
+      }
+
+      const authUser = data.user;
+
+      setUser((currentUser) => ({
+  id: authUser.id,
+  name:
+    authUser.user_metadata?.full_name ??
+    authUser.user_metadata?.name ??
+    currentUser?.name ??
+    "",
+  email: authUser.email ?? "",
+  phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
+  role: getUserRole(authUser.app_metadata),
+  addresses:
+    currentUser?.id === authUser.id
+      ? currentUser.addresses
+      : [],
+}));
+
+      toast({
+        type: "success",
+        title: "Email Verified",
+        message: "You are now signed in.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const logout = useCallback(async () => {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      toast({
+        type: "error",
+        title: "Sign Out Failed",
+        message: error.message,
+      });
+      return;
+    }
+
+    saveUser(null);
+
+    toast({
+      type: "success",
+      title: "Signed Out",
+      message: "You have been signed out.",
+    });
+  }, [supabase, saveUser, toast]);
+
+  const persistAddresses = useCallback(
+    (updated: User) => {
+      saveUser(updated);
+
+      try {
+        localStorage.setItem(
+          `${ADDRESS_STORAGE_KEY}:${updated.id}`,
+          JSON.stringify(updated.addresses)
+        );
+      } catch {
+        toast({
+          type: "error",
+          title: "Address Not Saved",
+          message: "Your browser could not save this address.",
+        });
+      }
+    },
+    [saveUser, toast]
+  );
+
+  const setRole = useCallback(
+    (role: "customer" | "seller" | "admin") => {
+      if (role !== "customer") {
+        toast({
+          type: "error",
+          title: "Permission Denied",
+          message: "Staff roles must be assigned securely by an administrator.",
+        });
+      }
+    },
+    [toast]
+  );
+
+  const addAddress = useCallback(
+    (newAddress: Omit<Address, "id">) => {
+      if (!user) return;
+
+      const address: Address = {
+        ...newAddress,
+        id: crypto.randomUUID(),
+      };
+
+      const existing = user.addresses.map((item) =>
+        address.isDefault ? { ...item, isDefault: false } : item
+      );
+
+      const updated = {
+        ...user,
+        addresses: [...existing, address],
+      };
+
+      persistAddresses(updated);
+
+      toast({
+        type: "success",
+        title: "Address Saved",
+        message: `${address.city}, ${address.pinCode}`,
+      });
+    },
+    [user, persistAddresses, toast]
+  );
+
+  const updateAddress = useCallback(
+    (id: string, fields: Partial<Address>) => {
+      if (!user) return;
+
+      const updatedAddresses = user.addresses.map((address) => {
+        if (address.id === id) return { ...address, ...fields };
+        if (fields.isDefault) return { ...address, isDefault: false };
+        return address;
+      });
+
+      persistAddresses({ ...user, addresses: updatedAddresses });
+    },
+    [user, persistAddresses]
+  );
+
+  const deleteAddress = useCallback(
+    (id: string) => {
+      if (!user) return;
+
+      persistAddresses({
+        ...user,
+        addresses: user.addresses.filter((address) => address.id !== id),
+      });
+
+      toast({
+        type: "info",
+        title: "Address Deleted",
+        message: "The saved address was removed.",
+      });
+    },
+    [user, persistAddresses, toast]
+  );
+
+  const setDefaultAddress = useCallback(
+    (id: string) => {
+      if (!user) return;
+
+      persistAddresses({
+        ...user,
+        addresses: user.addresses.map((address) => ({
+          ...address,
+          isDefault: address.id === id,
+        })),
+      });
+    },
+    [user, persistAddresses]
+  );
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated: authReady && !!user,
+        login,
+        register,
+        verifyOtp,
+        logout,
+        setRole,
+        addAddress,
+        updateAddress,
+        deleteAddress,
+        setDefaultAddress,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+
+  return context;
+}
+
+
+========== src\app\api\admin\notifications\route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdminAuth } from "@/lib/auth/admin-auth";
+import { getDb, DbNotificationJob } from "@/lib/db/index";
+import { processNotificationJob } from "@/services/notification-service";
+import { writeAuditLog } from "@/lib/db/audit";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * GET /api/admin/notifications
+ * List transactional notification queue and logs.
+ */
+export async function GET(req: NextRequest) {
+  const admin = await requireAdminAuth(req);
+  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const db = getDb();
+  const jobs = await db
+    .prepare("SELECT * FROM notification_jobs ORDER BY created_at DESC LIMIT 100")
+    .all() as DbNotificationJob[];
+
+  return NextResponse.json({ jobs });
+}
+
+/**
+ * POST /api/admin/notifications
+ * Retry a failed or pending notification job.
+ */
+export async function POST(req: NextRequest) {
+  const admin = await requireAdminAuth(req);
+  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json();
+  const { jobId } = body;
+
+  if (!jobId) {
+    return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
+  }
+
+  const result = await processNotificationJob(jobId);
+
+  await writeAuditLog({
+    actor: admin.email,
+    action: "notification_retry",
+    entityType: "notification_job",
+    entityId: jobId,
+    metadata: result,
+    ipAddress: req.headers.get("x-forwarded-for"),
+  });
+
+  return NextResponse.json({ success: true, result });
+}
+
+
+========== src\services\checkout-service.ts ==========
+import { z } from "zod";
+import { PRODUCTS } from "@/data/mock-data";
+import { TShirtSize } from "@/types";
+
+// Indian Phone Number: allows +91-XXXXXXXXXX, 91XXXXXXXXXX, or 10-digit 6-9XXXXXXXXX
+const phoneRegex = /^(?:\+91|91|0)?[6-9]\d{9}$/;
+
+// Indian Postal PIN Code: 6 digits, cannot start with 0
+const pinCodeRegex = /^[1-9][0-9]{5}$/;
+
+export const CheckoutItemSchema = z.object({
+  productId: z.string().min(1, "Product ID is required"),
+  size: z.enum(["XS", "S", "M", "L", "XL", "XXL"] as const, {
+    errorMap: () => ({ message: "Please select a valid size (XS, S, M, L, XL, XXL)" }),
+  }),
+  quantity: z
+    .number()
+    .int("Quantity must be an integer")
+    .min(1, "Quantity must be at least 1")
+    .max(10, "Quantity cannot exceed 10 per design"),
+  color: z.string().default("As pictured"),
+});
+
+export const DeliveryAddressSchema = z.object({
+  fullName: z.string().trim().min(2, "Full name must be at least 2 characters").max(100),
+  phone: z
+    .string()
+    .trim()
+    .regex(phoneRegex, "Please enter a valid 10-digit Indian mobile number"),
+  addressLine1: z.string().trim().min(5, "Flat / House no. and street address is required").max(200),
+  addressLine2: z.string().trim().max(200).optional(),
+  landmark: z.string().trim().max(100).optional(),
+  city: z.string().trim().min(2, "City is required").max(100),
+  state: z.string().trim().min(2, "State is required").max(100),
+  pinCode: z.string().trim().regex(pinCodeRegex, "Please enter a valid 6-digit Indian PIN code"),
+  country: z.string().trim().default("India"),
+});
+
+export const CreateCheckoutOrderSchema = z.object({
+  customerName: z.string().trim().min(2, "Customer name is required"),
+  customerEmail: z.string().trim().email("Please provide a valid email address"),
+  customerPhone: z
+    .string()
+    .trim()
+    .regex(phoneRegex, "Please enter a valid 10-digit Indian mobile number"),
+  address: DeliveryAddressSchema,
+  items: z.array(CheckoutItemSchema).min(1, "Your cart must contain at least one T-shirt"),
+  promoCode: z.string().trim().optional(),
+  userId: z.string().optional(),
+});
+
+export type CreateCheckoutOrderInput = z.infer<typeof CreateCheckoutOrderSchema>;
+
+export interface VerifiedCheckoutItem {
+  productId: string;
+  productSlug: string;
+  productName: string;
+  color: string;
+  size: TShirtSize;
+  price: number; // Trusted: â‚¹999
+  quantity: number;
+  image: string;
+  sku: string;
+  fit: string;
+}
+
+export interface CalculatedOrderPricing {
+  items: VerifiedCheckoutItem[];
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  total: number;
+  appliedPromo?: string;
+}
+
+/**
+ * Server-controlled calculation of checkout pricing using trusted catalogue data.
+ * Fixes every T-shirt price strictly to â‚¹999. Never trusts client prices.
+ */
+export function calculateTrustedOrderPricing(
+  itemsInput: z.infer<typeof CheckoutItemSchema>[],
+  promoCodeInput?: string
+): { success: true; pricing: CalculatedOrderPricing } | { success: false; error: string } {
+  if (!itemsInput || itemsInput.length === 0) {
+    return { success: false, error: "Cart is empty" };
+  }
+
+  const verifiedItems: VerifiedCheckoutItem[] = [];
+  let calculatedSubtotal = 0;
+
+  for (const item of itemsInput) {
+    const trustedProduct = PRODUCTS.find((p) => p.id === item.productId);
+    if (!trustedProduct) {
+      return { success: false, error: `Invalid product ID: ${item.productId}` };
+    }
+
+    if (!trustedProduct.sizes.includes(item.size)) {
+      return {
+        success: false,
+        error: `Size ${item.size} is not available for ${trustedProduct.name}`,
+      };
+    }
+
+    // Always use trusted catalog price (â‚¹999)
+    const fixedPrice = trustedProduct.price; // 999
+    const lineTotal = fixedPrice * item.quantity;
+    calculatedSubtotal += lineTotal;
+
+    const matchedColor =
+      trustedProduct.colors.find((c) => c.name.toLowerCase() === item.color.toLowerCase()) ||
+      trustedProduct.colors[0];
+
+    verifiedItems.push({
+      productId: trustedProduct.id,
+      productSlug: trustedProduct.slug,
+      productName: trustedProduct.name,
+      color: matchedColor?.name || "As pictured",
+      size: item.size,
+      price: fixedPrice,
+      quantity: item.quantity,
+      image: matchedColor?.images[0] || trustedProduct.colors[0].images[0],
+      sku: `${trustedProduct.sku}-${item.size}`,
+      fit: trustedProduct.fit,
+    });
+  }
+
+  // Shipping policy: Free for subtotal > â‚¹1,499, otherwise â‚¹99 flat express air
+  const shippingCharge = calculatedSubtotal > 1499 ? 0 : 99;
+
+  // Validate promotional discount
+  let discountAmount = 0;
+  let appliedPromo: string | undefined;
+
+  if (promoCodeInput) {
+    const code = promoCodeInput.trim().toUpperCase();
+    if (code === "DROP20") {
+      discountAmount = Math.round(calculatedSubtotal * 0.2); // 20% off
+      appliedPromo = "DROP20 (20% OFF)";
+    } else if (code === "RNLFIRST") {
+      discountAmount = Math.min(200, calculatedSubtotal); // Flat â‚¹200 off
+      appliedPromo = "RNLFIRST (â‚¹200 OFF)";
+    }
+  }
+
+  const calculatedTotal = Math.max(0, calculatedSubtotal - discountAmount + shippingCharge);
+
+  return {
+    success: true,
+    pricing: {
+      items: verifiedItems,
+      subtotal: calculatedSubtotal,
+      shipping: shippingCharge,
+      discount: discountAmount,
+      total: calculatedTotal,
+      appliedPromo,
+    },
+  };
+}
+
+/**
+ * Generates human-friendly sequential order numbers, e.g. RNL-261048
+ */
+export function generateOrderNumber(): string {
+  const datePrefix = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+  const entropy = Math.floor(100 + Math.random() * 900);
+  return `RNL-${datePrefix}-${randomSuffix}-${entropy}`;
+}

@@ -1,203 +1,319 @@
+
 "use client";
 
-import React from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import {
   Package,
   PlusCircle,
   AlertTriangle,
   CheckCircle,
   Clock,
+  RefreshCw,
   ArrowRight,
-  TrendingUp,
-  Boxes,
 } from "lucide-react";
 import { SellerLayout } from "@/components/layout/SellerLayout";
-import { PRODUCTS } from "@/data/mock-data";
 import { formatINR } from "@/lib/utils";
 
+type SellerProduct = {
+  id: string;
+  name: string;
+  slug: string;
+  sku: string;
+  price: number | string;
+  stock: number | null;
+  is_active: boolean;
+  images: string[] | null;
+  collection_slug: string | null;
+  created_at: string;
+};
+
 export default function SellerDashboardPage() {
-  const totalProducts = PRODUCTS.length;
-  const publishedProducts = PRODUCTS.length; // all 12 are published in demo
-  const draftProducts = 2; // sample draft count
-  const lowStockProducts = PRODUCTS.filter((p) => p.stock < 25);
+  const [products, setProducts] = useState<SellerProduct[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function loadProducts() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/seller/products", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          setError("Your seller session is invalid or does not have seller access. Please sign in again.");
+        } else {
+          setError(result.error || "Unable to load your products.");
+        }
+        setProducts([]);
+        return;
+      }
+
+      setProducts(Array.isArray(result.products) ? result.products : []);
+    } catch {
+      setError("Could not connect to the server. Check your connection and try again.");
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadProducts();
+  }, []);
+
+  const publishedCount = products.filter((p) => p.is_active).length;
+  const draftCount = products.filter((p) => !p.is_active).length;
+  const lowStockProducts = products.filter(
+    (p) => typeof p.stock === "number" && p.stock < 25
+  );
+
+  const recentProducts = useMemo(
+    () =>
+      [...products]
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime()
+        )
+        .slice(0, 5),
+    [products]
+  );
 
   return (
     <SellerLayout
       title="Seller Dashboard"
-      subtitle="Brand catalog health, inventory alerts, and publishing activity."
+      subtitle="Your real product catalog, publishing status, and stock alerts."
       actions={
         <Link
           href="/seller/products/new"
-          className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center gap-1.5"
+          className="inline-flex items-center gap-2 bg-black px-4 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-neutral-800"
         >
-          <PlusCircle className="w-3.5 h-3.5" />
-          <span>Add New T-Shirt</span>
+          <PlusCircle className="h-4 w-4" />
+          Add Product
         </Link>
       }
     >
       <div className="space-y-6">
-        {/* Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
-            <div className="flex items-center justify-between text-neutral-400">
-              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
-                Total T-Shirts
-              </span>
-              <Package className="w-4 h-4" />
-            </div>
-            <p className="text-3xl font-black text-black font-mono">{totalProducts}</p>
-            <p className="text-[11px] text-neutral-500">Across 5 Curated Series</p>
+        {error && (
+          <div
+            role="alert"
+            className="flex flex-col gap-3 border border-red-200 bg-red-50 p-4 text-sm text-red-800 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p>{error}</p>
+            <button
+              type="button"
+              onClick={() => void loadProducts()}
+              className="inline-flex shrink-0 items-center gap-2 font-bold underline"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Try again
+            </button>
           </div>
+        )}
 
-          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
-            <div className="flex items-center justify-between text-neutral-400">
-              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
-                Published Live
-              </span>
-              <CheckCircle className="w-4 h-4 text-emerald-600" />
-            </div>
-            <p className="text-3xl font-black text-emerald-700 font-mono">
-              {publishedProducts}
-            </p>
-            <p className="text-[11px] text-neutral-500">Active in Storefront</p>
-          </div>
-
-          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
-            <div className="flex items-center justify-between text-neutral-400">
-              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
-                Drafts
-              </span>
-              <Clock className="w-4 h-4 text-neutral-500" />
-            </div>
-            <p className="text-3xl font-black text-neutral-800 font-mono">{draftProducts}</p>
-            <p className="text-[11px] text-neutral-500">Awaiting Drop Launch</p>
-          </div>
-
-          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
-            <div className="flex items-center justify-between text-neutral-400">
-              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
-                Low Stock
-              </span>
-              <AlertTriangle className="w-4 h-4 text-amber-600" />
-            </div>
-            <p className="text-3xl font-black text-amber-600 font-mono">
-              {lowStockProducts.length}
-            </p>
-            <p className="text-[11px] text-neutral-500">&lt; 25 units in warehouse</p>
-          </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="Total Products"
+            value={loading ? "—" : products.length}
+            icon={<Package className="h-5 w-5" />}
+          />
+          <MetricCard
+            label="Published"
+            value={loading ? "—" : publishedCount}
+            icon={<CheckCircle className="h-5 w-5 text-emerald-600" />}
+          />
+          <MetricCard
+            label="Draft / Inactive"
+            value={loading ? "—" : draftCount}
+            icon={<Clock className="h-5 w-5" />}
+          />
+          <MetricCard
+            label="Low Stock"
+            value={loading ? "—" : lowStockProducts.length}
+            icon={<AlertTriangle className="h-5 w-5 text-amber-600" />}
+            note="Fewer than 25 units"
+          />
         </div>
 
-        {/* Low Stock Alerts */}
-        <div className="bg-white border border-neutral-200 p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-black flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600" />
-              Low Stock Variant Warnings
-            </h3>
+        <section className="border border-neutral-200 bg-white">
+          <div className="flex items-center justify-between gap-3 border-b border-neutral-200 p-5">
+            <div>
+              <h2 className="text-sm font-black uppercase tracking-wide">
+                Low Stock Alerts
+              </h2>
+              <p className="mt-1 text-xs text-neutral-500">
+                Based on stock values returned by your database.
+              </p>
+            </div>
             <Link
               href="/seller/inventory"
-              className="text-xs text-neutral-600 hover:text-black underline font-semibold"
+              className="shrink-0 text-xs font-bold underline"
             >
-              Open Inventory Matrix &rarr;
+              Inventory <ArrowRight className="inline h-3 w-3" />
             </Link>
           </div>
 
-          <div className="divide-y divide-neutral-100">
-            {lowStockProducts.map((p) => (
-              <div key={p.id} className="py-3 flex items-center justify-between text-xs gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="relative w-10 h-12 bg-neutral-100 shrink-0">
-                    <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
-                  </div>
-                  <div className="truncate">
-                    <p className="font-bold text-black uppercase truncate">{p.name}</p>
-                    <p className="text-[11px] text-neutral-500">
-                      SKU: {p.sku} • {p.fit} Fit
+          {loading ? (
+            <div className="p-6 text-sm text-neutral-500">Loading inventory…</div>
+          ) : error ? (
+            <div className="p-6 text-sm text-neutral-500">
+              Stock alerts are unavailable until products load successfully.
+            </div>
+          ) : lowStockProducts.length === 0 ? (
+            <div className="p-6 text-sm text-neutral-500">
+              No low-stock products found.
+            </div>
+          ) : (
+            <div className="divide-y divide-neutral-100">
+              {lowStockProducts.map((product) => (
+                <div
+                  key={product.id}
+                  className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold">{product.name}</p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      SKU: {product.sku || "Not assigned"}
                     </p>
                   </div>
+                  <div className="flex items-center gap-4">
+                    <span className="whitespace-nowrap border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-800">
+                      {product.stock ?? "Unknown"} in stock
+                    </span>
+                    <Link
+                      href="/seller/inventory"
+                      className="text-xs font-bold underline"
+                    >
+                      Review
+                    </Link>
+                  </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </section>
 
-                <div className="flex items-center gap-4 shrink-0">
-                  <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase">
-                    {p.stock} units left
-                  </span>
-                  <Link
-                    href={`/seller/products/${p.id}/edit`}
-                    className="text-xs font-bold text-black hover:underline"
-                  >
-                    Restock
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent Product Activity Table */}
-        <div className="bg-white border border-neutral-200 p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-black">
-              Recent Product Catalog Additions
-            </h3>
+        <section className="border border-neutral-200 bg-white">
+          <div className="flex items-center justify-between gap-3 border-b border-neutral-200 p-5">
+            <div>
+              <h2 className="text-sm font-black uppercase tracking-wide">
+                Recent Products
+              </h2>
+              <p className="mt-1 text-xs text-neutral-500">
+                The latest products saved to your seller account.
+              </p>
+            </div>
             <Link
               href="/seller/products"
-              className="text-xs text-neutral-600 hover:text-black underline font-semibold"
+              className="shrink-0 text-xs font-bold underline"
             >
-              View All Products
+              All Products <ArrowRight className="inline h-3 w-3" />
             </Link>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50 text-neutral-700 uppercase font-bold">
-                  <th className="py-2.5 px-3">Garment</th>
-                  <th className="py-2.5 px-3">SKU</th>
-                  <th className="py-2.5 px-3">Series</th>
-                  <th className="py-2.5 px-3">Price</th>
-                  <th className="py-2.5 px-3">Stock</th>
-                  <th className="py-2.5 px-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 font-medium">
-                {PRODUCTS.slice(0, 5).map((p) => (
-                  <tr key={p.id} className="hover:bg-neutral-50">
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <div className="relative w-8 h-10 bg-neutral-100 shrink-0">
-                          <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
-                        </div>
-                        <span className="font-bold text-black uppercase truncate max-w-xs">{p.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 font-mono text-neutral-500">{p.sku}</td>
-                    <td className="py-2.5 px-3 uppercase text-neutral-600">{p.collectionSlug}</td>
-                    <td className="py-2.5 px-3 font-bold text-black">{formatINR(p.price)}</td>
-                    <td className="py-2.5 px-3 font-mono">{p.stock}</td>
-                    <td className="py-2.5 px-3 text-right">
-                      <Link
-                        href={`/seller/products/${p.id}/edit`}
-                        className="text-xs font-bold text-black hover:underline mr-3"
-                      >
-                        Edit
-                      </Link>
-                      <Link
-                        href={`/products/${p.slug}`}
-                        target="_blank"
-                        className="text-xs text-neutral-500 hover:text-black underline"
-                      >
-                        Preview
-                      </Link>
-                    </td>
+          {loading ? (
+            <div className="p-6 text-sm text-neutral-500">Loading products…</div>
+          ) : error ? (
+            <div className="p-6 text-sm text-neutral-500">
+              Products could not be loaded. Use “Try again” above.
+            </div>
+          ) : recentProducts.length === 0 ? (
+            <div className="p-8 text-center">
+              <Package className="mx-auto h-8 w-8 text-neutral-400" />
+              <p className="mt-3 text-sm font-bold">No products yet</p>
+              <p className="mt-1 text-xs text-neutral-500">
+                Add your first product to see it here.
+              </p>
+              <Link
+                href="/seller/products/new"
+                className="mt-4 inline-flex items-center gap-2 bg-black px-4 py-2 text-xs font-bold uppercase text-white"
+              >
+                <PlusCircle className="h-4 w-4" />
+                Add Product
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-neutral-50 uppercase text-neutral-600">
+                  <tr>
+                    <th className="px-4 py-3">Product</th>
+                    <th className="px-4 py-3">SKU</th>
+                    <th className="px-4 py-3">Price</th>
+                    <th className="px-4 py-3">Stock</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {recentProducts.map((product) => (
+                    <tr key={product.id}>
+                      <td className="px-4 py-3 font-bold">{product.name}</td>
+                      <td className="px-4 py-3">{product.sku || "—"}</td>
+                      <td className="px-4 py-3">
+                        {formatINR(Number(product.price) || 0)}
+                      </td>
+                      <td className="px-4 py-3">{product.stock ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            product.is_active
+                              ? "border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800"
+                              : "border border-neutral-200 bg-neutral-100 px-2 py-1 text-neutral-700"
+                          }
+                        >
+                          {product.is_active ? "Published" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <Link
+                          href={`/seller/products/${product.id}/edit`}
+                          className="font-bold underline"
+                        >
+                          Edit
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
     </SellerLayout>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  icon,
+  note,
+}: {
+  label: string;
+  value: string | number;
+  icon: React.ReactNode;
+  note?: string;
+}) {
+  return (
+    <div className="space-y-3 border border-neutral-200 bg-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-bold uppercase tracking-wide text-neutral-500">
+          {label}
+        </span>
+        {icon}
+      </div>
+      <p className="font-mono text-3xl font-black">{value}</p>
+      {note && <p className="text-xs text-neutral-500">{note}</p>}
+    </div>
   );
 }

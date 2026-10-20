@@ -15,6 +15,17 @@ export const metadata: Metadata = {
     "heavyweight cotton tees",
     "Indian fashion label",
   ],
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/brand/rightnowlife-logo.jpg", sizes: "32x32" },
+      { url: "/brand/rightnowlife-logo.jpg", sizes: "16x16" },
+    ],
+    apple: [
+      { url: "/brand/rightnowlife-logo.jpg", sizes: "180x180" },
+    ],
+    shortcut: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({

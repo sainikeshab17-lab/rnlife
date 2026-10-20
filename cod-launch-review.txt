@@ -1,0 +1,2310 @@
+﻿
+
+========== src\services\notification-service.ts ==========
+import { getDb, DbNotificationJob, OrderWithDetails } from "@/lib/db";
+import { randomUUID } from "crypto";
+
+export interface EmailSendResult {
+  sent: boolean;
+  provider: "smtp" | "resend" | "none";
+  messageId?: string;
+  error?: string;
+}
+
+/**
+ * Enqueue a transactional email notification job to the persistent notification_jobs table.
+ * If credentials exist, attempts immediate dispatch; otherwise marks as 'skipped' with reason.
+ */
+export async function queueNotificationJob(params: {
+  orderId?: string | null;
+  recipientEmail: string;
+  recipientName?: string | null;
+  eventType: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText?: string | null;
+  idempotencyKey?: string | null;
+}): Promise<DbNotificationJob> {
+  const db = getDb();
+  const id = `notif_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const idempotencyKey = params.idempotencyKey || id;
+  const now = new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO notification_jobs (
+      id, order_id, recipient_email, recipient_name, event_type,
+      subject, body_text, body_html, status, attempts, max_attempts,
+      last_error, idempotency_key, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, NULL, ?, ?, ?)
+    ON CONFLICT (idempotency_key) DO NOTHING
+  `).run(
+    id,
+    params.orderId || null,
+    params.recipientEmail,
+    params.recipientName || null,
+    params.eventType,
+    params.subject,
+    params.bodyText || null,
+    params.bodyHtml,
+    idempotencyKey,
+    now,
+    now
+  );
+
+  // Attempt dispatch immediately
+  const job = await db.prepare("SELECT * FROM notification_jobs WHERE idempotency_key = ?")
+    .get<DbNotificationJob>(idempotencyKey);
+  if (!job) throw new Error("Notification job could not be retrieved after enqueue.");
+  if (job.id === id) await processNotificationJob(job.id);
+
+  return (await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+    .get<DbNotificationJob>(job.id)) ?? job;
+}
+
+/**
+ * Process a queued notification job by ID
+ */
+export async function processNotificationJob(jobId: string): Promise<EmailSendResult> {
+  const db = getDb();
+  const job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+    .get<DbNotificationJob>(jobId);
+
+  if (!job) {
+    return { sent: false, provider: "none", error: "Notification job not found." };
+  }
+
+  if (job.status === "sent") {
+    return { sent: true, provider: "none" };
+  }
+
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const smtpHost = process.env.SMTP_HOST;
+  const now = new Date().toISOString();
+
+  if (!resendApiKey && !smtpHost) {
+    // Graceful unconfigured fallback
+    await db.prepare(`
+      UPDATE notification_jobs
+      SET status = 'skipped',
+          last_error = 'No email provider configured (RESEND_API_KEY or SMTP_HOST missing).',
+          updated_at = ?
+      WHERE id = ?
+    `).run(now, jobId);
+
+    console.info(`[Notification] Job ${jobId} skipped: provider is unconfigured.`);
+    return { sent: false, provider: "none", error: "Email provider unconfigured." };
+  }
+
+  if (resendApiKey) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: process.env.EMAIL_FROM || "RightNowLife Orders <orders@rightnowlife.in>",
+          to: [job.recipient_email],
+          subject: job.subject,
+          html: job.body_html,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        await db.prepare(`
+          UPDATE notification_jobs
+          SET status = 'sent',
+              attempts = attempts + 1,
+              last_error = NULL,
+              updated_at = ?
+          WHERE id = ?
+        `).run(new Date().toISOString(), jobId);
+
+        return { sent: true, provider: "resend", messageId: data.id };
+      } else {
+        const errData = await response.text();
+        await db.prepare(`
+          UPDATE notification_jobs
+          SET attempts = attempts + 1,
+              status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
+              last_error = ?,
+              updated_at = ?
+          WHERE id = ?
+        `).run(`Resend error: ${errData}`, new Date().toISOString(), jobId);
+
+        return { sent: false, provider: "resend", error: errData };
+      }
+    } catch (err: any) {
+      await db.prepare(`
+        UPDATE notification_jobs
+        SET attempts = attempts + 1,
+            status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
+            last_error = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(err.message, new Date().toISOString(), jobId);
+
+      return { sent: false, provider: "resend", error: err.message };
+    }
+  }
+
+  return { sent: false, provider: "none", error: "Unsupported email provider." };
+}
+
+/**
+ * Trigger order confirmation notification
+ */
+export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promise<DbNotificationJob> {
+  const html = generateOrderEmailHtml(order);
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "order_confirmation",
+    subject: `Order Confirmed: #${order.order_number} â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_conf_${order.id}`,
+  });
+}
+
+/**
+ * Trigger shipping notification
+ */
+export async function sendShippingUpdateEmail(
+  order: OrderWithDetails,
+  courierName: string,
+  trackingNumber: string,
+  trackingUrl?: string | null
+): Promise<DbNotificationJob> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #0876A8; font-weight: bold;">YOUR ORDER IS ON THE WAY</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>Great news! Your Order <strong>#${order.order_number}</strong> has been handed over to <strong>${courierName}</strong>.</p>
+      <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Courier Partner:</strong> ${courierName}</p>
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Tracking Number (AWB):</strong> ${trackingNumber}</p>
+        ${
+          trackingUrl
+            ? `<p style="margin: 0; font-size: 13px;"><a href="${trackingUrl}" style="display: inline-block; background: #111111; color: #ffffff; text-decoration: none; padding: 8px 16px; font-weight: bold; border-radius: 4px;" target="_blank" rel="noopener noreferrer">Track Consignment &rarr;</a></p>`
+            : ""
+        }
+      </div>
+      <p style="font-size: 12px; color: #858585;">Estimated delivery within 2â€“4 business days across metro locations.</p>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "shipping_update",
+    subject: `Dispatched: Order #${order.order_number} is on the way â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_ship_${order.id}_${trackingNumber}`,
+  });
+}
+
+/**
+ * Trigger return status notification
+ */
+export async function sendReturnStatusEmail(
+  order: OrderWithDetails,
+  returnType: "return" | "exchange",
+  status: string,
+  adminNote?: string | null
+): Promise<DbNotificationJob> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #111111; font-weight: bold;">${returnType.toUpperCase()} STATUS UPDATE</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>Your request for a ${returnType} on Order <strong>#${order.order_number}</strong> has been updated to: <strong>${status.toUpperCase()}</strong>.</p>
+      ${adminNote ? `<p style="background: #f7f7f7; padding: 12px; border-left: 3px solid #111111; font-size: 13px;">${adminNote}</p>` : ""}
+      <p style="font-size: 12px; color: #858585;">You can view the full progress in your customer order dashboard.</p>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "return_status_update",
+    subject: `${returnType === "exchange" ? "Exchange" : "Return"} Status: #${order.order_number} (${status}) â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_ret_${order.id}_${status}_${Date.now()}`,
+  });
+}
+
+/**
+ * Trigger refund notification
+ */
+export async function sendRefundConfirmationEmail(
+  order: OrderWithDetails,
+  amount: number,
+  refundId: string
+): Promise<DbNotificationJob> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">REFUND PROCESSED SUCCESSFULLY</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>A refund of <strong>â‚¹${amount.toLocaleString("en-IN")}</strong> for Order <strong>#${order.order_number}</strong> has been successfully initiated to your original payment method.</p>
+      <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Refund Reference ID:</strong> ${refundId}</p>
+        <p style="margin: 0; font-size: 13px;"><strong>Amount:</strong> â‚¹${amount.toLocaleString("en-IN")}</p>
+      </div>
+      <p style="font-size: 12px; color: #858585;">Bank / UPI processing times typically take 3â€“7 business days to reflect on your statement.</p>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "refund_processed",
+    subject: `Refund Processed: â‚¹${amount} for #${order.order_number} â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_rfnd_${refundId}`,
+  });
+}
+
+function generateOrderEmailHtml(order: OrderWithDetails): string {
+  const itemsHtml = order.items
+    .map(
+      (item) => `
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5;">
+          <strong>${item.product_name}</strong><br/>
+          <small>Size: ${item.size} | Color: ${item.color} | Qty: ${item.quantity}</small>
+        </td>
+        <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
+          â‚¹${(item.price * item.quantity).toLocaleString("en-IN")}
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+
+  return `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">PAYMENT VERIFIED & ORDER CONFIRMED</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>Thank you for choosing RightNowLife. Your payment for Order <strong>#${order.order_number}</strong> has been received and your garments are entering preparation.</p>
+      
+      <table style="width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 13px;">
+        <thead>
+          <tr style="text-align: left; border-bottom: 2px solid #111111;">
+            <th style="padding-bottom: 8px;">GARMENT</th>
+            <th style="padding-bottom: 8px; text-align: right;">TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td style="padding-top: 12px; font-weight: bold;">Subtotal</td>
+            <td style="padding-top: 12px; font-weight: bold; text-align: right;">â‚¹${order.subtotal.toLocaleString("en-IN")}</td>
+          </tr>
+          <tr>
+            <td style="padding-top: 6px;">Express Shipping</td>
+            <td style="padding-top: 6px; text-align: right;">${order.shipping === 0 ? "FREE" : "â‚¹" + order.shipping}</td>
+          </tr>
+          <tr style="font-size: 16px; font-weight: 900;">
+            <td style="padding-top: 10px; border-top: 1px solid #111111;">Total Paid</td>
+            <td style="padding-top: 10px; border-top: 1px solid #111111; text-align: right;">â‚¹${order.total.toLocaleString("en-IN")}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <p style="font-size: 12px; color: #858585;">
+        Delivery Address: ${order.address?.address_line1}, ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}<br/>
+        Air courier tracking details will be dispatched via SMS once picked up by our logistics partner.
+      </p>
+    </div>
+  `;
+}
+
+
+========== src\lib\db\orders.ts ==========
+import { randomUUID } from "crypto";
+import {
+  getDb,
+  DbOrder,
+  DbOrderItem,
+  DbOrderAddress,
+  DbOrderStatusHistory,
+  DbShippingEvent,
+  DbReturn,
+  DbReturnItem,
+  DbRefundRecord,
+  DbConnection,
+  OrderWithDetails,
+  withTransaction,
+} from "./index";
+
+export async function checkAndReserveInventory(
+  items: Array<{ productId: string; size: string; quantity: number }>
+): Promise<{ ok: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const quantities = new Map<string, { productId: string; size: string; quantity: number }>();
+    for (const item of items) {
+      const key = `${item.productId}\0${item.size}`;
+      const existing = quantities.get(key);
+      quantities.set(key, {
+        ...item,
+        quantity: (existing?.quantity ?? 0) + item.quantity,
+      });
+    }
+
+    const lockedRows: Array<{
+      item: { productId: string; size: string; quantity: number };
+      available: number;
+    }> = [];
+
+    for (const item of quantities.values()) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, 20, 0)
+        ON CONFLICT (product_id, size) DO NOTHING
+      `).run(item.productId, item.size);
+
+      const row = await db.prepare(`
+        SELECT stock, reserved FROM inventory
+        WHERE product_id = ? AND size = ?
+        FOR UPDATE
+      `).get<{ stock: number; reserved: number }>(item.productId, item.size);
+      if (!row) throw new Error("Inventory row disappeared while reserving stock.");
+
+      const available = Math.max(0, row.stock - row.reserved);
+      if (available < item.quantity) {
+        return {
+          ok: false,
+          error: `Insufficient stock for product (${item.size}). Only ${available} available.`,
+        };
+      }
+      lockedRows.push({ item, available });
+    }
+
+    for (const { item } of lockedRows) {
+      await db.prepare(`
+        UPDATE inventory SET reserved = reserved + ?
+        WHERE product_id = ? AND size = ?
+      `).run(item.quantity, item.productId, item.size);
+    }
+    return { ok: true };
+  });
+}
+
+export async function releaseInventoryReservation(
+  items: Array<{ productId: string; size: string; quantity: number }>
+): Promise<void> {
+  await withTransaction(async (db) => {
+    for (const item of items) {
+      await db.prepare(`
+      UPDATE inventory 
+      SET reserved = GREATEST(0, reserved - ?) 
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.productId, item.size);
+    }
+  });
+}
+
+export async function commitInventoryDeduction(
+  items: Array<{ productId: string; size: string; quantity: number }>
+): Promise<void> {
+  await withTransaction(async (db) => {
+    for (const item of items) {
+      await db.prepare(`
+      UPDATE inventory 
+      SET stock = GREATEST(0, stock - ?), 
+          reserved = GREATEST(0, reserved - ?) 
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.quantity, item.productId, item.size);
+    }
+  });
+}
+
+export interface CreateOrderParams {
+  orderNumber: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  total: number;
+  paymentMethod: string;
+  razorpayOrderId?: string;
+  userId?: string | null;
+  items: Array<{
+    productId: string;
+    productSlug: string;
+    productName: string;
+    color: string;
+    size: string;
+    price: number;
+    quantity: number;
+    image: string;
+    sku: string;
+    fit: string;
+  }>;
+  address: {
+    fullName: string;
+    phone: string;
+    addressLine1: string;
+    addressLine2?: string;
+    landmark?: string;
+    city: string;
+    state: string;
+    pinCode: string;
+    country?: string;
+  };
+}
+
+export async function createPendingOrder(params: CreateOrderParams): Promise<{
+  order: DbOrder;
+  guestToken: string;
+}> {
+  const orderId = `ord_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const guestToken = randomUUID();
+  const now = new Date().toISOString();
+
+  return withTransaction(async (db) => {
+  await db.prepare(`
+    INSERT INTO orders (
+      id, order_number, customer_name, customer_email, customer_phone,
+      subtotal, shipping, discount, total, payment_method, payment_status,
+      order_status, razorpay_order_id, guest_token, user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', 'pending_payment', ?, ?, ?, ?, ?)
+  `).run(
+    orderId,
+    params.orderNumber,
+    params.customerName,
+    params.customerEmail.toLowerCase().trim(),
+    params.customerPhone.trim(),
+    params.subtotal,
+    params.shipping,
+    params.discount,
+    params.total,
+    params.paymentMethod,
+    params.razorpayOrderId || null,
+    guestToken,
+    params.userId || null,
+    now,
+    now
+  );
+
+  // Insert items
+  const insertItem = db.prepare(`
+    INSERT INTO order_items (
+      id, order_id, product_id, product_slug, product_name,
+      color, size, price, quantity, image, sku, fit
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const item of params.items) {
+    const itemId = `item_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    await insertItem.run(
+      itemId,
+      orderId,
+      item.productId,
+      item.productSlug,
+      item.productName,
+      item.color,
+      item.size,
+      item.price,
+      item.quantity,
+      item.image,
+      item.sku,
+      item.fit
+    );
+  }
+
+  // Insert delivery address
+  const addrId = `addr_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO order_addresses (
+      id, order_id, full_name, phone, address_line1, address_line2,
+      landmark, city, state, pin_code, country
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    addrId,
+    orderId,
+    params.address.fullName,
+    params.address.phone,
+    params.address.addressLine1,
+    params.address.addressLine2 || null,
+    params.address.landmark || null,
+    params.address.city,
+    params.address.state,
+    params.address.pinCode,
+    params.address.country || "India"
+  );
+
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  if (!order) throw new Error("Created order could not be retrieved.");
+  return { order, guestToken };
+  });
+}
+
+export async function updateOrderRazorpayId(orderId: string, razorpayOrderId: string): Promise<void> {
+  const db = getDb();
+  await db.prepare("UPDATE orders SET razorpay_order_id = ?, updated_at = ? WHERE id = ?").run(
+    razorpayOrderId,
+    new Date().toISOString(),
+    orderId
+  );
+}
+
+async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails> {
+  const db = getDb();
+  const items = await db
+    .prepare("SELECT * FROM order_items WHERE order_id = ?")
+    .all<DbOrderItem>(order.id);
+  const address = (await db
+    .prepare("SELECT * FROM order_addresses WHERE order_id = ?")
+    .get<DbOrderAddress>(order.id)) || null;
+  const history = await db
+    .prepare("SELECT * FROM order_status_history WHERE order_id = ? ORDER BY created_at ASC")
+    .all<DbOrderStatusHistory>(order.id);
+  const shipping_events = await db
+    .prepare("SELECT * FROM shipping_events WHERE order_id = ? ORDER BY occurred_at ASC")
+    .all<DbShippingEvent>(order.id);
+  const refunds = await db
+    .prepare("SELECT * FROM refund_records WHERE order_id = ? ORDER BY created_at DESC")
+    .all<DbRefundRecord>(order.id);
+
+  const returnRows = await db
+    .prepare("SELECT * FROM returns WHERE order_id = ? ORDER BY created_at DESC")
+    .all<DbReturn>(order.id);
+  const returns = await Promise.all(returnRows.map(async (ret) => {
+    const returnItems = await db
+      .prepare("SELECT * FROM return_items WHERE return_id = ?")
+      .all<DbReturnItem>(ret.id);
+    return { ...ret, items: returnItems };
+  }));
+
+  return {
+    ...order,
+    items,
+    address,
+    history,
+    shipping_events,
+    returns,
+    refunds,
+  };
+}
+
+export async function getOrderById(orderId: string): Promise<OrderWithDetails | null> {
+  const db = getDb();
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  if (!order) return null;
+  return populateOrderRelations(order);
+}
+
+export async function getOrderByRazorpayOrderId(rzpOrderId: string): Promise<OrderWithDetails | null> {
+  const db = getDb();
+  const order = await db
+    .prepare("SELECT * FROM orders WHERE razorpay_order_id = ?")
+    .get<DbOrder>(rzpOrderId);
+  if (!order) return null;
+  return populateOrderRelations(order);
+}
+
+export async function getOrderByNumber(orderNumber: string): Promise<OrderWithDetails | null> {
+  const db = getDb();
+  const order = await db
+    .prepare("SELECT * FROM orders WHERE order_number = ?")
+    .get<DbOrder>(orderNumber);
+  if (!order) return null;
+  return populateOrderRelations(order);
+}
+
+export async function getOrdersByEmail(email: string): Promise<OrderWithDetails[]> {
+  const db = getDb();
+  const orders = await db
+    .prepare("SELECT * FROM orders WHERE customer_email = ? ORDER BY created_at DESC")
+    .all<DbOrder>(email.toLowerCase().trim());
+
+  return Promise.all(orders.map(populateOrderRelations));
+}
+
+export async function getAllOrders(): Promise<OrderWithDetails[]> {
+  const db = getDb();
+  const orders = await db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all<DbOrder>();
+
+  return Promise.all(orders.map(populateOrderRelations));
+}
+
+/**
+ * Idempotently mark order as paid.
+ * Returns true if transition occurred, or true if already paid.
+ */
+export async function markOrderAsPaid(
+  orderId: string,
+  razorpayPaymentId: string,
+  razorpaySignature?: string
+): Promise<{ success: boolean; alreadyPaid: boolean }> {
+  return withTransaction(async (db) => {
+  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+  if (!current) return { success: false, alreadyPaid: false };
+  if (current.payment_status === "paid") return { success: true, alreadyPaid: true };
+
+  const now = new Date().toISOString();
+  await db.prepare(`
+    UPDATE orders 
+    SET payment_status = 'paid',
+        order_status = 'paid',
+        razorpay_payment_id = ?,
+        razorpay_signature = COALESCE(?, razorpay_signature),
+        updated_at = ?
+    WHERE id = ?
+  `).run(razorpayPaymentId, razorpaySignature || null, now, orderId);
+
+  // Deduct inventory
+  const items = await db
+    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+  for (const item of items) {
+    await db.prepare(`
+      UPDATE inventory
+      SET stock = GREATEST(0, stock - ?), reserved = GREATEST(0, reserved - ?)
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.quantity, item.product_id, item.size);
+  }
+
+  return { success: true, alreadyPaid: false };
+  });
+}
+
+export async function markOrderPaymentFailed(orderId: string, reason?: string): Promise<void> {
+  await withTransaction(async (db) => {
+  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+  if (!current || current.payment_status === "paid") return;
+
+  const now = new Date().toISOString();
+  await db.prepare(`
+    UPDATE orders 
+    SET payment_status = 'payment_failed',
+        order_status = 'payment_failed',
+        updated_at = ?
+    WHERE id = ?
+  `).run(now, orderId);
+
+  // Release reserved inventory
+  const items = await db
+    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+  for (const item of items) {
+    await db.prepare(`
+      UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.product_id, item.size);
+  }
+
+  await logPaymentAudit(orderId, "payment_failed", { reason: reason || "Payment failed or cancelled" }, db);
+  });
+}
+
+export async function logPaymentAudit(
+  orderId: string | null,
+  eventType: string,
+  payload: unknown,
+  connection?: DbConnection
+): Promise<void> {
+  const db = connection ?? getDb();
+  const auditId = `aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO payment_audits (id, order_id, event_type, payload, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(auditId, orderId || null, eventType, JSON.stringify(payload), new Date().toISOString());
+}
+
+/**
+ * Record a shipping timeline event (e.g. Dispatched, Out for Delivery, Delivered)
+ */
+export async function addShippingEvent(params: {
+  orderId: string;
+  status: string;
+  location?: string | null;
+  description: string;
+  occurredAt?: string;
+}): Promise<DbShippingEvent> {
+  const db = getDb();
+  const id = `shpe_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const occurredAt = params.occurredAt || new Date().toISOString();
+  const createdAt = new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO shipping_events (id, order_id, status, location, description, occurred_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.orderId,
+    params.status,
+    params.location || null,
+    params.description,
+    occurredAt,
+    createdAt
+  );
+
+  return {
+    id,
+    order_id: params.orderId,
+    status: params.status,
+    location: params.location || null,
+    description: params.description,
+    courier_name: null,
+    tracking_number: null,
+    occurred_at: occurredAt,
+    created_at: createdAt,
+  };
+}
+
+/**
+ * Record a status change in order_status_history
+ */
+export async function recordOrderStatusHistory(
+  orderId: string,
+  fromStatus: string | null,
+  toStatus: string,
+  actor: string,
+  note?: string | null,
+  connection?: DbConnection
+): Promise<void> {
+  const db = connection ?? getDb();
+  const id = `osh_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO order_status_history (id, order_id, from_status, to_status, actor, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, orderId, fromStatus, toStatus, actor, note || null, new Date().toISOString());
+}
+
+/**
+ * Customer requests cancellation.
+ * Allowed when order is pending_payment, paid, or processing (within policy).
+ */
+export async function requestOrderCancellation(orderId: string, reason: string): Promise<{ success: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.cancellation_requested) {
+      return { success: false, error: "Cancellation has already been requested for this order." };
+    }
+    if (["shipped", "delivered", "cancelled", "refunded"].includes(order.order_status)) {
+      return { success: false, error: `Order cannot be cancelled in '${order.order_status}' status.` };
+    }
+
+    const now = new Date().toISOString();
+    await db.prepare(`
+      UPDATE orders
+      SET cancellation_requested = 1,
+          cancellation_requested_at = ?,
+          cancellation_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(now, reason, now, orderId);
+
+    await recordOrderStatusHistory(
+      orderId,
+      order.order_status,
+      order.order_status,
+      order.customer_email,
+      `Customer requested cancellation: ${reason}`,
+      db
+    );
+
+    return { success: true };
+  });
+}
+
+/**
+ * Admin decides on cancellation request (approve or reject).
+ * If approved:
+ * - If unpaid: order marked cancelled, reserved inventory released.
+ * - If paid: order marked cancelled, order_status becomes refund_pending, inventory returned to stock.
+ */
+export async function decideOrderCancellation(
+  orderId: string,
+  approved: boolean,
+  actorEmail: string,
+  adminNote?: string
+): Promise<{ success: boolean; newStatus?: string; error?: string }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (!order.cancellation_requested) {
+      return { success: false, error: "There is no pending cancellation request for this order." };
+    }
+
+    const now = new Date().toISOString();
+    if (!approved) {
+      await db.prepare(`
+        UPDATE orders SET cancellation_requested = 0, updated_at = ? WHERE id = ?
+      `).run(now, orderId);
+      await recordOrderStatusHistory(
+        orderId,
+        order.order_status,
+        order.order_status,
+        actorEmail,
+        `Cancellation rejected by admin. Note: ${adminNote || "None"}`,
+        db
+      );
+      return { success: true, newStatus: order.order_status };
+    }
+
+    const isPaid = order.payment_status === "paid";
+    const newStatus = isPaid ? "refund_pending" : "cancelled";
+    await db.prepare(`
+      UPDATE orders
+      SET order_status = ?,
+          cancellation_requested = 0,
+          cancelled_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(newStatus, order.cancellation_reason || adminNote || "Approved cancellation", now, orderId);
+
+    const items = await db
+      .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id, size")
+      .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+    for (const item of items) {
+      const result = isPaid
+        ? await db.prepare(`
+            UPDATE inventory SET stock = stock + ?
+            WHERE product_id = ? AND size = ?
+          `).run(item.quantity, item.product_id, item.size)
+        : await db.prepare(`
+            UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+            WHERE product_id = ? AND size = ?
+          `).run(item.quantity, item.product_id, item.size);
+      if (result.rowCount !== 1) throw new Error("Inventory row missing while processing order cancellation.");
+    }
+
+    await recordOrderStatusHistory(
+      orderId,
+      order.order_status,
+      newStatus,
+      actorEmail,
+      `Cancellation approved by admin. ${adminNote ? "Note: " + adminNote : ""}`,
+      db
+    );
+    return { success: true, newStatus };
+  });
+}
+
+/**
+ * Customer submits return or exchange request.
+ * Validates 7-day window and prevents returning more items than purchased.
+ */
+export async function requestReturnOrExchange(params: {
+  orderId: string;
+  type: "return" | "exchange";
+  reason: string;
+  customerNote?: string;
+  items: Array<{
+    orderItemId: string;
+    quantity: number;
+    requestedExchangeSize?: string;
+  }>;
+}): Promise<{ success: boolean; returnId?: string; error?: string }> {
+  if (!params.items?.length) {
+    return { success: false, error: "Please select at least one item to return or exchange." };
+  }
+  if (new Set(params.items.map((item) => item.orderItemId)).size !== params.items.length) {
+    return { success: false, error: "Each order item may only be listed once." };
+  }
+
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE")
+      .get<DbOrder>(params.orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.order_status !== "delivered") {
+      return { success: false, error: "Returns and exchanges can only be requested for delivered orders." };
+    }
+
+    const deliveryTime = new Date(order.actual_delivery_date || order.updated_at).getTime();
+    const daysSinceDelivery = (Date.now() - deliveryTime) / (1000 * 60 * 60 * 24);
+    if (!Number.isFinite(deliveryTime) || daysSinceDelivery > 7) {
+      return { success: false, error: "Return window has expired (7 days policy)." };
+    }
+
+    const validatedItems: Array<{ request: typeof params.items[number]; orderItem: DbOrderItem }> = [];
+    let totalRefundAmount = 0;
+    for (const reqItem of params.items) {
+      if (!Number.isInteger(reqItem.quantity) || reqItem.quantity <= 0) {
+        return { success: false, error: "Return quantity must be at least 1." };
+      }
+      const orderItem = await db.prepare(
+        "SELECT * FROM order_items WHERE id = ? AND order_id = ? FOR UPDATE"
+      ).get<DbOrderItem>(reqItem.orderItemId, params.orderId);
+      if (!orderItem) return { success: false, error: "An order item was not found." };
+
+      const returned = await db.prepare(`
+        SELECT COALESCE(SUM(ri.quantity), 0) AS total_returned
+        FROM return_items ri
+        JOIN returns r ON ri.return_id = r.id
+        WHERE ri.order_item_id = ? AND r.status NOT IN ('rejected', 'cancelled')
+      `).get<{ total_returned: number | string }>(reqItem.orderItemId);
+      const remaining = orderItem.quantity - Number(returned?.total_returned ?? 0);
+      if (reqItem.quantity > remaining) {
+        return {
+          success: false,
+          error: `Cannot return ${reqItem.quantity} units of ${orderItem.product_name} (${orderItem.size}). Only ${remaining} eligible units remaining.`,
+        };
+      }
+      validatedItems.push({ request: reqItem, orderItem });
+      totalRefundAmount += orderItem.price * reqItem.quantity;
+    }
+
+    const returnId = `ret_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const returnNumber = `RET-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${randomUUID().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    await db.prepare(`
+      INSERT INTO returns (
+        id, order_id, return_number, customer_email, type, status, reason, customer_note, admin_note,
+        resolution_type, refund_amount, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, NULL, ?, ?, ?, ?)
+    `).run(
+      returnId,
+      params.orderId,
+      returnNumber,
+      order.customer_email,
+      params.type,
+      params.reason,
+      params.customerNote || null,
+      params.type === "exchange" ? "exchange" : "refund",
+      params.type === "exchange" ? 0 : totalRefundAmount,
+      now,
+      now
+    );
+
+    const insertItem = db.prepare(`
+      INSERT INTO return_items (
+        id, return_id, order_item_id, product_id, product_name, product_slug, color, size,
+        quantity, price, requested_exchange_size, condition, restocked, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+    `);
+    for (const { request, orderItem } of validatedItems) {
+      await insertItem.run(
+        `reti_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        returnId,
+        request.orderItemId,
+        orderItem.product_id,
+        orderItem.product_name,
+        orderItem.product_slug,
+        orderItem.color || "As pictured",
+        orderItem.size,
+        request.quantity,
+        orderItem.price,
+        request.requestedExchangeSize || null,
+        now
+      );
+    }
+    await recordOrderStatusHistory(
+      params.orderId,
+      order.order_status,
+      order.order_status,
+      order.customer_email,
+      `${params.type === "exchange" ? "Exchange" : "Return"} requested for order (${returnId}). Reason: ${params.reason}`,
+      db
+    );
+    return { success: true, returnId };
+  });
+}
+
+/**
+ * Admin inspects return items and decides restocking condition.
+ */
+export async function inspectReturnItem(params: {
+  returnItemId: string;
+  condition: "resalable" | "damaged" | "unsuitable";
+  actorEmail: string;
+}): Promise<{ success: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const item = await db.prepare("SELECT * FROM return_items WHERE id = ? FOR UPDATE")
+      .get<DbReturnItem>(params.returnItemId);
+    if (!item) return { success: false, error: "Return item not found." };
+
+    let restocked = item.restocked;
+    if (params.condition === "resalable" && !item.restocked) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT (product_id, size)
+        DO UPDATE SET stock = inventory.stock + EXCLUDED.stock
+      `).run(item.product_id, item.size, item.quantity);
+      restocked = 1;
+    }
+
+    await db.prepare(`
+      UPDATE return_items SET condition = ?, restocked = ? WHERE id = ?
+    `).run(params.condition, restocked, params.returnItemId);
+    return { success: true };
+  });
+}
+
+/**
+ * Record a refund record in the database
+ */
+export async function recordRefund(params: {
+  orderId: string;
+  returnId?: string | null;
+  razorpayRefundId?: string | null;
+  razorpayPaymentId?: string | null;
+  amount: number;
+  status: "pending" | "processed" | "failed";
+  reason: string;
+  initiatedBy: string;
+  failureReason?: string | null;
+}): Promise<DbRefundRecord> {
+  const db = getDb();
+  const id = `ref_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const now = new Date().toISOString();
+  const amountPaisa = Math.round(params.amount * 100);
+  const paymentId = params.razorpayPaymentId || "manual_unpaid_reversal";
+  const idempotencyKey = `idemp_${id}`;
+
+  await db.prepare(`
+    INSERT INTO refund_records (
+      id, order_id, return_id, razorpay_refund_id, razorpay_payment_id,
+      amount, amount_paisa, currency, status, reason, idempotency_key, initiated_by, failure_reason,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.orderId,
+    params.returnId || null,
+    params.razorpayRefundId || null,
+    paymentId,
+    params.amount,
+    amountPaisa,
+    params.status,
+    params.reason,
+    idempotencyKey,
+    params.initiatedBy,
+    params.failureReason || null,
+    now,
+    now
+  );
+
+  return {
+    id,
+    order_id: params.orderId,
+    return_id: params.returnId || null,
+    razorpay_refund_id: params.razorpayRefundId || null,
+    razorpay_payment_id: paymentId,
+    amount: params.amount,
+    amount_paisa: amountPaisa,
+    currency: "INR",
+    status: params.status,
+    reason: params.reason,
+    idempotency_key: idempotencyKey,
+    raw_response: null,
+    initiated_by: params.initiatedBy,
+    failure_reason: params.failureReason || null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+
+========== src\lib\razorpay.ts ==========
+import crypto from "crypto";
+import Razorpay from "razorpay";
+
+export const RAZORPAY_KEY_ID =
+  process.env.RAZORPAY_KEY_ID ||
+  process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ||
+  "rzp_test_placeholder_key";
+
+export const RAZORPAY_KEY_SECRET =
+  process.env.RAZORPAY_KEY_SECRET || "rzp_test_placeholder_secret";
+
+export const RAZORPAY_WEBHOOK_SECRET =
+  process.env.RAZORPAY_WEBHOOK_SECRET || "rzp_webhook_placeholder_secret";
+
+// Initialize Razorpay SDK instance on the server
+let razorpayClient: Razorpay | null = null;
+
+export function getRazorpayClient(): Razorpay {
+  if (!razorpayClient) {
+    razorpayClient = new Razorpay({
+      key_id: RAZORPAY_KEY_ID,
+      key_secret: RAZORPAY_KEY_SECRET,
+    });
+  }
+  return razorpayClient;
+}
+
+export interface VerifyPaymentSignatureParams {
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  razorpaySignature: string;
+  secret?: string;
+}
+
+/**
+ * Validates Razorpay standard payment signature using HMAC SHA256
+ * and constant-time comparison to prevent timing attacks.
+ */
+export function verifyPaymentSignature({
+  razorpayOrderId,
+  razorpayPaymentId,
+  razorpaySignature,
+  secret = RAZORPAY_KEY_SECRET,
+}: VerifyPaymentSignatureParams): boolean {
+  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+    return false;
+  }
+
+  try {
+    const text = `${razorpayOrderId}|${razorpayPaymentId}`;
+    const generatedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(text)
+      .digest("hex");
+
+    const expectedBuffer = Buffer.from(generatedSignature, "utf-8");
+    const receivedBuffer = Buffer.from(razorpaySignature, "utf-8");
+
+    if (expectedBuffer.length !== receivedBuffer.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+  } catch (err) {
+    console.error("Payment signature verification failed with error:", err);
+    return false;
+  }
+}
+
+/**
+ * Validates Razorpay Webhook signature against raw request body
+ */
+export function verifyWebhookSignature(
+  rawBody: string,
+  signature: string,
+  secret: string = RAZORPAY_WEBHOOK_SECRET
+): boolean {
+  if (!rawBody || !signature) {
+    return false;
+  }
+
+  try {
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(rawBody)
+      .digest("hex");
+
+    const expectedBuffer = Buffer.from(expectedSignature, "utf-8");
+    const receivedBuffer = Buffer.from(signature, "utf-8");
+
+    if (expectedBuffer.length !== receivedBuffer.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+  } catch (err) {
+    console.error("Webhook signature verification failed with error:", err);
+    return false;
+  }
+}
+
+export interface CreateRefundParams {
+  paymentId: string;
+  amountPaisa?: number; // In paisa (e.g. 99900 for â‚¹999.00). If omitted, full refund.
+  notes?: Record<string, string>;
+  receipt?: string;
+}
+
+export interface RazorpayRefundResult {
+  success: boolean;
+  refundId?: string;
+  amount?: number;
+  status?: string;
+  error?: string;
+}
+
+/**
+ * Initiates an online refund via Razorpay Payments API
+ */
+export async function createRazorpayRefund({
+  paymentId,
+  amountPaisa,
+  notes,
+  receipt,
+}: CreateRefundParams): Promise<RazorpayRefundResult> {
+  // If running in development/test without real credentials, return safe simulated refund
+  if (
+    !process.env.RAZORPAY_KEY_SECRET ||
+    RAZORPAY_KEY_SECRET === "rzp_test_placeholder_secret"
+  ) {
+    const simRefundId = `rfnd_sim_${crypto.randomBytes(8).toString("hex")}`;
+    return {
+      success: true,
+      refundId: simRefundId,
+      amount: amountPaisa || 99900,
+      status: "processed",
+    };
+  }
+
+  try {
+    const client = getRazorpayClient();
+    const payload: any = {};
+    if (amountPaisa) payload.amount = amountPaisa;
+    if (notes) payload.notes = notes;
+    if (receipt) payload.receipt = receipt;
+
+    const refund = await (client.payments as any).refund(paymentId, payload);
+
+    return {
+      success: true,
+      refundId: refund.id,
+      amount: refund.amount,
+      status: refund.status,
+    };
+  } catch (err: any) {
+    console.error("Razorpay refund creation failed:", err);
+    return {
+      success: false,
+      error: err?.error?.description || err?.message || "Refund failed",
+    };
+  }
+}
+
+
+========== src\app\checkout\page.tsx ==========
+"use client";
+
+import React, { useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import Script from "next/script";
+import {
+  ShieldCheck,
+  CheckCircle2,
+  Lock,
+  ArrowRight,
+  ArrowLeft,
+  MapPin,
+  CreditCard,
+  Package,
+  AlertCircle,
+  Truck,
+  RotateCcw,
+  Printer,
+  Sparkles,
+} from "lucide-react";
+import { StoreLayout } from "@/components/layout/StoreLayout";
+import { Breadcrumbs } from "@/components/common/Breadcrumbs";
+import { useCart } from "@/context/cart-context";
+import { useAuth } from "@/context/auth-context";
+import { formatINR } from "@/lib/utils";
+import { Address } from "@/types";
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
+
+interface ConfirmedOrderDetails {
+  id: string;
+  orderNumber: string;
+  guestToken: string;
+  total: number;
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  items: any[];
+  address: any;
+  paymentId: string;
+}
+
+export default function CheckoutPage() {
+  const { items, itemCount, subtotal, discount, shipping, total, clearBag } = useCart();
+  const { user, isAuthenticated } = useAuth();
+
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1); // 1: Details & Address, 2: Review, 3: Payment, 4: Confirmed
+  const [selectedAddressId, setSelectedAddressId] = useState<string>(
+    user?.addresses[0]?.id || "new"
+  );
+
+  // Customer Contact State
+  const [customerEmail, setCustomerEmail] = useState(user?.email || "arjun@streetwear.in");
+
+  // Address Form State
+  const [addressForm, setAddressForm] = useState<Omit<Address, "id">>({
+    fullName: user?.name || "Arjun Verma",
+    phone: user?.phone?.replace(/^\+91\s?/, "") || "9876543210",
+    addressLine1: "Flat 402, Skyline Residency",
+    addressLine2: "12th Main, Indiranagar",
+    landmark: "Near Defense Colony Park",
+    city: "Bengaluru",
+    state: "Karnataka",
+    pinCode: "560038",
+    isDefault: true,
+  });
+
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [promoInput, setPromoInput] = useState("");
+  const [appliedPromo, setAppliedPromo] = useState<string | null>(null);
+
+  // Pending Razorpay Order Details
+  const [pendingServerOrder, setPendingServerOrder] = useState<any>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrderDetails | null>(null);
+
+  const validateAddressStep = (): boolean => {
+    const errors: Record<string, string> = {};
+
+    if (!customerEmail || !customerEmail.includes("@")) {
+      errors.email = "Please provide a valid email address";
+    }
+
+    if (!addressForm.fullName || addressForm.fullName.trim().length < 2) {
+      errors.fullName = "Please enter your full name (at least 2 characters)";
+    }
+
+    const cleanPhone = addressForm.phone.replace(/\D/g, "");
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      errors.phone = "Enter a valid 10-digit Indian mobile number (e.g. 9876543210)";
+    }
+
+    if (!addressForm.addressLine1 || addressForm.addressLine1.trim().length < 5) {
+      errors.addressLine1 = "Please enter your building / flat number and street";
+    }
+
+    if (!addressForm.city || addressForm.city.trim().length < 2) {
+      errors.city = "Please enter your city";
+    }
+
+    if (!addressForm.state || addressForm.state.trim().length < 2) {
+      errors.state = "Please enter your state";
+    }
+
+    if (!/^[1-9][0-9]{5}$/.test(addressForm.pinCode.trim())) {
+      errors.pinCode = "Please enter a valid 6-digit Indian PIN code";
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleProceedToReview = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (validateAddressStep()) {
+      setStep(2);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  const handleProceedToPayment = () => {
+    setPaymentError(null);
+    setStep(3);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Live Razorpay Payment Trigger
+  const handleInitiateRazorpay = async () => {
+    setIsProcessing(true);
+    setPaymentError(null);
+
+    try {
+      // 1. Create order on server using trusted product prices (â‚¹999)
+      const res = await fetch("/api/checkout/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: addressForm.fullName,
+          customerEmail,
+          customerPhone: addressForm.phone,
+          address: {
+            ...addressForm,
+            country: "India",
+          },
+          items: items.map((i) => ({
+            productId: i.productId,
+            size: i.size,
+            quantity: i.quantity,
+            color: i.color,
+          })),
+          promoCode: appliedPromo || promoInput || undefined,
+          userId: user?.id,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setIsProcessing(false);
+        setPaymentError(data.error || "Failed to initialize order with server.");
+        return;
+      }
+
+      setPendingServerOrder(data);
+
+      // Check if Razorpay client SDK is loaded
+      if (typeof window !== "undefined" && window.Razorpay && !data.isTestMode) {
+        const options = {
+          key: data.keyId,
+          amount: data.amount,
+          currency: data.currency,
+          name: "RIGHTNOWLIFE",
+          description: `Streetwear Order #${data.orderNumber}`,
+          image: "/brand/rightnowlife-logo.jpg",
+          order_id: data.razorpayOrderId,
+          prefill: {
+            name: addressForm.fullName,
+            email: customerEmail,
+            contact: addressForm.phone,
+          },
+          theme: {
+            color: "#FFB900",
+          },
+          modal: {
+            ondismiss: () => {
+              setIsProcessing(false);
+              setPaymentError("Payment window was closed. Your bag items have been preserved.");
+            },
+          },
+          handler: async (response: any) => {
+            await handleVerifyPayment(
+              data.orderId,
+              response.razorpay_order_id,
+              response.razorpay_payment_id,
+              response.razorpay_signature,
+              data
+            );
+          },
+        };
+
+        const rzp = new window.Razorpay(options);
+        rzp.on("payment.failed", (response: any) => {
+          setIsProcessing(false);
+          setPaymentError(
+            `Payment declined: ${response.error?.description || "Card or UPI transaction failed"}. Your bag is preserved.`
+          );
+        });
+        rzp.open();
+      } else {
+        // Test mode fallback: Allows immediate sandbox verification
+        console.info("[Checkout] Ready for test mode verification:", data);
+        setIsProcessing(false);
+      }
+    } catch (err: any) {
+      console.error("Checkout submission failed:", err);
+      setIsProcessing(false);
+      setPaymentError(err.message || "Network error connecting to payment gateway.");
+    }
+  };
+
+  // Cryptographic Signature Verification Callback
+  const handleVerifyPayment = async (
+    orderId: string,
+    razorpayOrderId: string,
+    razorpayPaymentId: string,
+    razorpaySignature: string,
+    serverOrder: any
+  ) => {
+    setIsVerifying(true);
+    setPaymentError(null);
+
+    try {
+      const res = await fetch("/api/checkout/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId,
+          razorpayOrderId,
+          razorpayPaymentId,
+          razorpaySignature,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        // Confirmation confirmed on server: Clear bag and show success screen
+        clearBag();
+        setConfirmedOrder({
+          id: orderId,
+          orderNumber: serverOrder.orderNumber,
+          guestToken: data.guestToken || serverOrder.guestToken,
+          total: serverOrder.pricing.total,
+          subtotal: serverOrder.pricing.subtotal,
+          shipping: serverOrder.pricing.shipping,
+          discount: serverOrder.pricing.discount,
+          items: [...items],
+          address: { ...addressForm },
+          paymentId: razorpayPaymentId,
+        });
+        setStep(4);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } else {
+        setPaymentError(data.error || "Cryptographic payment verification failed.");
+      }
+    } catch (err: any) {
+      console.error("Payment verification call failed:", err);
+      setPaymentError("Network error occurred during payment verification.");
+    } finally {
+      setIsVerifying(false);
+      setIsProcessing(false);
+    }
+  };
+
+  // Empty Bag Guard (unless on step 4)
+  if (items.length === 0 && step !== 4) {
+    return (
+      <StoreLayout>
+        <div className="max-w-4xl mx-auto px-4 py-20 text-center">
+          <Package className="w-12 h-12 text-[#858585] mx-auto mb-4" />
+          <h1 className="text-2xl font-black uppercase tracking-tight font-editorial mb-2">
+            YOUR BAG IS EMPTY
+          </h1>
+          <p className="text-xs text-[#858585] mb-6">
+            Add garments to your bag before proceeding to checkout.
+          </p>
+          <Link
+            href="/shop"
+            className="btn-morph btn-yellow px-6 py-3 text-xs uppercase tracking-widest font-black inline-flex items-center gap-2"
+          >
+            <span>Explore All Tees</span>
+            <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      </StoreLayout>
+    );
+  }
+
+  return (
+    <StoreLayout>
+      {/* External Razorpay checkout script */}
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <Breadcrumbs items={[{ label: "Bag", href: "/cart" }, { label: "Secure Checkout" }]} />
+
+        {/* Step Progress Tracker */}
+        {step !== 4 && (
+          <div className="py-4 border-b border-[#E5E5E5] mb-8">
+            <div className="flex items-center justify-between max-w-2xl mx-auto text-xs uppercase tracking-wider font-bold">
+              <div className={`flex items-center gap-2 ${step >= 1 ? "text-[#111111]" : "text-[#858585]"}`}>
+                <span
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${
+                    step >= 1 ? "bg-[#111111] text-white" : "bg-[#F5F4F0] text-[#858585]"
+                  }`}
+                >
+                  1
+                </span>
+                <span>Address</span>
+              </div>
+              <div className="h-0.5 w-12 sm:w-20 bg-[#E5E5E5]" />
+              <div className={`flex items-center gap-2 ${step >= 2 ? "text-[#111111]" : "text-[#858585]"}`}>
+                <span
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${
+                    step >= 2 ? "bg-[#111111] text-white" : "bg-[#F5F4F0] text-[#858585]"
+                  }`}
+                >
+                  2
+                </span>
+                <span>Review</span>
+              </div>
+              <div className="h-0.5 w-12 sm:w-20 bg-[#E5E5E5]" />
+              <div className={`flex items-center gap-2 ${step >= 3 ? "text-[#111111]" : "text-[#858585]"}`}>
+                <span
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${
+                    step >= 3 ? "bg-[#111111] text-white" : "bg-[#F5F4F0] text-[#858585]"
+                  }`}
+                >
+                  3
+                </span>
+                <span>Payment</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4: ORDER CONFIRMED VIEW */}
+        {step === 4 && confirmedOrder && (
+          <div className="max-w-3xl mx-auto py-8 space-y-8 animate-in fade-in duration-300">
+            <div className="border border-[#E5E5E5] bg-white p-8 text-center space-y-4 shadow-sm">
+              <div className="w-16 h-16 rounded-full bg-[#079447]/10 flex items-center justify-center text-[#079447] mx-auto mb-2">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-[#079447] font-bold">
+                PAYMENT VERIFIED & RECORDED
+              </span>
+              <h1 className="text-2xl sm:text-4xl font-black uppercase tracking-tight font-editorial">
+                ORDER #{confirmedOrder.orderNumber}
+              </h1>
+              <p className="text-xs sm:text-sm text-[#858585] max-w-md mx-auto leading-relaxed">
+                Thank you for your order. Your garments are being prepared for express air dispatch. A confirmation notification has been dispatched to{" "}
+                <strong className="text-[#111111]">{customerEmail}</strong>.
+              </p>
+
+              <div className="p-3 bg-[#F5F4F0] border border-[#E5E5E5] text-xs font-mono text-[#111111] inline-block">
+                Razorpay Payment ID: <strong>{confirmedOrder.paymentId}</strong>
+              </div>
+
+              {/* Item Summary Table */}
+              <div className="text-left pt-6 border-t border-[#E5E5E5] space-y-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]">
+                  Garments in This Order
+                </h3>
+                <div className="divide-y divide-[#E5E5E5]">
+                  {confirmedOrder.items.map((item, idx) => (
+                    <div key={idx} className="py-3 flex items-center justify-between gap-4 text-xs">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative w-12 h-14 bg-[#F5F4F0] shrink-0 overflow-hidden">
+                          <Image src={item.image} alt={item.productName} fill className="object-cover object-top" />
+                        </div>
+                        <div className="truncate">
+                          <p className="font-bold uppercase text-[#111111] truncate">{item.productName}</p>
+                          <p className="text-[11px] text-[#858585]">
+                            Size: {item.size} â€¢ Qty: {item.quantity} â€¢ â‚¹999 each
+                          </p>
+                        </div>
+                      </div>
+                      <span className="font-bold text-[#111111] shrink-0">
+                        {formatINR(999 * item.quantity)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-3 border-t border-[#E5E5E5] space-y-1 text-xs text-[#858585]">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span className="font-semibold text-[#111111]">{formatINR(confirmedOrder.subtotal)}</span>
+                  </div>
+                  {confirmedOrder.discount > 0 && (
+                    <div className="flex justify-between text-[#079447]">
+                      <span>Discount</span>
+                      <span>-{formatINR(confirmedOrder.discount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Express Air Shipping</span>
+                    <span className="font-semibold text-[#111111]">
+                      {confirmedOrder.shipping === 0 ? "FREE" : formatINR(confirmedOrder.shipping)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-base font-black text-[#111111] pt-2 border-t border-[#E5E5E5]">
+                    <span>Total Paid</span>
+                    <span>{formatINR(confirmedOrder.total)}</span>
+                  </div>
+                </div>
+
+                <div className="pt-4 text-xs text-[#858585] space-y-1">
+                  <p>
+                    <strong>Delivery Address:</strong> {confirmedOrder.address.fullName}, {confirmedOrder.address.addressLine1}, {confirmedOrder.address.city}, {confirmedOrder.address.state} - {confirmedOrder.address.pinCode}
+                  </p>
+                  <p>
+                    <strong>Mobile:</strong> +91 {confirmedOrder.address.phone}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-6 flex flex-col sm:flex-row gap-3 justify-center">
+                <Link
+                  href={`/account/orders?email=${encodeURIComponent(customerEmail)}`}
+                  className="btn-morph btn-dark px-6 py-3.5 text-xs uppercase tracking-widest font-black inline-flex items-center justify-center gap-2"
+                >
+                  <Truck className="w-4 h-4" /> View in Account Orders
+                </Link>
+                <Link
+                  href="/shop"
+                  className="btn-morph btn-yellow px-6 py-3.5 text-xs uppercase tracking-widest font-black inline-flex items-center justify-center gap-2"
+                >
+                  <span>Continue Shopping</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STEPS 1 to 3: CHECKOUT WORKFLOW */}
+        {step !== 4 && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Main Stage (7 cols) */}
+            <div className="lg:col-span-7 space-y-6">
+              {/* Error Alert */}
+              {paymentError && (
+                <div className="p-4 bg-red-50 border border-red-200 text-red-800 text-xs flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold">Checkout Issue</p>
+                    <p className="mt-0.5">{paymentError}</p>
+                  </div>
+                  <button
+                    onClick={() => setPaymentError(null)}
+                    className="text-red-600 hover:text-black font-bold uppercase text-[10px]"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* â”€â”€ STEP 1: CONTACT & DELIVERY ADDRESS â”€â”€ */}
+              {step === 1 && (
+                <form onSubmit={handleProceedToReview} className="space-y-6">
+                  {/* Contact Information */}
+                  <div className="border border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm">
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#111111] pb-2 border-b border-[#E5E5E5] flex items-center justify-between">
+                      <span>1. Customer Contact</span>
+                      <span className="text-[10px] text-[#858585] font-mono lowercase">required</span>
+                    </h2>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase font-bold text-[#111111]">
+                        Email Address for Order Updates *
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={customerEmail}
+                        onChange={(e) => setCustomerEmail(e.target.value)}
+                        placeholder="you@domain.com"
+                        className={`w-full px-3 py-2 text-xs border ${
+                          formErrors.email ? "border-red-500" : "border-[#E5E5E5]"
+                        } focus:border-[#111111] outline-none font-medium`}
+                      />
+                      {formErrors.email && (
+                        <p className="text-[11px] text-red-600 font-medium">{formErrors.email}</p>
+                      )}
+                      <p className="text-[10px] text-[#858585]">
+                        Invoice and real-time shipment updates will be sent to this email address.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Delivery Address */}
+                  <div className="border border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm">
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#111111] pb-2 border-b border-[#E5E5E5] flex items-center justify-between">
+                      <span>2. Delivery Address</span>
+                      <span className="text-[10px] text-[#079447] font-mono">Pan-India Express</span>
+                    </h2>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          Recipient Full Name *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={addressForm.fullName}
+                          onChange={(e) => setAddressForm({ ...addressForm, fullName: e.target.value })}
+                          placeholder="Arjun Verma"
+                          className={`w-full px-3 py-2 text-xs border ${
+                            formErrors.fullName ? "border-red-500" : "border-[#E5E5E5]"
+                          } focus:border-[#111111] outline-none font-medium`}
+                        />
+                        {formErrors.fullName && (
+                          <p className="text-[11px] text-red-600">{formErrors.fullName}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          Indian Mobile Number *
+                        </label>
+                        <div className="flex">
+                          <span className="px-3 py-2 text-xs border border-r-0 border-[#E5E5E5] bg-[#F5F4F0] text-[#858585] font-mono">
+                            +91
+                          </span>
+                          <input
+                            type="tel"
+                            required
+                            maxLength={10}
+                            value={addressForm.phone}
+                            onChange={(e) =>
+                              setAddressForm({
+                                ...addressForm,
+                                phone: e.target.value.replace(/\D/g, "").slice(0, 10),
+                              })
+                            }
+                            placeholder="9876543210"
+                            className={`w-full px-3 py-2 text-xs border ${
+                              formErrors.phone ? "border-red-500" : "border-[#E5E5E5]"
+                            } focus:border-[#111111] outline-none font-medium font-mono`}
+                          />
+                        </div>
+                        {formErrors.phone && (
+                          <p className="text-[11px] text-red-600">{formErrors.phone}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] uppercase font-bold text-[#111111]">
+                        Flat / House No., Apartment & Street *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={addressForm.addressLine1}
+                        onChange={(e) => setAddressForm({ ...addressForm, addressLine1: e.target.value })}
+                        placeholder="Flat 402, Skyline Residency, 12th Main"
+                        className={`w-full px-3 py-2 text-xs border ${
+                          formErrors.addressLine1 ? "border-red-500" : "border-[#E5E5E5]"
+                        } focus:border-[#111111] outline-none font-medium`}
+                      />
+                      {formErrors.addressLine1 && (
+                        <p className="text-[11px] text-red-600">{formErrors.addressLine1}</p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          Area / Colony (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={addressForm.addressLine2 || ""}
+                          onChange={(e) => setAddressForm({ ...addressForm, addressLine2: e.target.value })}
+                          placeholder="Indiranagar Stage 2"
+                          className="w-full px-3 py-2 text-xs border border-[#E5E5E5] focus:border-[#111111] outline-none font-medium"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          Landmark (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={addressForm.landmark || ""}
+                          onChange={(e) => setAddressForm({ ...addressForm, landmark: e.target.value })}
+                          placeholder="Near Defense Colony Park"
+                          className="w-full px-3 py-2 text-xs border border-[#E5E5E5] focus:border-[#111111] outline-none font-medium"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          Postal PIN Code *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          maxLength={6}
+                          value={addressForm.pinCode}
+                          onChange={(e) =>
+                            setAddressForm({
+                              ...addressForm,
+                              pinCode: e.target.value.replace(/\D/g, "").slice(0, 6),
+                            })
+                          }
+                          placeholder="560038"
+                          className={`w-full px-3 py-2 text-xs border ${
+                            formErrors.pinCode ? "border-red-500" : "border-[#E5E5E5]"
+                          } focus:border-[#111111] outline-none font-mono font-medium`}
+                        />
+                        {formErrors.pinCode && (
+                          <p className="text-[11px] text-red-600">{formErrors.pinCode}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          City *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={addressForm.city}
+                          onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })}
+                          placeholder="Bengaluru"
+                          className={`w-full px-3 py-2 text-xs border ${
+                            formErrors.city ? "border-red-500" : "border-[#E5E5E5]"
+                          } focus:border-[#111111] outline-none font-medium`}
+                        />
+                        {formErrors.city && (
+                          <p className="text-[11px] text-red-600">{formErrors.city}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] uppercase font-bold text-[#111111]">
+                          State *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={addressForm.state}
+                          onChange={(e) => setAddressForm({ ...addressForm, state: e.target.value })}
+                          placeholder="Karnataka"
+                          className={`w-full px-3 py-2 text-xs border ${
+                            formErrors.state ? "border-red-500" : "border-[#E5E5E5]"
+                          } focus:border-[#111111] outline-none font-medium`}
+                        />
+                        {formErrors.state && (
+                          <p className="text-[11px] text-red-600">{formErrors.state}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="btn-morph btn-yellow px-8 py-4 text-xs uppercase tracking-widest font-black flex items-center gap-2 shadow-sm"
+                    >
+                      <span>Continue to Order Review</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* â”€â”€ STEP 2: REVIEW ORDER & CONFIRM ADDRESS â”€â”€ */}
+              {step === 2 && (
+                <div className="space-y-6">
+                  {/* Delivery Address Review */}
+                  <div className="border border-[#E5E5E5] bg-white p-6 space-y-3 shadow-sm">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E5E5E5]">
+                      <h2 className="text-xs font-bold uppercase tracking-wider text-[#111111] flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-[#0876A8]" />
+                        <span>Deliver To</span>
+                      </h2>
+                      <button
+                        onClick={() => setStep(1)}
+                        className="text-xs font-bold uppercase tracking-wider text-[#0876A8] hover:underline"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                    <p className="text-xs font-bold text-[#111111]">{addressForm.fullName}</p>
+                    <p className="text-xs text-[#858585] leading-relaxed">
+                      {addressForm.addressLine1}
+                      {addressForm.addressLine2 ? `, ${addressForm.addressLine2}` : ""}
+                      {addressForm.landmark ? ` (Landmark: ${addressForm.landmark})` : ""}
+                      <br />
+                      {addressForm.city}, {addressForm.state} â€” {addressForm.pinCode}, India
+                    </p>
+                    <p className="text-xs text-[#858585] font-mono">
+                      Phone: +91 {addressForm.phone} â€¢ Email: {customerEmail}
+                    </p>
+                  </div>
+
+                  {/* Garments Breakdown */}
+                  <div className="border border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm">
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#111111] pb-2 border-b border-[#E5E5E5]">
+                      Selected Garments ({itemCount})
+                    </h2>
+                    <div className="divide-y divide-[#E5E5E5]">
+                      {items.map((item) => (
+                        <div key={item.id} className="py-3 flex gap-4 items-center">
+                          <div className="relative w-16 h-20 bg-[#F5F4F0] shrink-0 overflow-hidden">
+                            <Image src={item.image} alt={item.productName} fill className="object-cover object-top" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-xs font-bold uppercase text-[#111111] truncate">{item.productName}</h3>
+                            <p className="text-[11px] text-[#858585] mt-0.5">
+                              Size: <strong>{item.size}</strong> â€¢ Color: {item.color} â€¢ Qty: {item.quantity}
+                            </p>
+                            <span className="text-[10px] font-mono text-[#0876A8]">Fixed Price: â‚¹999 per unit</span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs font-black text-[#111111]">{formatINR(999 * item.quantity)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => setStep(1)}
+                      className="text-xs uppercase tracking-wider font-bold text-[#858585] hover:text-[#111111] flex items-center gap-1.5"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" /> Back to Address
+                    </button>
+                    <button
+                      onClick={handleProceedToPayment}
+                      className="btn-morph btn-yellow px-8 py-4 text-xs uppercase tracking-widest font-black flex items-center gap-2 shadow-sm"
+                    >
+                      <span>Proceed to Payment</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* â”€â”€ STEP 3: RAZORPAY PAYMENT GATEWAY â”€â”€ */}
+              {step === 3 && (
+                <div className="space-y-6">
+                  <div className="border border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E5E5E5]">
+                      <h2 className="text-xs font-bold uppercase tracking-wider text-[#111111] flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-[#FFB900]" />
+                        <span>Select Payment Gateway</span>
+                      </h2>
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-[#079447] font-bold flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5" /> 256-Bit Encrypted
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="p-4 border-2 border-[#111111] bg-[#F5F4F0] flex items-start gap-3">
+                        <input
+                          type="radio"
+                          name="paymentProvider"
+                          checked
+                          readOnly
+                          className="mt-1 w-4 h-4 accent-[#111111]"
+                        />
+                        <div className="space-y-1">
+                          <p className="text-xs font-black text-[#111111] uppercase tracking-wide">
+                            Razorpay Payment Gateway (Official Integration)
+                          </p>
+                          <p className="text-[11px] text-[#858585] leading-relaxed">
+                            Pay securely via <strong>UPI (GPay, PhonePe, Paytm), Debit/Credit Cards, or Net Banking</strong>. Verified server-side signature protocol.
+                          </p>
+                          <div className="pt-2 flex flex-wrap gap-2 text-[10px] font-mono text-[#111111]">
+                            <span className="px-2 py-0.5 bg-white border border-[#E5E5E5]">UPI / QR</span>
+                            <span className="px-2 py-0.5 bg-white border border-[#E5E5E5]">Cards (Visa, RuPay, MC)</span>
+                            <span className="px-2 py-0.5 bg-white border border-[#E5E5E5]">NetBanking (50+ Banks)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Test Mode Interactive Sandbox Option */}
+                    {pendingServerOrder?.isTestMode && (
+                      <div className="mt-4 p-4 bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-2">
+                        <div className="flex items-center gap-1.5 font-bold">
+                          <Sparkles className="w-4 h-4 text-amber-700" />
+                          <span>Local Test Sandbox Active</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed">
+                          Server generated order ID: <code className="font-bold">{pendingServerOrder.razorpayOrderId}</code>. Click below to verify and complete the mock transaction with server-side inventory commitment.
+                        </p>
+                        <button
+                          onClick={() =>
+                            handleVerifyPayment(
+                              pendingServerOrder.orderId,
+                              pendingServerOrder.razorpayOrderId,
+                              `pay_test_${Date.now()}`,
+                              "test_signature_mock",
+                              pendingServerOrder
+                            )
+                          }
+                          disabled={isVerifying}
+                          className="btn-morph btn-dark px-4 py-2 text-[11px] uppercase tracking-wider font-bold inline-flex items-center gap-2"
+                        >
+                          {isVerifying ? "Verifying..." : "Complete Simulated Test Payment"}
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="pt-4 flex items-center justify-between border-t border-[#E5E5E5]">
+                      <button
+                        onClick={() => setStep(2)}
+                        className="text-xs uppercase tracking-wider font-bold text-[#858585] hover:text-[#111111] flex items-center gap-1"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" /> Back to Review
+                      </button>
+
+                      <button
+                        onClick={handleInitiateRazorpay}
+                        disabled={isProcessing || isVerifying}
+                        className="btn-morph btn-yellow px-8 py-4 text-xs uppercase tracking-widest font-black flex items-center gap-2 shadow-md disabled:opacity-50"
+                      >
+                        <Lock className="w-4 h-4" />
+                        <span>
+                          {isVerifying
+                            ? "Verifying Signature..."
+                            : isProcessing
+                            ? "Opening Razorpay..."
+                            : `Authorize & Pay ${formatINR(total)}`}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Sidebar Order Summary (5 cols) */}
+            <div className="lg:col-span-5">
+              <div className="border border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm sticky top-24">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111] pb-2 border-b border-[#E5E5E5]">
+                  Order Summary ({itemCount} {itemCount === 1 ? "Item" : "Items"})
+                </h3>
+
+                {/* Items preview list */}
+                <div className="max-h-60 overflow-y-auto divide-y divide-[#E5E5E5] pr-1">
+                  {items.map((item) => (
+                    <div key={item.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold uppercase text-[#111111] truncate">{item.productName}</p>
+                        <p className="text-[11px] text-[#858585]">
+                          Size: {item.size} â€¢ Qty: {item.quantity} (â‚¹999 each)
+                        </p>
+                      </div>
+                      <span className="font-semibold text-[#111111] shrink-0">
+                        {formatINR(999 * item.quantity)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Promo Code Input */}
+                <div className="pt-2 border-t border-[#E5E5E5]">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={promoInput}
+                      onChange={(e) => setPromoInput(e.target.value)}
+                      placeholder="Promo (DROP20, RNLFIRST)"
+                      className="flex-1 px-3 py-1.5 text-xs border border-[#E5E5E5] focus:border-[#111111] outline-none uppercase font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (promoInput.trim()) {
+                          setAppliedPromo(promoInput.trim().toUpperCase());
+                        }
+                      }}
+                      className="btn-morph btn-dark px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  {appliedPromo && (
+                    <p className="text-[10px] text-[#079447] font-bold mt-1">
+                      Promo code applied: {appliedPromo}
+                    </p>
+                  )}
+                </div>
+
+                {/* Price Calculation Breakdown */}
+                <div className="space-y-1.5 text-xs text-[#858585] pt-2 border-t border-[#E5E5E5]">
+                  <div className="flex justify-between">
+                    <span>Item Subtotal</span>
+                    <span className="font-semibold text-[#111111]">{formatINR(subtotal)}</span>
+                  </div>
+                  {discount > 0 && (
+                    <div className="flex justify-between text-[#079447] font-medium">
+                      <span>Promotional Discount</span>
+                      <span>-{formatINR(discount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Express Air Shipping</span>
+                    <span className="font-semibold text-[#111111]">
+                      {shipping === 0 ? "FREE" : formatINR(shipping)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-base font-black text-[#111111] pt-3 border-t border-[#E5E5E5]">
+                    <span>Total Amount</span>
+                    <span>{formatINR(total)}</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 text-[10px] text-[#858585] space-y-1">
+                  <p>â€¢ Fixed pricing: Strictly â‚¹999 per T-shirt (GST included).</p>
+                  <p>â€¢ Free shipping automatically applies on orders above â‚¹1,499.</p>
+                  <p>â€¢ Covered by RightNowLife 7-day size exchange guarantee.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </StoreLayout>
+  );
+}
+
+
+========== src\app\api\orders\route.ts ==========
+import { NextRequest, NextResponse } from "next/server";
+import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireAdminAuth } from "@/lib/auth/admin-auth";
+import { getOrdersByEmail, getAllOrders } from "@/lib/db/orders";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
+  try {
+    // Staff access must come from the validated admin session, never a query string.
+    const admin = await requireAdminAuth(req);
+    if (admin?.role === "admin") {
+      return NextResponse.json({ orders: await getAllOrders() });
+    }
+
+    const supabase = await createSupabaseServerClient();
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user?.email) {
+      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    }
+
+    const requestedEmail = new URL(req.url).searchParams.get("email")?.trim().toLowerCase();
+    const authenticatedEmail = data.user.email.trim().toLowerCase();
+
+    if (requestedEmail && requestedEmail !== authenticatedEmail) {
+      return NextResponse.json({ error: "You can only access your own orders." }, { status: 403 });
+    }
+
+    return NextResponse.json({ orders: await getOrdersByEmail(authenticatedEmail) });
+  } catch {
+    console.error("[GET /api/orders] Request failed.");
+    return NextResponse.json({ error: "Failed to fetch orders." }, { status: 500 });
+  }
+}
+
+
+========== src\lib\supabase\client.ts ==========
+import { createBrowserClient } from "@supabase/ssr";
+
+export function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+  );
+}
+
+
+========== src\lib\supabase\admin.ts ==========
+
+import "server-only";
+
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+export function createAdminSupabaseClient() {
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  });
+}

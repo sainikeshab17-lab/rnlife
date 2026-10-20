@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb, DbInventoryRow } from "@/lib/db/index";
-import { PRODUCTS } from "@/data/mock-data";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -29,20 +29,20 @@ export async function GET(req: NextRequest) {
       total_available: number;
     }> = {};
 
+    const supabase = createAdminSupabaseClient();
+    const { data: products, error: productsError } = await supabase
+      .from("products").select("id,name,sku,images");
+    if (productsError) throw new Error(`Unable to load product labels: ${productsError.message}`);
     const productInfo: Record<string, { name: string; sku: string; image: string }> = {};
-    for (const p of PRODUCTS) {
-      productInfo[p.id] = {
-        name: p.name,
-        sku: p.sku,
-        image: p.colors[0]?.images[0] ?? "",
-      };
+    for (const p of products ?? []) {
+      productInfo[p.id] = { name: p.name, sku: p.sku ?? "", image: Array.isArray(p.images) ? (p.images[0] ?? "") : "" };
     }
 
     for (const row of rows) {
       if (!productMap[row.product_id]) {
         productMap[row.product_id] = {
           product_id: row.product_id,
-          product_name: productInfo[row.product_id]?.name ?? row.product_id,
+          product_name: productInfo[row.product_id]?.name ?? `Unknown product (${row.product_id})`,
           sku: productInfo[row.product_id]?.sku ?? "",
           image: productInfo[row.product_id]?.image ?? "",
           sizes: [],

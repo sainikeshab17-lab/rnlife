@@ -151,10 +151,11 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
 }
 
 /**
- * Trigger order confirmation notification
+ * Trigger order confirmation notification to customer
  */
 export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promise<DbNotificationJob> {
   const html = generateOrderEmailHtml(order);
+  const plainText = `Order Confirmed: #${order.order_number}\nTotal: ₹${order.total}\nItems: ${order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}`).join(", ")}`;
   return queueNotificationJob({
     orderId: order.id,
     recipientEmail: order.customer_email,
@@ -162,7 +163,130 @@ export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promi
     eventType: "order_confirmation",
     subject: `Order Confirmed: #${order.order_number} — RightNowLife`,
     bodyHtml: html,
+    bodyText: plainText,
     idempotencyKey: `notif_conf_${order.id}`,
+  });
+}
+
+/**
+ * Trigger new order notification to admin / store owner
+ */
+export async function sendAdminNewOrderNotification(order: OrderWithDetails): Promise<DbNotificationJob> {
+  const adminEmail = process.env.INITIAL_ADMIN_EMAIL || process.env.ADMIN_NOTIFICATION_EMAIL || "admin@rightnowlife.in";
+  const itemsText = order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity} = ₹${i.price * i.quantity}`).join(", ");
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #0876A8; font-weight: bold;">NEW ORDER RECEIVED — ACTION REQUIRED</p>
+      <p>A new order has been placed on RightNowLife.</p>
+      <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 16px 0;">
+        <p style="margin: 0 0 6px 0;"><strong>Order Number:</strong> #${order.order_number}</p>
+        <p style="margin: 0 0 6px 0;"><strong>Customer:</strong> ${order.customer_name} (${order.customer_email}, ${order.customer_phone})</p>
+        <p style="margin: 0 0 6px 0;"><strong>Payment Method:</strong> ${order.payment_method} (${order.payment_status})</p>
+        <p style="margin: 0 0 6px 0;"><strong>Total Value:</strong> ₹${order.total.toLocaleString("en-IN")}</p>
+        <p style="margin: 0;"><strong>Delivery:</strong> ${order.address?.address_line1}, ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}</p>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+        <thead>
+          <tr style="text-align: left; border-bottom: 2px solid #111111;">
+            <th style="padding-bottom: 8px;">GARMENT</th>
+            <th style="padding-bottom: 8px; text-align: right;">TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${order.items.map(item => `
+            <tr>
+              <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5;">
+                <strong>${item.product_name}</strong><br/>
+                <small>Size: ${item.size} | Color: ${item.color} | Qty: ${item.quantity}</small>
+              </td>
+              <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
+                ₹${(item.price * item.quantity).toLocaleString("en-IN")}
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: adminEmail,
+    recipientName: "RightNowLife Operations",
+    eventType: "admin_order_notification",
+    subject: `[New Order] #${order.order_number} - ₹${order.total.toLocaleString("en-IN")}`,
+    bodyHtml: html,
+    bodyText: `New Order #${order.order_number}\nCustomer: ${order.customer_name} (${order.customer_email})\nTotal: ₹${order.total}\nItems: ${itemsText}`,
+    idempotencyKey: `notif_admin_${order.id}`,
+  });
+}
+
+/**
+ * Trigger new order notification to seller(s)
+ */
+export async function sendSellerNewOrderNotification(order: OrderWithDetails): Promise<DbNotificationJob> {
+  const sellerEmail = process.env.SELLER_NOTIFICATION_EMAIL || process.env.INITIAL_ADMIN_EMAIL || "seller@rightnowlife.in";
+  const itemsText = order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}`).join(", ");
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE SELLER PORTAL</h1>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">NEW ORDER TO FULFILL</p>
+      <p>You have new item(s) to prepare for shipment for Order <strong>#${order.order_number}</strong>.</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+        <thead>
+          <tr style="text-align: left; border-bottom: 2px solid #111111;">
+            <th style="padding-bottom: 8px;">GARMENT</th>
+            <th style="padding-bottom: 8px; text-align: right;">QTY</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${order.items.map(item => `
+            <tr>
+              <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5;">
+                <strong>${item.product_name}</strong><br/>
+                <small>Size: ${item.size} | Color: ${item.color}</small>
+              </td>
+              <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5; text-align: right; font-weight: bold;">
+                ${item.quantity}
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      <div style="background: #f7f7f7; padding: 12px; border-radius: 6px;">
+        <p style="margin: 0; font-size: 13px;"><strong>Ship To:</strong> ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}</p>
+      </div>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: sellerEmail,
+    recipientName: "RightNowLife Merchant",
+    eventType: "seller_order_notification",
+    subject: `[Action Required] New Order to Fulfill: #${order.order_number} — RightNowLife`,
+    bodyHtml: html,
+    bodyText: `New Order to Fulfill #${order.order_number}\nItems: ${itemsText}\nShip To: ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}`,
+    idempotencyKey: `notif_seller_${order.id}`,
+  });
+}
+
+/**
+ * Dispatch all order notifications (Customer, Admin, Seller)
+ */
+export async function dispatchAllOrderNotifications(order: OrderWithDetails): Promise<void> {
+  const results = await Promise.allSettled([
+    sendOrderConfirmationEmail(order),
+    sendAdminNewOrderNotification(order),
+    sendSellerNewOrderNotification(order),
+  ]);
+
+  results.forEach((result, idx) => {
+    if (result.status === "rejected") {
+      const target = idx === 0 ? "Customer" : idx === 1 ? "Admin" : "Seller";
+      console.error(`[Notification] Failed to queue ${target} notification for order ${order.id}:`, result.reason);
+    }
   });
 }
 

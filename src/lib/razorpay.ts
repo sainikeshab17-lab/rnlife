@@ -4,19 +4,21 @@ import Razorpay from "razorpay";
 export const RAZORPAY_KEY_ID =
   process.env.RAZORPAY_KEY_ID ||
   process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ||
-  "rzp_test_placeholder_key";
+  "";
 
-export const RAZORPAY_KEY_SECRET =
-  process.env.RAZORPAY_KEY_SECRET || "rzp_test_placeholder_secret";
+export const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 
-export const RAZORPAY_WEBHOOK_SECRET =
-  process.env.RAZORPAY_WEBHOOK_SECRET || "rzp_webhook_placeholder_secret";
+export const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
 
 // Initialize Razorpay SDK instance on the server
 let razorpayClient: Razorpay | null = null;
 
 export function getRazorpayClient(): Razorpay {
   if (!razorpayClient) {
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      throw new Error("Razorpay server credentials are not configured.");
+    }
+
     razorpayClient = new Razorpay({
       key_id: RAZORPAY_KEY_ID,
       key_secret: RAZORPAY_KEY_SECRET,
@@ -42,7 +44,7 @@ export function verifyPaymentSignature({
   razorpaySignature,
   secret = RAZORPAY_KEY_SECRET,
 }: VerifyPaymentSignatureParams): boolean {
-  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature || !secret) {
     return false;
   }
 
@@ -75,7 +77,7 @@ export function verifyWebhookSignature(
   signature: string,
   secret: string = RAZORPAY_WEBHOOK_SECRET
 ): boolean {
-  if (!rawBody || !signature) {
+  if (!rawBody || !signature || !secret) {
     return false;
   }
 
@@ -124,10 +126,7 @@ export async function createRazorpayRefund({
   receipt,
 }: CreateRefundParams): Promise<RazorpayRefundResult> {
   // If running in development/test without real credentials, return safe simulated refund
-  if (
-    !process.env.RAZORPAY_KEY_SECRET ||
-    RAZORPAY_KEY_SECRET === "rzp_test_placeholder_secret"
-  ) {
+  if (!RAZORPAY_KEY_SECRET) {
     const simRefundId = `rfnd_sim_${crypto.randomBytes(8).toString("hex")}`;
     return {
       success: true,

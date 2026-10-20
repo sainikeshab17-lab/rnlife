@@ -41,32 +41,18 @@ const CART_STORAGE_KEY = "rnl_bag_items_v2";
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
-  const [couponCode, setCouponCode] = useState("");
   const { toast } = useToast();
 
-  // Load from LocalStorage
+  // Load from LocalStorage once on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CART_STORAGE_KEY);
       if (stored) {
-        setItems(JSON.parse(stored));
-      } else {
-        // Pre-populate with 1 realistic initial product from the actual catalogue
-        const initialItem: CartItem = {
-          id: "rnl-init-1",
-          productId: "rnl-design-01",
-          productSlug: "rightnowlife-design-01",
-          productName: "RIGHTNOWLIFE Design 01",
-          color: "As pictured",
-          size: "L",
-          price: 999,
-          image: "/products/tshirt_product_images_high_quality/design_01_01_front_view.jpg",
-          quantity: 1,
-          fit: "Regular",
-          sku: "RNL-DESIGN-01-L",
-        };
-        setItems([initialItem]);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Ensure all items strictly have price = 999
+          setItems(parsed.map((item: CartItem) => ({ ...item, price: 999 })));
+        }
       }
     } catch {
       // Ignore storage errors in restricted contexts
@@ -99,6 +85,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }) => {
       const qty = product.quantity || 1;
       const sku = `${product.productId}-${product.color.toUpperCase().replace(/\s+/g, "")}-${product.size}`;
+      const authoritativePrice = 999; // Every T-shirt is strictly ₹999
 
       setItems((prev) => {
         const existingIdx = prev.findIndex(
@@ -108,6 +95,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         if (existingIdx > -1) {
           const updated = [...prev];
           updated[existingIdx].quantity += qty;
+          updated[existingIdx].price = authoritativePrice;
           return updated;
         }
 
@@ -118,7 +106,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           productName: product.productName,
           color: product.color,
           size: product.size,
-          price: product.price,
+          price: authoritativePrice,
           image: product.image,
           fit: product.fit,
           quantity: qty,
@@ -130,7 +118,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       toast({
         type: "success",
         title: "Added to Bag",
-        message: `${product.productName} (${product.size} / ${product.color})`,
+        message: `${product.productName} (${product.size} / ${product.color}) · ₹999`,
       });
 
       setIsDrawerOpen(true);
@@ -143,76 +131,49 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setItems((prev) => prev.filter((i) => i.id !== itemId));
     } else {
       setItems((prev) =>
-        prev.map((i) => (i.id === itemId ? { ...i, quantity: Math.min(qty, 10) } : i))
+        prev.map((i) => (i.id === itemId ? { ...i, quantity: Math.min(qty, 10), price: 999 } : i))
       );
     }
   }, []);
 
   const removeFromBag = useCallback(
-  (itemId: string) => {
-    const target = items.find((item) => item.id === itemId);
+    (itemId: string) => {
+      const target = items.find((item) => item.id === itemId);
 
-    // Update cart state without side effects inside the updater.
-    setItems((prev) => prev.filter((item) => item.id !== itemId));
+      setItems((prev) => prev.filter((item) => item.id !== itemId));
 
-    // Show the toast outside the state updater.
-    if (target) {
-      toast({
-        type: "info",
-        title: "Removed from Bag",
-        message: target.productName,
-      });
-    }
-  },
-  [items, toast]
-);
-
-  const applyCoupon = useCallback(
-    (code: string): boolean => {
-      const trimmed = code.trim().toUpperCase();
-      if (trimmed === "DROP20" || trimmed === "RNLFIRST") {
-        setAppliedCoupon(trimmed);
+      if (target) {
         toast({
-          type: "success",
-          title: "Promo Code Applied",
-          message: trimmed === "DROP20" ? "20% Discount applied to your bag" : "₹200 Discount applied",
+          type: "info",
+          title: "Removed from Bag",
+          message: target.productName,
         });
-        return true;
-      } else {
-        toast({
-          type: "error",
-          title: "Invalid Code",
-          message: "Please try DROP20 or RNLFIRST",
-        });
-        return false;
       }
     },
-    [toast]
+    [items, toast]
   );
 
-  const removeCoupon = useCallback(() => {
-    setAppliedCoupon(null);
-    setCouponCode("");
+  // Promo code feature removed per Section 6
+  const applyCoupon = useCallback((_code: string): boolean => {
+    return false;
   }, []);
+
+  const removeCoupon = useCallback(() => {}, []);
 
   const clearBag = useCallback(() => {
     setItems([]);
   }, []);
 
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + 999 * item.quantity, 0);
 
-  // Discount calculation
-  let discount = 0;
-  if (appliedCoupon === "DROP20") {
-    discount = Math.round(subtotal * 0.2);
-  } else if (appliedCoupon === "RNLFIRST") {
-    discount = Math.min(200, subtotal);
-  }
-
-  // Shipping policy: Free for orders over ₹1,499, else ₹99
-  const shipping = subtotal > 1499 || items.length === 0 ? 0 : 99;
-  const total = Math.max(0, subtotal - discount + shipping);
+  // Section 7 pricing rules:
+  // Discount: ₹0 (Promo codes removed)
+  // Shipping: ₹0 (Free shipping on all items)
+  // Total: strictly ₹999 * total quantity
+  const discount = 0;
+  const shipping = 0;
+  const total = subtotal;
 
   return (
     <CartContext.Provider
@@ -223,8 +184,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         discount,
         shipping,
         total,
-        couponCode,
-        appliedCoupon,
+        couponCode: "",
+        appliedCoupon: null,
         isDrawerOpen,
         openDrawer,
         closeDrawer,

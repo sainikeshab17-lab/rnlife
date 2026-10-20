@@ -1,0 +1,2421 @@
+﻿
+
+================ src\context\auth-context.tsx ================
+
+"use client";
+
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+    useCallback,
+  useMemo,
+} from "react";
+import { User, Address } from "@/types";
+import { useToast } from "./toast-context";
+import { createClient } from "@/lib/supabase/client";
+
+interface AuthContextType {
+  user: User | null;
+  isAuthenticated: boolean;
+  login: (email: string) => Promise<boolean>;
+  register: (
+    name: string,
+    email: string,
+    phone: string
+  ) => Promise<boolean>;
+  verifyOtp: (email: string, token: string) => Promise<boolean>;
+  logout: () => void;
+  setRole: (role: "customer" | "seller" | "admin") => void;
+  addAddress: (address: Omit<Address, "id">) => void;
+  updateAddress: (id: string, address: Partial<Address>) => void;
+  deleteAddress: (id: string) => void;
+  setDefaultAddress: (id: string) => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const ADDRESS_STORAGE_KEY = "rnl_customer_addresses_v1";
+
+function getUserRole(
+  appMetadata: Record<string, unknown> | undefined
+): "customer" | "seller" | "admin" {
+  const role = appMetadata?.role;
+
+  if (role === "seller" || role === "admin") {
+    return role;
+  }
+
+  return "customer";
+}
+
+export function AuthProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const { toast } = useToast();
+
+  const supabase = useMemo(() => createClient(), []);
+
+  const saveUser = useCallback((updated: User | null) => {
+    setUser(updated);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+
+      if (!mounted) return;
+
+      if (error || !data.user) {
+        setUser(null);
+        setAuthReady(true);
+        return;
+      }
+
+      const authUser = data.user;
+      const storedName =
+        authUser.user_metadata?.full_name ??
+        authUser.user_metadata?.name ??
+        "";
+
+      let addresses: Address[] = [];
+
+      try {
+        const stored = localStorage.getItem(
+          `${ADDRESS_STORAGE_KEY}:${authUser.id}`
+        );
+        if (stored) addresses = JSON.parse(stored) as Address[];
+      } catch {
+        addresses = [];
+      }
+
+      setUser({
+        id: authUser.id,
+        name: storedName,
+        email: authUser.email ?? "",
+        phone: authUser.user_metadata?.phone ?? "",
+        role: getUserRole(authUser.app_metadata),
+        addresses,
+      });
+
+      setAuthReady(true);
+    };
+
+    void loadUser();
+
+    const {
+  data: { subscription },
+} = supabase.auth.onAuthStateChange((_event, session) => {
+  if (!mounted) return;
+
+  if (!session?.user) {
+    setUser(null);
+    setAuthReady(true);
+    return;
+  }
+
+  const authUser = session.user;
+
+  setUser((currentUser) => ({
+    id: authUser.id,
+    name:
+      authUser.user_metadata?.full_name ??
+      authUser.user_metadata?.name ??
+      currentUser?.name ??
+      "",
+    email: authUser.email ?? "",
+    phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
+    role: getUserRole(authUser.app_metadata),
+    addresses:
+      currentUser?.id === authUser.id
+        ? currentUser.addresses
+        : [],
+  }));
+
+  setAuthReady(true);
+});
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const login = useCallback(
+    async (email: string): Promise<boolean> => {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: {
+          shouldCreateUser: false,
+        },
+      });
+
+      if (error) {
+        toast({
+          type: "error",
+          title: "Unable to Send Code",
+          message: error.message,
+        });
+        return false;
+      }
+
+      toast({
+        type: "success",
+        title: "Check Your Email",
+        message: "We sent you a verification code.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const register = useCallback(
+    async (
+      name: string,
+      email: string,
+      phone: string
+    ): Promise<boolean> => {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalizedEmail,
+        options: {
+          shouldCreateUser: true,
+          data: {
+            full_name: name.trim(),
+            phone: phone.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        toast({
+          type: "error",
+          title: "Registration Failed",
+          message: error.message,
+        });
+        return false;
+      }
+
+      toast({
+        type: "success",
+        title: "Verify Your Email",
+        message: "We sent you a verification code.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const verifyOtp = useCallback(
+    async (email: string, token: string): Promise<boolean> => {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: token.trim(),
+        type: "email",
+      });
+
+      if (error || !data.user) {
+        toast({
+          type: "error",
+          title: "Verification Failed",
+          message: error?.message ?? "Please request a new code.",
+        });
+        return false;
+      }
+
+      const authUser = data.user;
+
+      setUser((currentUser) => ({
+  id: authUser.id,
+  name:
+    authUser.user_metadata?.full_name ??
+    authUser.user_metadata?.name ??
+    currentUser?.name ??
+    "",
+  email: authUser.email ?? "",
+  phone: authUser.user_metadata?.phone ?? currentUser?.phone ?? "",
+  role: getUserRole(authUser.app_metadata),
+  addresses:
+    currentUser?.id === authUser.id
+      ? currentUser.addresses
+      : [],
+}));
+
+      toast({
+        type: "success",
+        title: "Email Verified",
+        message: "You are now signed in.",
+      });
+
+      return true;
+    },
+    [supabase, toast]
+  );
+
+  const logout = useCallback(async () => {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      toast({
+        type: "error",
+        title: "Sign Out Failed",
+        message: error.message,
+      });
+      return;
+    }
+
+    saveUser(null);
+
+    toast({
+      type: "success",
+      title: "Signed Out",
+      message: "You have been signed out.",
+    });
+  }, [supabase, saveUser, toast]);
+
+  const persistAddresses = useCallback(
+    (updated: User) => {
+      saveUser(updated);
+
+      try {
+        localStorage.setItem(
+          `${ADDRESS_STORAGE_KEY}:${updated.id}`,
+          JSON.stringify(updated.addresses)
+        );
+      } catch {
+        toast({
+          type: "error",
+          title: "Address Not Saved",
+          message: "Your browser could not save this address.",
+        });
+      }
+    },
+    [saveUser, toast]
+  );
+
+  const setRole = useCallback(
+    (role: "customer" | "seller" | "admin") => {
+      if (role !== "customer") {
+        toast({
+          type: "error",
+          title: "Permission Denied",
+          message: "Staff roles must be assigned securely by an administrator.",
+        });
+      }
+    },
+    [toast]
+  );
+
+  const addAddress = useCallback(
+    (newAddress: Omit<Address, "id">) => {
+      if (!user) return;
+
+      const address: Address = {
+        ...newAddress,
+        id: crypto.randomUUID(),
+      };
+
+      const existing = user.addresses.map((item) =>
+        address.isDefault ? { ...item, isDefault: false } : item
+      );
+
+      const updated = {
+        ...user,
+        addresses: [...existing, address],
+      };
+
+      persistAddresses(updated);
+
+      toast({
+        type: "success",
+        title: "Address Saved",
+        message: `${address.city}, ${address.pinCode}`,
+      });
+    },
+    [user, persistAddresses, toast]
+  );
+
+  const updateAddress = useCallback(
+    (id: string, fields: Partial<Address>) => {
+      if (!user) return;
+
+      const updatedAddresses = user.addresses.map((address) => {
+        if (address.id === id) return { ...address, ...fields };
+        if (fields.isDefault) return { ...address, isDefault: false };
+        return address;
+      });
+
+      persistAddresses({ ...user, addresses: updatedAddresses });
+    },
+    [user, persistAddresses]
+  );
+
+  const deleteAddress = useCallback(
+    (id: string) => {
+      if (!user) return;
+
+      persistAddresses({
+        ...user,
+        addresses: user.addresses.filter((address) => address.id !== id),
+      });
+
+      toast({
+        type: "info",
+        title: "Address Deleted",
+        message: "The saved address was removed.",
+      });
+    },
+    [user, persistAddresses, toast]
+  );
+
+  const setDefaultAddress = useCallback(
+    (id: string) => {
+      if (!user) return;
+
+      persistAddresses({
+        ...user,
+        addresses: user.addresses.map((address) => ({
+          ...address,
+          isDefault: address.id === id,
+        })),
+      });
+    },
+    [user, persistAddresses]
+  );
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated: authReady && !!user,
+        login,
+        register,
+        verifyOtp,
+        logout,
+        setRole,
+        addAddress,
+        updateAddress,
+        deleteAddress,
+        setDefaultAddress,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+
+  return context;
+}
+
+
+
+================ src\app\login\page.tsx ================
+
+"use client";
+
+import React, { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowRight, Mail, AlertCircle, ShieldCheck } from "lucide-react";
+import { StoreLayout } from "@/components/layout/StoreLayout";
+import { useAuth } from "@/context/auth-context";
+
+export default function LoginPage() {
+  const [email, setEmail] = useState("");
+  const [token, setToken] = useState("");
+  const [step, setStep] = useState<"email" | "otp">("email");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { login, verifyOtp } = useAuth();
+  const router = useRouter();
+
+  const handleSendCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const success = await login(normalizedEmail);
+
+      if (success) {
+        setEmail(normalizedEmail);
+        setStep("otp");
+      } else {
+        setError("We couldn't send your code. Please try again.");
+      }
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (!/^\d{6}$/.test(token)) {
+      setError("Enter the six-digit code from your email.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const success = await verifyOtp(email, token);
+
+      if (success) {
+        router.replace("/account");
+      } else {
+        setError("Verification failed. Check the code and try again.");
+      }
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    setError("");
+    setIsSubmitting(true);
+
+    try {
+      const success = await login(email);
+
+      if (success) {
+        setToken("");
+      } else {
+        setError("We couldn't resend the code. Please try again later.");
+      }
+    } catch {
+      setError("Unable to resend the code. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <StoreLayout>
+      <div className="min-h-[75vh] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-[#F5F4F0]">
+        <div className="max-w-md w-full bg-white border border-neutral-200 p-8 sm:p-10 shadow-lg space-y-6">
+          <div className="text-center space-y-1">
+            <span className="text-[11px] uppercase tracking-widest font-mono text-neutral-500 font-bold">
+              CUSTOMER ACCESS
+            </span>
+
+            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight font-editorial">
+              {step === "email"
+                ? "SIGN IN TO YOUR ACCOUNT"
+                : "VERIFY YOUR EMAIL"}
+            </h1>
+
+            <p className="text-xs text-neutral-500">
+              {step === "email"
+                ? "Access your order tracking, saved addresses, and wishlist."
+                : `Enter the six-digit code sent to ${email}.`}
+            </p>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 bg-neutral-100 border border-neutral-200 text-xs text-neutral-700">
+            {step === "email" ? (
+              <Mail className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+            )}
+
+            <p>
+              {step === "email"
+                ? "Sign in securely using a one-time verification code sent to your email. No password required."
+                : "Your account will be accessible after the verification code is confirmed."}
+            </p>
+          </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 p-3 bg-red-50 text-red-700 text-xs border border-red-200"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {step === "email" ? (
+            <form onSubmit={handleSendCode} className="space-y-4">
+              <div className="space-y-1">
+                <label
+                  htmlFor="email"
+                  className="text-[11px] uppercase tracking-wider font-bold text-neutral-800"
+                >
+                  Email Address
+                </label>
+
+                <div className="relative">
+                  <input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
+                    placeholder="name@example.com"
+                  />
+
+                  <Mail className="w-4 h-4 text-neutral-400 absolute left-3 top-3" />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-3.5 bg-[#111111] hover:bg-black text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
+              >
+                <span>
+                  {isSubmitting ? "Sending Code..." : "Send Verification Code"}
+                </span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyCode} className="space-y-4">
+              <div className="space-y-1">
+                <label
+                  htmlFor="otp"
+                  className="text-[11px] uppercase tracking-wider font-bold text-neutral-800"
+                >
+                  Six-Digit Verification Code
+                </label>
+
+                <input
+                  id="otp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  required
+                  value={token}
+                  onChange={(e) =>
+                    setToken(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  className="w-full px-3 py-3 text-center text-xl tracking-[0.5em] border border-neutral-300 focus:border-black outline-none font-bold"
+                  placeholder="000000"
+                  aria-describedby="otp-help"
+                />
+
+                <p id="otp-help" className="text-[11px] text-neutral-500">
+                  Check your inbox and spam folder.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting || token.length !== 6}
+                className="w-full py-3.5 bg-[#111111] hover:bg-black text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
+              >
+                <span>
+                  {isSubmitting ? "Verifying..." : "Verify & Sign In"}
+                </span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setStep("email");
+                    setToken("");
+                    setError("");
+                  }}
+                  className="text-neutral-600 underline hover:text-black disabled:opacity-60"
+                >
+                  Change email
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={handleResendCode}
+                  className="font-bold text-black underline disabled:opacity-60"
+                >
+                  Resend code
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="pt-4 border-t border-neutral-200 text-center text-xs text-neutral-600">
+            Don&apos;t have an account?{" "}
+            <Link
+              href="/register"
+              className="font-bold text-black hover:underline uppercase"
+            >
+              Create an Account
+            </Link>
+          </div>
+        </div>
+      </div>
+    </StoreLayout>
+  );
+}
+
+
+
+================ src\app\seller\page.tsx ================
+"use client";
+
+import React from "react";
+import Link from "next/link";
+import Image from "next/image";
+import {
+  Package,
+  PlusCircle,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  ArrowRight,
+  TrendingUp,
+  Boxes,
+} from "lucide-react";
+import { SellerLayout } from "@/components/layout/SellerLayout";
+import { PRODUCTS } from "@/data/mock-data";
+import { formatINR } from "@/lib/utils";
+
+export default function SellerDashboardPage() {
+  const totalProducts = PRODUCTS.length;
+  const publishedProducts = PRODUCTS.length; // all 12 are published in demo
+  const draftProducts = 2; // sample draft count
+  const lowStockProducts = PRODUCTS.filter((p) => p.stock < 25);
+
+  return (
+    <SellerLayout
+      title="Seller Dashboard"
+      subtitle="Brand catalog health, inventory alerts, and publishing activity."
+      actions={
+        <Link
+          href="/seller/products/new"
+          className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center gap-1.5"
+        >
+          <PlusCircle className="w-3.5 h-3.5" />
+          <span>Add New T-Shirt</span>
+        </Link>
+      }
+    >
+      <div className="space-y-6">
+        {/* Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
+            <div className="flex items-center justify-between text-neutral-400">
+              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
+                Total T-Shirts
+              </span>
+              <Package className="w-4 h-4" />
+            </div>
+            <p className="text-3xl font-black text-black font-mono">{totalProducts}</p>
+            <p className="text-[11px] text-neutral-500">Across 5 Curated Series</p>
+          </div>
+
+          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
+            <div className="flex items-center justify-between text-neutral-400">
+              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
+                Published Live
+              </span>
+              <CheckCircle className="w-4 h-4 text-emerald-600" />
+            </div>
+            <p className="text-3xl font-black text-emerald-700 font-mono">
+              {publishedProducts}
+            </p>
+            <p className="text-[11px] text-neutral-500">Active in Storefront</p>
+          </div>
+
+          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
+            <div className="flex items-center justify-between text-neutral-400">
+              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
+                Drafts
+              </span>
+              <Clock className="w-4 h-4 text-neutral-500" />
+            </div>
+            <p className="text-3xl font-black text-neutral-800 font-mono">{draftProducts}</p>
+            <p className="text-[11px] text-neutral-500">Awaiting Drop Launch</p>
+          </div>
+
+          <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-1">
+            <div className="flex items-center justify-between text-neutral-400">
+              <span className="text-xs uppercase font-bold tracking-wider text-neutral-500">
+                Low Stock
+              </span>
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+            </div>
+            <p className="text-3xl font-black text-amber-600 font-mono">
+              {lowStockProducts.length}
+            </p>
+            <p className="text-[11px] text-neutral-500">&lt; 25 units in warehouse</p>
+          </div>
+        </div>
+
+        {/* Low Stock Alerts */}
+        <div className="bg-white border border-neutral-200 p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-black flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              Low Stock Variant Warnings
+            </h3>
+            <Link
+              href="/seller/inventory"
+              className="text-xs text-neutral-600 hover:text-black underline font-semibold"
+            >
+              Open Inventory Matrix &rarr;
+            </Link>
+          </div>
+
+          <div className="divide-y divide-neutral-100">
+            {lowStockProducts.map((p) => (
+              <div key={p.id} className="py-3 flex items-center justify-between text-xs gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative w-10 h-12 bg-neutral-100 shrink-0">
+                    <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
+                  </div>
+                  <div className="truncate">
+                    <p className="font-bold text-black uppercase truncate">{p.name}</p>
+                    <p className="text-[11px] text-neutral-500">
+                      SKU: {p.sku} â€¢ {p.fit} Fit
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 shrink-0">
+                  <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase">
+                    {p.stock} units left
+                  </span>
+                  <Link
+                    href={`/seller/products/${p.id}/edit`}
+                    className="text-xs font-bold text-black hover:underline"
+                  >
+                    Restock
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent Product Activity Table */}
+        <div className="bg-white border border-neutral-200 p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-neutral-200">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-black">
+              Recent Product Catalog Additions
+            </h3>
+            <Link
+              href="/seller/products"
+              className="text-xs text-neutral-600 hover:text-black underline font-semibold"
+            >
+              View All Products
+            </Link>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-neutral-200 bg-neutral-50 text-neutral-700 uppercase font-bold">
+                  <th className="py-2.5 px-3">Garment</th>
+                  <th className="py-2.5 px-3">SKU</th>
+                  <th className="py-2.5 px-3">Series</th>
+                  <th className="py-2.5 px-3">Price</th>
+                  <th className="py-2.5 px-3">Stock</th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100 font-medium">
+                {PRODUCTS.slice(0, 5).map((p) => (
+                  <tr key={p.id} className="hover:bg-neutral-50">
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-8 h-10 bg-neutral-100 shrink-0">
+                          <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
+                        </div>
+                        <span className="font-bold text-black uppercase truncate max-w-xs">{p.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-neutral-500">{p.sku}</td>
+                    <td className="py-2.5 px-3 uppercase text-neutral-600">{p.collectionSlug}</td>
+                    <td className="py-2.5 px-3 font-bold text-black">{formatINR(p.price)}</td>
+                    <td className="py-2.5 px-3 font-mono">{p.stock}</td>
+                    <td className="py-2.5 px-3 text-right">
+                      <Link
+                        href={`/seller/products/${p.id}/edit`}
+                        className="text-xs font-bold text-black hover:underline mr-3"
+                      >
+                        Edit
+                      </Link>
+                      <Link
+                        href={`/products/${p.slug}`}
+                        target="_blank"
+                        className="text-xs text-neutral-500 hover:text-black underline"
+                      >
+                        Preview
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </SellerLayout>
+  );
+}
+
+
+
+================ src\app\seller\products\page.tsx ================
+"use client";
+
+import React, { useState, useMemo } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import {
+  PlusCircle,
+  Search,
+  Filter,
+  Edit3,
+  Archive,
+  ExternalLink,
+  Check,
+  AlertCircle,
+} from "lucide-react";
+import { SellerLayout } from "@/components/layout/SellerLayout";
+import { PRODUCTS } from "@/data/mock-data";
+import { formatINR } from "@/lib/utils";
+import { useToast } from "@/context/toast-context";
+import { StatusBadge } from "@/components/common/StatusBadge";
+
+export default function SellerProductsPage() {
+  const [search, setSearch] = useState("");
+  const [collectionFilter, setCollectionFilter] = useState("all");
+  const [productsList, setProductsList] = useState(PRODUCTS);
+  const { toast } = useToast();
+
+  const filteredProducts = useMemo(() => {
+    return productsList.filter((p) => {
+      const matchSearch =
+        p.name.toLowerCase().includes(search.toLowerCase()) ||
+        p.sku.toLowerCase().includes(search.toLowerCase());
+      const matchCollection =
+        collectionFilter === "all" || p.collectionSlug === collectionFilter;
+      return matchSearch && matchCollection;
+    });
+  }, [search, collectionFilter, productsList]);
+
+  const handleArchive = (id: string, name: string) => {
+    if (confirm(`Archive ${name}? This will change the product status to Draft.`)) {
+      setProductsList((prev) => prev.filter((p) => p.id !== id));
+      toast({
+        type: "info",
+        title: "Product Archived",
+        message: `${name} has been archived to drafts.`,
+      });
+    }
+  };
+
+  return (
+    <SellerLayout
+      title="Product Catalog Management"
+      subtitle="Search, modify, preview, and archive RightNowLife T-shirt listings."
+      actions={
+        <Link
+          href="/seller/products/new"
+          className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center gap-1.5"
+        >
+          <PlusCircle className="w-3.5 h-3.5" />
+          <span>Add New T-Shirt</span>
+        </Link>
+      }
+    >
+      <div className="bg-white border border-neutral-200 shadow-sm">
+        {/* Filters and Search Bar */}
+        <div className="p-4 sm:p-5 border-b border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="relative w-full sm:w-72">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name or SKU..."
+              className="w-full pl-9 pr-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
+            />
+            <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <span className="text-xs uppercase font-bold text-neutral-500">Series:</span>
+            <select
+              value={collectionFilter}
+              onChange={(e) => setCollectionFilter(e.target.value)}
+              className="px-3 py-2 border border-neutral-300 text-xs font-bold uppercase bg-white outline-none cursor-pointer"
+            >
+              <option value="all">All Series</option>
+              <option value="new-drops">New Drops</option>
+              <option value="graphic-tees">Graphic Tees</option>
+              <option value="essentials">Essentials</option>
+              <option value="statement-prints">Statement Prints</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Product Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr className="border-b border-neutral-200 bg-neutral-50 text-neutral-700 uppercase font-bold text-[11px]">
+                <th className="py-3 px-4">Garment</th>
+                <th className="py-3 px-4">SKU</th>
+                <th className="py-3 px-4">Fit / GSM</th>
+                <th className="py-3 px-4">Price</th>
+                <th className="py-3 px-4">Variants</th>
+                <th className="py-3 px-4">Stock</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-200 font-medium">
+              {filteredProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-neutral-500">
+                    No products match your query.
+                  </td>
+                </tr>
+              ) : (
+                filteredProducts.map((p) => (
+                  <tr key={p.id} className="hover:bg-neutral-50">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-12 h-14 bg-neutral-100 shrink-0 overflow-hidden">
+                          <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
+                        </div>
+                        <div className="min-w-0 max-w-xs">
+                          <p className="font-bold text-black uppercase truncate">{p.name}</p>
+                          <p className="text-[11px] text-neutral-500 truncate">{p.collectionSlug}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-neutral-600">{p.sku}</td>
+                    <td className="py-3 px-4">
+                      <span className="font-bold text-black">{p.fit}</span>
+                      <span className="text-neutral-500 block text-[11px]">{p.gsm} GSM</span>
+                    </td>
+                    <td className="py-3 px-4 font-bold text-black">{formatINR(p.price)}</td>
+                    <td className="py-3 px-4 text-neutral-600">
+                      <span>{p.colors.length} Col â€¢ {p.sizes.length} Sizes</span>
+                    </td>
+                    <td className="py-3 px-4 font-mono">
+                      <span className={p.stock < 25 ? "text-amber-600 font-bold" : "text-black"}>
+                        {p.stock} units
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <StatusBadge status="published" />
+                    </td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/seller/products/${p.id}/edit`}
+                          className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 rounded"
+                          title="Edit Garment"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </Link>
+                        <Link
+                          href={`/products/${p.slug}`}
+                          target="_blank"
+                          className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 rounded"
+                          title="Preview in Store"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </Link>
+                        <button
+                          onClick={() => handleArchive(p.id, p.name)}
+                          className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="Archive"
+                        >
+                          <Archive className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Footer info */}
+        <div className="p-4 border-t border-neutral-200 text-xs text-neutral-500 flex items-center justify-between">
+          <span>Showing {filteredProducts.length} of {PRODUCTS.length} catalog garments</span>
+          <span className="font-mono text-[11px]">[Phase 1 Prototype Catalog Fixture]</span>
+        </div>
+      </div>
+    </SellerLayout>
+  );
+}
+
+
+
+================ src\app\seller\products\new\page.tsx ================
+
+"use client";
+
+import React, { useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import {
+  CheckCircle2,
+  Save,
+  Send,
+} from "lucide-react";
+import { SellerLayout } from "@/components/layout/SellerLayout";
+import { useToast } from "@/context/toast-context";
+import { TShirtFit, TShirtSize } from "@/types";
+import { slugify } from "@/lib/utils";
+
+export default function AddProductPage() {
+  const router = useRouter();
+  const { toast } = useToast();
+
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [collection, setCollection] = useState("new-drops");
+  const [tagline, setTagline] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("999");
+  const [compareAtPrice, setCompareAtPrice] = useState("");
+  const [fit, setFit] = useState<TShirtFit>("Oversized");
+  const [gsm, setGsm] = useState("260");
+  const [sleeve, setSleeve] = useState("Drop Shoulder");
+  const [neck, setNeck] = useState("Ribbed Collar");
+  const [fabricComposition, setFabricComposition] = useState(
+    "100% Super Combed Organic Cotton"
+  );
+  const [printTechnique, setPrintTechnique] = useState(
+    "Screenprint with 3D Puff Print"
+  );
+  const [stock, setStock] = useState("50");
+  const [sku, setSku] = useState("");
+
+  const [selectedSizes, setSelectedSizes] = useState<TShirtSize[]>([
+    "S",
+    "M",
+    "L",
+    "XL",
+  ]);
+
+  const [colors, setColors] = useState([
+    { name: "Pitch Black", hex: "#111111" },
+    { name: "Bone Cream", hex: "#F3EFE6" },
+  ]);
+
+  const [frontImage, setFrontImage] = useState(
+    "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1200&q=80"
+  );
+  const [backImage, setBackImage] = useState(
+    "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=1200&q=80"
+  );
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const handleNameChange = (value: string) => {
+    setName(value);
+    setSlug(slugify(value));
+  };
+
+  const toggleSize = (size: TShirtSize) => {
+    setSelectedSizes((previous) =>
+      previous.includes(size)
+        ? previous.filter((item) => item !== size)
+        : [...previous, size]
+    );
+  };
+
+  const handlePublish = async (asDraft = false) => {
+    const productName = name.trim();
+    const productSku = sku.trim();
+    const productSlug = slugify(slug.trim() || productName);
+
+    if (!productName || !productSku || !productSlug || !price.trim()) {
+      toast({
+        type: "error",
+        title: "Missing required fields",
+        message: "Enter the product name, price, and SKU.",
+      });
+      return;
+    }
+
+    const numericPrice = Number(price);
+    const numericCompareAtPrice = compareAtPrice.trim()
+      ? Number(compareAtPrice)
+      : null;
+    const numericGsm = Number(gsm);
+    const numericStock = Number(stock);
+
+    if (!Number.isFinite(numericPrice) || numericPrice < 0) {
+      toast({
+        type: "error",
+        title: "Invalid price",
+        message: "Enter a valid, non-negative price.",
+      });
+      return;
+    }
+
+    if (
+      numericCompareAtPrice !== null &&
+      (!Number.isFinite(numericCompareAtPrice) ||
+        numericCompareAtPrice < 0)
+    ) {
+      toast({
+        type: "error",
+        title: "Invalid compare-at price",
+        message: "Enter a valid price or leave this field empty.",
+      });
+      return;
+    }
+
+    if (
+      !Number.isInteger(numericGsm) ||
+      numericGsm < 1 ||
+      numericGsm > 1000 ||
+      !Number.isInteger(numericStock) ||
+      numericStock < 0 ||
+      numericStock > 100000
+    ) {
+      toast({
+        type: "error",
+        title: "Invalid specifications",
+        message: "Check the GSM and stock values.",
+      });
+      return;
+    }
+
+    const imageUrls = [frontImage.trim(), backImage.trim()].filter(Boolean);
+
+    const hasInvalidImageUrl = imageUrls.some((url) => {
+      try {
+        const parsedUrl = new URL(url);
+        return !["http:", "https:"].includes(parsedUrl.protocol);
+      } catch {
+        return true;
+      }
+    });
+
+    if (imageUrls.length === 0 || hasInvalidImageUrl) {
+      toast({
+        type: "error",
+        title: "Invalid image URL",
+        message: "Enter valid HTTP or HTTPS image URLs.",
+      });
+      return;
+    }
+
+    if (selectedSizes.length === 0 || colors.length === 0) {
+      toast({
+        type: "error",
+        title: "Missing product options",
+        message: "Select at least one size and add at least one color.",
+      });
+      return;
+    }
+
+    if (
+      colors.some(
+        (color) =>
+          !color.name.trim() ||
+          !/^#[0-9a-fA-F]{6}$/.test(color.hex)
+      )
+    ) {
+      toast({
+        type: "error",
+        title: "Invalid color variants",
+        message: "Each color needs a name and a valid hex color.",
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatusMessage(null);
+
+    try {
+      const response = await fetch("/api/seller/products", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: productName,
+          slug: productSlug,
+          tagline: tagline.trim() || null,
+          description: description.trim() || null,
+          category: "T-Shirts",
+          collection_slug: collection,
+          sku: productSku,
+          price: numericPrice,
+          compare_at_price: numericCompareAtPrice,
+          fit,
+          gsm: numericGsm,
+          sleeve: sleeve || null,
+          neck: neck || null,
+          fabric_composition: fabricComposition.trim() || null,
+          print_technique: printTechnique.trim() || null,
+          images: imageUrls,
+          sizes: selectedSizes,
+          colors: colors.map((color) => color.name.trim()),
+          color_variants: colors.map((color) => ({
+            name: color.name.trim(),
+            hex: color.hex.toUpperCase(),
+          })),
+          stock: numericStock,
+          is_active: !asDraft,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || `Unable to save product (HTTP ${response.status}).`
+        );
+      }
+
+      setStatusMessage(
+        asDraft
+          ? "Product saved successfully as a draft."
+          : "Product published successfully."
+      );
+
+      toast({
+        type: "success",
+        title: asDraft ? "Draft Saved" : "Product Published",
+        message: `${productName} has been saved to your catalog.`,
+      });
+
+      router.push("/seller/products");
+      router.refresh();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Something went wrong while saving the product.";
+
+      toast({
+        type: "error",
+        title: "Product could not be saved",
+        message,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const inputClass =
+    "w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none";
+  const labelClass = "text-[11px] uppercase font-bold text-neutral-800";
+
+  return (
+    <SellerLayout
+      title="Add New T-Shirt Listing"
+      subtitle="Define garment fit, GSM, print craftsmanship, and inventory matrix."
+      actions={
+        <div className="flex items-center gap-2">
+          <Link
+            href="/seller/products"
+            className="px-3 py-2 border border-neutral-300 text-xs uppercase font-bold text-neutral-700 hover:text-black hover:border-black"
+          >
+            Cancel
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => handlePublish(true)}
+            disabled={isSubmitting}
+            className="px-4 py-2 border border-black text-xs uppercase font-bold text-black hover:bg-neutral-100 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{isSubmitting ? "Saving..." : "Save Draft"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handlePublish(false)}
+            disabled={isSubmitting}
+            className="px-5 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>{isSubmitting ? "Saving..." : "Publish T-Shirt"}</span>
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-6">
+        {statusMessage && (
+          <div className="p-4 bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{statusMessage}</span>
+          </div>
+        )}
+
+        <div className="p-3 bg-neutral-100 border border-neutral-200 text-xs text-neutral-600">
+          <strong>Live Catalog:</strong> Products are saved through the
+          authenticated seller API. Published products are marked active;
+          drafts remain inactive.
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8 space-y-6">
+            <section className="bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-100">
+                1. Garment Identity
+              </h3>
+
+              <div className="space-y-1">
+                <label className={labelClass}>Product Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(event) => handleNameChange(event.target.value)}
+                  placeholder="e.g. DESIGN 09 â€” GRAPHIC RAGLAN TEE"
+                  className={`${inputClass} font-bold uppercase`}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>URL Slug</label>
+                  <input
+                    type="text"
+                    value={slug}
+                    onChange={(event) => setSlug(event.target.value)}
+                    placeholder="rightnowlife-design-09"
+                    className={`${inputClass} font-mono`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Curated Collection *</label>
+                  <select
+                    value={collection}
+                    onChange={(event) => setCollection(event.target.value)}
+                    className={`${inputClass} font-bold uppercase bg-white cursor-pointer`}
+                  >
+                    <option value="new-drops">New Drops (Seasonal)</option>
+                    <option value="graphic-tees">Graphic Tees</option>
+                    <option value="essentials">Essential Tees</option>
+                    <option value="statement-prints">Statement Prints</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className={labelClass}>Tagline / Short Summary</label>
+                <input
+                  type="text"
+                  value={tagline}
+                  onChange={(event) => setTagline(event.target.value)}
+                  placeholder="260 GSM drop-shoulder silhouette with puff-print typography."
+                  className={`${inputClass} font-medium`}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className={labelClass}>Full Garment Description</label>
+                <textarea
+                  rows={4}
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="Describe the silhouette, print technique, inspiration, and fabric weight..."
+                  className={`${inputClass} font-medium`}
+                />
+              </div>
+            </section>
+
+            <section className="bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-100">
+                2. Craftsmanship & Fit Specifications
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Fit Type *</label>
+                  <select
+                    value={fit}
+                    onChange={(event) =>
+                      setFit(event.target.value as TShirtFit)
+                    }
+                    className={`${inputClass} font-bold uppercase bg-white`}
+                  >
+                    <option value="Oversized">Oversized Fit</option>
+                    <option value="Relaxed">Relaxed Fit</option>
+                    <option value="Regular">Regular Fit</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Fabric GSM *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={gsm}
+                    onChange={(event) => setGsm(event.target.value)}
+                    className={`${inputClass} font-mono`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Sleeve Silhouette</label>
+                  <select
+                    value={sleeve}
+                    onChange={(event) => setSleeve(event.target.value)}
+                    className={`${inputClass} font-bold uppercase bg-white`}
+                  >
+                    <option value="Drop Shoulder">Drop Shoulder</option>
+                    <option value="Half Sleeve">Half Sleeve</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Neck Style</label>
+                  <input
+                    type="text"
+                    value={neck}
+                    onChange={(event) => setNeck(event.target.value)}
+                    className={`${inputClass} font-medium`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Fabric Composition</label>
+                  <input
+                    type="text"
+                    value={fabricComposition}
+                    onChange={(event) =>
+                      setFabricComposition(event.target.value)
+                    }
+                    className={`${inputClass} font-medium`}
+                  />
+                </div>
+
+                <div className="space-y-1 sm:col-span-2">
+                  <label className={labelClass}>Print Technique</label>
+                  <input
+                    type="text"
+                    value={printTechnique}
+                    onChange={(event) => setPrintTechnique(event.target.value)}
+                    className={`${inputClass} font-medium`}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-100">
+                3. Pricing & Inventory
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className={labelClass}>Price (â‚¹ INR) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={price}
+                    onChange={(event) => setPrice(event.target.value)}
+                    className={`${inputClass} font-bold`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Compare-at Price (â‚¹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={compareAtPrice}
+                    onChange={(event) => setCompareAtPrice(event.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Base SKU *</label>
+                  <input
+                    type="text"
+                    value={sku}
+                    onChange={(event) => setSku(event.target.value)}
+                    placeholder="RNL-TEE-014"
+                    className={`${inputClass} font-mono uppercase`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className={labelClass}>Stock Quantity *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={stock}
+                    onChange={(event) => setStock(event.target.value)}
+                    className={`${inputClass} font-mono`}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <label className={`${labelClass} block`}>
+                  Available Sizes
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(["XS", "S", "M", "L", "XL", "XXL"] as TShirtSize[]).map(
+                    (size) => (
+                      <button
+                        type="button"
+                        key={size}
+                        onClick={() => toggleSize(size)}
+                        aria-pressed={selectedSizes.includes(size)}
+                        className={`px-3 py-1.5 text-xs font-bold uppercase border ${
+                          selectedSizes.includes(size)
+                            ? "bg-black text-white border-black"
+                            : "border-neutral-300 text-neutral-700 hover:border-black"
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <label className={labelClass}>Color Variants</label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setColors((previous) => [
+                        ...previous,
+                        { name: "", hex: "#000000" },
+                      ])
+                    }
+                    className="text-xs font-bold uppercase underline"
+                  >
+                    Add Color
+                  </button>
+                </div>
+
+                {colors.map((color, index) => (
+                  <div
+                    key={index}
+                    className="grid grid-cols-[1fr_90px_auto] gap-2 items-center"
+                  >
+                    <input
+                      type="text"
+                      value={color.name}
+                      aria-label={`Color ${index + 1} name`}
+                      onChange={(event) =>
+                        setColors((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, name: event.target.value }
+                              : item
+                          )
+                        )
+                      }
+                      placeholder="Color name"
+                      className={inputClass}
+                    />
+                    <input
+                      type="color"
+                      value={color.hex}
+                      aria-label={`Color ${index + 1} hex`}
+                      onChange={(event) =>
+                        setColors((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, hex: event.target.value }
+                              : item
+                          )
+                        )
+                      }
+                      className="h-9 w-full border border-neutral-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setColors((previous) =>
+                          previous.filter((_, itemIndex) => itemIndex !== index)
+                        )
+                      }
+                      disabled={colors.length === 1}
+                      aria-label={`Remove color ${index + 1}`}
+                      className="px-2 py-2 text-xs border border-neutral-300 disabled:opacity-30"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <div className="lg:col-span-4 space-y-6">
+            <section className="bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-100">
+                Front View Image
+              </h3>
+              <div className="relative aspect-[3/4] bg-neutral-100 border border-neutral-200 overflow-hidden">
+                <Image
+                  src={frontImage}
+                  alt="Front view product preview"
+                  fill
+                  unoptimized
+                  className="object-cover object-top"
+                  sizes="(max-width: 1024px) 100vw, 33vw"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className={labelClass}>Front Image URL</label>
+                <input
+                  type="url"
+                  value={frontImage}
+                  onChange={(event) => setFrontImage(event.target.value)}
+                  className={`${inputClass} font-mono`}
+                />
+              </div>
+            </section>
+
+            <section className="bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-100">
+                Back View / Model Image
+              </h3>
+              <div className="relative aspect-[3/4] bg-neutral-100 border border-neutral-200 overflow-hidden">
+                <Image
+                  src={backImage}
+                  alt="Back view product preview"
+                  fill
+                  unoptimized
+                  className="object-cover object-top"
+                  sizes="(max-width: 1024px) 100vw, 33vw"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className={labelClass}>Back Image URL</label>
+                <input
+                  type="url"
+                  value={backImage}
+                  onChange={(event) => setBackImage(event.target.value)}
+                  className={`${inputClass} font-mono`}
+                />
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </SellerLayout>
+  );
+}
+
+
+
+================ src\app\seller\inventory\page.tsx ================
+"use client";
+
+import React, { useState } from "react";
+import Image from "next/image";
+import { Plus, Minus, Search, AlertTriangle, Check, Save } from "lucide-react";
+import { SellerLayout } from "@/components/layout/SellerLayout";
+import { PRODUCTS } from "@/data/mock-data";
+import { useToast } from "@/context/toast-context";
+import { formatINR } from "@/lib/utils";
+
+export default function SellerInventoryPage() {
+  const { toast } = useToast();
+  const [stockMap, setStockMap] = useState<Record<string, number>>(
+    Object.fromEntries(PRODUCTS.map((p) => [p.id, p.stock]))
+  );
+  const [search, setSearch] = useState("");
+  const [onlyLowStock, setOnlyLowStock] = useState(false);
+
+  const handleStockChange = (id: string, delta: number) => {
+    setStockMap((prev) => ({
+      ...prev,
+      [id]: Math.max(0, (prev[id] || 0) + delta),
+    }));
+  };
+
+  const handleSaveStock = (productName: string) => {
+    toast({
+      type: "success",
+      title: "Stock Adjusted",
+      message: `Updated inventory count for ${productName}.`,
+    });
+  };
+
+  const filtered = PRODUCTS.filter((p) => {
+    const currentStock = stockMap[p.id] ?? p.stock;
+    const matchSearch =
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      p.sku.toLowerCase().includes(search.toLowerCase());
+    const matchLow = onlyLowStock ? currentStock < 25 : true;
+    return matchSearch && matchLow;
+  });
+
+  return (
+    <SellerLayout
+      title="Warehouse Inventory Matrix"
+      subtitle="Real-time garment variant stock counts, restock thresholds, and quick count adjustments."
+    >
+      <div className="bg-white border border-neutral-200 shadow-sm space-y-4">
+        {/* Filter bar */}
+        <div className="p-4 sm:p-5 border-b border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="relative w-full sm:w-72">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by T-shirt or SKU..."
+              className="w-full pl-9 pr-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
+            />
+            <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+          </div>
+
+          <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-neutral-700 cursor-pointer self-start sm:self-auto">
+            <input
+              type="checkbox"
+              checked={onlyLowStock}
+              onChange={(e) => setOnlyLowStock(e.target.checked)}
+              className="w-4 h-4 accent-black"
+            />
+            <span className="flex items-center gap-1">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Show Low Stock Only (&lt; 25)
+            </span>
+          </label>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr className="border-b border-neutral-200 bg-neutral-50 text-neutral-700 uppercase font-bold text-[11px]">
+                <th className="py-3 px-4">Garment</th>
+                <th className="py-3 px-4">SKU</th>
+                <th className="py-3 px-4">Fit</th>
+                <th className="py-3 px-4">Price</th>
+                <th className="py-3 px-4">Current Stock</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4 text-center">Quick Adjust</th>
+                <th className="py-3 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-200 font-medium">
+              {filtered.map((p) => {
+                const stock = stockMap[p.id] ?? p.stock;
+                const isLow = stock < 25;
+                return (
+                  <tr key={p.id} className="hover:bg-neutral-50">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-10 h-12 bg-neutral-100 shrink-0 overflow-hidden">
+                          <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
+                        </div>
+                        <div className="truncate max-w-xs">
+                          <p className="font-bold text-black uppercase truncate">{p.name}</p>
+                          <p className="text-[11px] text-neutral-500 font-mono">
+                            {p.colors.length} Col â€¢ {p.sizes.join(", ")}
+                          </p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-neutral-600">{p.sku}</td>
+                    <td className="py-3 px-4 text-neutral-800">{p.fit}</td>
+                    <td className="py-3 px-4 font-bold text-black">{formatINR(p.price)}</td>
+                    <td className="py-3 px-4 font-mono text-sm font-bold">{stock} units</td>
+                    <td className="py-3 px-4">
+                      {isLow ? (
+                        <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] uppercase font-bold">
+                          Low Stock
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] uppercase font-bold">
+                          Healthy
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleStockChange(p.id, -5)}
+                          className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold"
+                          title="Subtract 5 units"
+                        >
+                          -5
+                        </button>
+                        <button
+                          onClick={() => handleStockChange(p.id, 5)}
+                          className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold"
+                          title="Add 5 units"
+                        >
+                          +5
+                        </button>
+                        <button
+                          onClick={() => handleStockChange(p.id, 20)}
+                          className="px-2 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold"
+                          title="Add 20 units"
+                        >
+                          +20
+                        </button>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        onClick={() => handleSaveStock(p.name)}
+                        className="px-3 py-1.5 bg-black hover:bg-neutral-800 text-white text-[11px] uppercase font-bold tracking-wider"
+                      >
+                        Save
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </SellerLayout>
+  );
+}
+
+
+
+================ src\app\seller\products\[id]\edit\page.tsx ================
+import React from "react";
+import { notFound } from "next/navigation";
+import { PRODUCTS } from "@/data/mock-data";
+import { productService } from "@/services/product-service";
+import { EditProductClient } from "./EditProductClient";
+
+interface EditProductPageProps {
+  params: Promise<{ id: string }>;
+}
+
+export async function generateStaticParams() {
+  return PRODUCTS.map((p) => ({
+    id: p.id,
+  }));
+}
+
+export default async function EditProductPage({ params }: EditProductPageProps) {
+  const { id } = await params;
+  const product = await productService.getProductById(id);
+
+  if (!product) {
+    notFound();
+  }
+
+  return <EditProductClient initialProduct={product} />;
+}
+
+
+
+================ src\app\seller\products\[id]\edit\EditProductClient.tsx ================
+"use client";
+
+import React, { useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { Save, Send, CheckCircle2, ArrowLeft } from "lucide-react";
+import { SellerLayout } from "@/components/layout/SellerLayout";
+import { Product, TShirtFit, TShirtSize } from "@/types";
+import { useToast } from "@/context/toast-context";
+
+export function EditProductClient({ initialProduct }: { initialProduct: Product }) {
+  const router = useRouter();
+  const { toast } = useToast();
+
+  const [name, setName] = useState(initialProduct.name);
+  const [tagline, setTagline] = useState(initialProduct.tagline);
+  const [price, setPrice] = useState(initialProduct.price.toString());
+  const [compareAtPrice, setCompareAtPrice] = useState(
+    initialProduct.compareAtPrice ? initialProduct.compareAtPrice.toString() : ""
+  );
+  const [fit, setFit] = useState<TShirtFit>(initialProduct.fit);
+  const [gsm, setGsm] = useState(initialProduct.gsm.toString());
+  const [stock, setStock] = useState(initialProduct.stock.toString());
+  const [isSaved, setIsSaved] = useState(false);
+
+  const handleUpdate = () => {
+    setIsSaved(true);
+    toast({
+      type: "success",
+      title: "Garment Updated (Demo)",
+      message: `${name} modifications saved.`,
+    });
+  };
+
+  return (
+    <SellerLayout
+      title={`Edit: ${initialProduct.name}`}
+      subtitle={`SKU: ${initialProduct.sku} â€¢ Series: ${initialProduct.collectionSlug}`}
+      actions={
+        <div className="flex items-center gap-2">
+          <Link
+            href="/seller/products"
+            className="px-3 py-2 border border-neutral-300 text-xs uppercase font-bold text-neutral-700 hover:text-black"
+          >
+            Cancel
+          </Link>
+          <button
+            onClick={handleUpdate}
+            className="px-5 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save Changes</span>
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-6">
+        {isSaved && (
+          <div className="p-4 bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>Garment specifications successfully updated in prototype catalog.</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8 bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+            <div className="space-y-1">
+              <label className="text-[11px] uppercase font-bold text-neutral-800">
+                T-Shirt Name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-bold uppercase"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] uppercase font-bold text-neutral-800">
+                Tagline Summary
+              </label>
+              <input
+                type="text"
+                value={tagline}
+                onChange={(e) => setTagline(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase font-bold text-neutral-800">
+                  Price (â‚¹)
+                </label>
+                <input
+                  type="number"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-bold"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase font-bold text-neutral-800">
+                  Compare Price (â‚¹)
+                </label>
+                <input
+                  type="number"
+                  value={compareAtPrice}
+                  onChange={(e) => setCompareAtPrice(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase font-bold text-neutral-800">
+                  Total Warehouse Stock
+                </label>
+                <input
+                  type="number"
+                  value={stock}
+                  onChange={(e) => setStock(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase font-bold text-neutral-800">
+                  Fit Type
+                </label>
+                <select
+                  value={fit}
+                  onChange={(e) => setFit(e.target.value as TShirtFit)}
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-bold uppercase bg-white cursor-pointer"
+                >
+                  <option value="Oversized">Oversized Fit</option>
+                  <option value="Relaxed">Relaxed Fit</option>
+                  <option value="Regular">Regular Fit</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase font-bold text-neutral-800">
+                  Fabric Weight (GSM)
+                </label>
+                <input
+                  type="number"
+                  value={gsm}
+                  onChange={(e) => setGsm(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-4 bg-white border border-neutral-200 p-6 space-y-4 shadow-sm">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-100">
+              Active Visual Asset
+            </h3>
+            <div className="relative aspect-[3/4] bg-neutral-100 border border-neutral-200 overflow-hidden">
+              <Image
+                src={initialProduct.colors[0]?.images[0] || ""}
+                alt={initialProduct.name}
+                fill
+                className="object-cover object-top"
+              />
+            </div>
+            <Link
+              href={`/products/${initialProduct.slug}`}
+              target="_blank"
+              className="text-xs text-black font-bold uppercase tracking-wider underline block text-center"
+            >
+              Preview Live Storefront View &rarr;
+            </Link>
+          </div>
+        </div>
+      </div>
+    </SellerLayout>
+  );
+}
+
+
+
+================ src\components\layout\SellerLayout.tsx ================
+"use client";
+
+import React, { useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  LayoutDashboard,
+  Package,
+  PlusCircle,
+  Boxes,
+  ArrowLeft,
+  LogOut,
+  Menu,
+  X,
+  ExternalLink,
+  ShieldCheck,
+  User,
+} from "lucide-react";
+import { useAuth } from "@/context/auth-context";
+
+interface SellerLayoutProps {
+  children: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  actions?: React.ReactNode;
+}
+
+export function SellerLayout({
+  children,
+  title,
+  subtitle,
+  actions,
+}: SellerLayoutProps) {
+  const pathname = usePathname();
+  const { user, logout } = useAuth();
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  const navLinks = [
+    { label: "Dashboard", href: "/seller", icon: LayoutDashboard },
+    { label: "Products Catalog", href: "/seller/products", icon: Package },
+    { label: "Add New T-Shirt", href: "/seller/products/new", icon: PlusCircle },
+    { label: "Inventory Matrix", href: "/seller/inventory", icon: Boxes },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#F6F8FB] text-[#111111] flex flex-col">
+      {/* Top Staff Bar */}
+      <header className="bg-[#111111] text-white border-b border-neutral-800 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
+              className="p-1.5 text-neutral-400 hover:text-white lg:hidden"
+              aria-label="Toggle navigation"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="font-mono font-black text-sm tracking-widest text-[#B8FF3B]">
+                RIGHTNOWLIFE
+              </span>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 bg-neutral-800 text-neutral-300">
+                STAFF SELLER PORTAL
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs">
+            <Link
+              href="/"
+              target="_blank"
+              className="text-neutral-300 hover:text-white flex items-center gap-1 hidden sm:flex"
+            >
+              <span>View Storefront</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </Link>
+
+            <Link
+              href="/admin"
+              className="text-neutral-300 hover:text-[#B8FF3B] flex items-center gap-1"
+            >
+              <span>Switch to Admin</span>
+            </Link>
+
+            <div className="flex items-center gap-2 pl-2 border-l border-neutral-700">
+              <span className="font-semibold hidden sm:inline">
+  {user?.name || user?.email || "Seller"}
+</span>
+              <button
+                onClick={logout}
+                className="text-neutral-400 hover:text-red-400 p-1"
+                aria-label="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Portal Workspace */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Sidebar Nav (Desktop 3 cols) */}
+        <aside
+          className={`lg:col-span-3 ${
+            isMobileNavOpen
+              ? "fixed inset-0 z-50 bg-black/60 lg:relative lg:bg-transparent"
+              : "hidden lg:block"
+          }`}
+        >
+          <div className="bg-white border border-neutral-200 p-4 space-y-1 shadow-sm h-full max-w-xs lg:max-w-none">
+            <div className="flex items-center justify-between lg:hidden pb-3 mb-2 border-b border-neutral-200">
+              <span className="text-xs font-bold uppercase tracking-wider">Navigation</span>
+              <button onClick={() => setIsMobileNavOpen(false)}>
+                <X className="w-5 h-5 text-neutral-500" />
+              </button>
+            </div>
+
+            <p className="px-3 text-[10px] uppercase tracking-wider font-bold text-neutral-400 mb-2">
+              Catalog Management
+            </p>
+
+            {navLinks.map((link) => {
+              const Icon = link.icon;
+              const isActive = pathname === link.href;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                    isActive
+                      ? "bg-black text-white"
+                      : "text-neutral-700 hover:bg-neutral-100 hover:text-black"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{link.label}</span>
+                </Link>
+              );
+            })}
+
+            <div className="pt-6 mt-6 border-t border-neutral-200 space-y-2">
+              <p className="px-3 text-[10px] uppercase tracking-wider font-bold text-neutral-400">
+                Staff Information
+              </p>
+              <div className="px-3 text-xs text-neutral-600">
+                <p className="font-bold text-black">{user?.name || "Staff Member"}</p>
+                <p className="text-[11px] text-neutral-400 truncate">{user?.email}</p>
+                <span className="inline-block mt-1 text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  Authorized Seller
+                </span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* Content Area (9 cols) */}
+        <main className="lg:col-span-9 space-y-6">
+          {/* Header Row */}
+          <div className="bg-white border border-neutral-200 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+            <div>
+              <span className="text-[10px] uppercase font-mono tracking-widest text-neutral-500 font-bold block mb-1">
+                RIGHTNOWLIFE INTERNAL OPERATIONS
+              </span>
+              <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight font-editorial">
+                {title}
+              </h1>
+              {subtitle && <p className="text-xs text-neutral-600 mt-0.5">{subtitle}</p>}
+            </div>
+
+            {actions && <div className="flex items-center gap-2">{actions}</div>}
+          </div>
+
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+
+
+================ src\lib\supabase\client.ts ================
+import { createBrowserClient } from "@supabase/ssr";
+
+export function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+  );
+}
+
+
+================ src\lib\supabase\server.ts ================
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+
+export async function createClient() {
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // Cookie writes may not be available in Server Components.
+            // Handle session refresh using the appropriate Next.js
+            // proxy/middleware pattern.
+          }
+        },
+      },
+    }
+  );
+}
+
+
+================ src\proxy.ts ================
+
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+
+export async function proxy(request: NextRequest) {
+  let response = NextResponse.next({ request });
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Supabase environment variables are missing.");
+  }
+
+  const supabase = createServerClient(supabaseUrl, supabaseKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => {
+          request.cookies.set(name, value);
+        });
+
+        response = NextResponse.next({ request });
+
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options);
+        });
+      },
+    },
+  });
+
+  await supabase.auth.getClaims();
+
+  return response;
+}
+
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};
+

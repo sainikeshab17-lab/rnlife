@@ -5,8 +5,8 @@ import { TShirtSize } from "@/types";
 // Indian Phone Number: allows +91-XXXXXXXXXX, 91XXXXXXXXXX, or 10-digit 6-9XXXXXXXXX
 const phoneRegex = /^(?:\+91|91|0)?[6-9]\d{9}$/;
 
-// Indian Postal PIN Code: 6 digits, cannot start with 0
-const pinCodeRegex = /^[1-9][0-9]{5}$/;
+// Standard Indian postal PIN code: 6 digits (first digit 1-9), spaces sanitized
+const pinCodeRegex = /^[1-9]\d{5}$/;
 
 export const CheckoutItemSchema = z.object({
   productId: z.string().min(1, "Product ID is required"),
@@ -32,7 +32,11 @@ export const DeliveryAddressSchema = z.object({
   landmark: z.string().trim().max(100).optional(),
   city: z.string().trim().min(2, "City is required").max(100),
   state: z.string().trim().min(2, "State is required").max(100),
-  pinCode: z.string().trim().regex(pinCodeRegex, "Please enter a valid 6-digit Indian PIN code"),
+  pinCode: z
+    .string()
+    .trim()
+    .transform((val) => val.replace(/\s+/g, ""))
+    .pipe(z.string().regex(pinCodeRegex, "Please enter a valid postal PIN code")),
   country: z.string().trim().default("India"),
 });
 
@@ -57,7 +61,7 @@ export interface VerifiedCheckoutItem {
   productName: string;
   color: string;
   size: TShirtSize;
-  price: number; // Trusted: ₹999
+  price: number; // Trusted: ₹999 strictly
   quantity: number;
   image: string;
   sku: string;
@@ -75,11 +79,16 @@ export interface CalculatedOrderPricing {
 
 /**
  * Server-controlled calculation of checkout pricing using trusted catalogue data.
- * Fixes every T-shirt price strictly to ₹999. Never trusts client prices.
+ * Fixes every T-shirt price strictly to ₹999.
+ * Shipping is ₹0 (Free shipping on all orders).
+ * Promo discount is ₹0 (Coupons removed).
+ * Line total = ₹999 * quantity.
+ * Subtotal = ₹999 * total quantity.
+ * Total = subtotal.
  */
 export function calculateTrustedOrderPricing(
   itemsInput: z.infer<typeof CheckoutItemSchema>[],
-  promoCodeInput?: string
+  _promoCodeInput?: string
 ): { success: true; pricing: CalculatedOrderPricing } | { success: false; error: string } {
   if (!itemsInput || itemsInput.length === 0) {
     return { success: false, error: "Cart is empty" };
@@ -101,8 +110,8 @@ export function calculateTrustedOrderPricing(
       };
     }
 
-    // Always use trusted catalog price (₹999)
-    const fixedPrice = trustedProduct.price; // 999
+    // Always use authoritative fixed price: ₹999
+    const fixedPrice = 999;
     const lineTotal = fixedPrice * item.quantity;
     calculatedSubtotal += lineTotal;
 
@@ -124,25 +133,13 @@ export function calculateTrustedOrderPricing(
     });
   }
 
-  // Shipping policy: Free for subtotal > ₹1,499, otherwise ₹99 flat express air
-  const shippingCharge = calculatedSubtotal > 1499 ? 0 : 99;
-
-  // Validate promotional discount
-  let discountAmount = 0;
-  let appliedPromo: string | undefined;
-
-  if (promoCodeInput) {
-    const code = promoCodeInput.trim().toUpperCase();
-    if (code === "DROP20") {
-      discountAmount = Math.round(calculatedSubtotal * 0.2); // 20% off
-      appliedPromo = "DROP20 (20% OFF)";
-    } else if (code === "RNLFIRST") {
-      discountAmount = Math.min(200, calculatedSubtotal); // Flat ₹200 off
-      appliedPromo = "RNLFIRST (₹200 OFF)";
-    }
-  }
-
-  const calculatedTotal = Math.max(0, calculatedSubtotal - discountAmount + shippingCharge);
+  // Section 7 pricing rules:
+  // Shipping: ₹0
+  // Additional fees: ₹0
+  // Discount: ₹0 (Promo codes removed)
+  const shippingCharge = 0;
+  const discountAmount = 0;
+  const calculatedTotal = calculatedSubtotal;
 
   return {
     success: true,
@@ -152,7 +149,6 @@ export function calculateTrustedOrderPricing(
       shipping: shippingCharge,
       discount: discountAmount,
       total: calculatedTotal,
-      appliedPromo,
     },
   };
 }

@@ -1,29 +1,73 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
   PlusCircle,
   Search,
-  Filter,
   Edit3,
   Archive,
   ExternalLink,
-  Check,
-  AlertCircle,
+  RefreshCw,
+  ShoppingBag,
 } from "lucide-react";
 import { SellerLayout } from "@/components/layout/SellerLayout";
-import { PRODUCTS } from "@/data/mock-data";
 import { formatINR } from "@/lib/utils";
 import { useToast } from "@/context/toast-context";
 import { StatusBadge } from "@/components/common/StatusBadge";
 
+interface SellerProduct {
+  id: string;
+  name: string;
+  slug: string;
+  sku: string;
+  price: number;
+  stock: number;
+  fit?: string | null;
+  gsm?: number | null;
+  images?: string[];
+  sizes?: string[];
+  colors?: string[];
+  collection_slug?: string | null;
+  is_active: boolean;
+  created_at?: string;
+}
+
 export default function SellerProductsPage() {
   const [search, setSearch] = useState("");
   const [collectionFilter, setCollectionFilter] = useState("all");
-  const [productsList, setProductsList] = useState(PRODUCTS);
+  const [productsList, setProductsList] = useState<SellerProduct[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+
+  const loadProducts = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/seller/products", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load seller products.");
+      }
+      setProductsList(Array.isArray(data.products) ? data.products : []);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unable to load products.";
+      setError(msg);
+      toast({
+        type: "error",
+        title: "Load Failed",
+        message: msg,
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    void loadProducts();
+  }, [loadProducts]);
 
   const filteredProducts = useMemo(() => {
     return productsList.filter((p) => {
@@ -31,18 +75,40 @@ export default function SellerProductsPage() {
         p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.sku.toLowerCase().includes(search.toLowerCase());
       const matchCollection =
-        collectionFilter === "all" || p.collectionSlug === collectionFilter;
+        collectionFilter === "all" || p.collection_slug === collectionFilter;
       return matchSearch && matchCollection;
     });
   }, [search, collectionFilter, productsList]);
 
-  const handleArchive = (id: string, name: string) => {
-    if (confirm(`Archive ${name}? This will change the product status to Draft.`)) {
-      setProductsList((prev) => prev.filter((p) => p.id !== id));
+  const handleArchive = async (id: string, name: string) => {
+    if (!confirm(`Archive ${name}? This will mark the product as inactive.`)) return;
+
+    try {
+      const res = await fetch(`/api/seller/products?id=${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: false }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to archive product.");
+      }
+
+      setProductsList((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, is_active: false } : p))
+      );
+
       toast({
         type: "info",
         title: "Product Archived",
-        message: `${name} has been archived to drafts.`,
+        message: `${name} has been set to inactive status.`,
+      });
+    } catch (err: unknown) {
+      toast({
+        type: "error",
+        title: "Archive Failed",
+        message: err instanceof Error ? err.message : "Unable to archive product.",
       });
     }
   };
@@ -50,15 +116,26 @@ export default function SellerProductsPage() {
   return (
     <SellerLayout
       title="Product Catalog Management"
-      subtitle="Search, modify, preview, and archive RightNowLife T-shirt listings."
+      subtitle="Search, modify, preview, and manage your live RightNowLife T-shirt listings."
       actions={
-        <Link
-          href="/seller/products/new"
-          className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center gap-1.5"
-        >
-          <PlusCircle className="w-3.5 h-3.5" />
-          <span>Add New T-Shirt</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void loadProducts()}
+            disabled={isLoading}
+            className="px-3 py-2 border border-neutral-300 hover:border-black text-xs uppercase font-bold tracking-wider flex items-center gap-1.5 bg-white transition-colors disabled:opacity-50"
+            title="Refresh list"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+          <Link
+            href="/seller/products/new"
+            className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center gap-1.5 shadow-sm"
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            <span>Add New T-Shirt</span>
+          </Link>
+        </div>
       }
     >
       <div className="bg-white border border-neutral-200 shadow-sm">
@@ -107,71 +184,109 @@ export default function SellerProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200 font-medium">
-              {filteredProducts.length === 0 ? (
+              {isLoading ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-neutral-500">
-                    No products match your query.
+                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-neutral-400" />
+                    <p>Loading real seller products from database...</p>
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-red-600">
+                    {error}
+                  </td>
+                </tr>
+              ) : filteredProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-16 text-center text-neutral-500">
+                    <ShoppingBag className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
+                    <p className="font-bold text-neutral-800 uppercase">No products found</p>
+                    <p className="text-xs text-neutral-400 mt-1 mb-4">
+                      {search ? "No products match your search query." : "No seller products have been created yet."}
+                    </p>
+                    <Link
+                      href="/seller/products/new"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      <span>Create First Product</span>
+                    </Link>
                   </td>
                 </tr>
               ) : (
-                filteredProducts.map((p) => (
-                  <tr key={p.id} className="hover:bg-neutral-50">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="relative w-12 h-14 bg-neutral-100 shrink-0 overflow-hidden">
-                          <Image src={p.colors[0].images[0]} alt={p.name} fill className="object-cover object-top" />
+                filteredProducts.map((p) => {
+                  const imageSrc =
+                    p.images && p.images.length > 0
+                      ? p.images[0]
+                      : "/brand/rightnowlife-logo.jpg";
+
+                  return (
+                    <tr key={p.id} className="hover:bg-neutral-50">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-12 h-14 bg-neutral-100 shrink-0 overflow-hidden border border-neutral-200">
+                            <Image
+                              src={imageSrc}
+                              alt={p.name}
+                              fill
+                              unoptimized
+                              className="object-cover object-top"
+                            />
+                          </div>
+                          <div className="min-w-0 max-w-xs">
+                            <p className="font-bold text-black uppercase truncate">{p.name}</p>
+                            <p className="text-[11px] text-neutral-500 truncate font-mono">
+                              {p.collection_slug || "standard"}
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0 max-w-xs">
-                          <p className="font-bold text-black uppercase truncate">{p.name}</p>
-                          <p className="text-[11px] text-neutral-500 truncate">{p.collectionSlug}</p>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-neutral-600">{p.sku}</td>
+                      <td className="py-3 px-4">
+                        <span className="font-bold text-black">{p.fit || "Regular"}</span>
+                        <span className="text-neutral-500 block text-[11px]">{p.gsm || 260} GSM</span>
+                      </td>
+                      <td className="py-3 px-4 font-bold text-black font-mono">
+                        {formatINR(999)}
+                      </td>
+                      <td className="py-3 px-4 text-neutral-600">
+                        <span>
+                          {(p.colors?.length ?? 1)} Col • {(p.sizes?.length ?? 6)} Sizes
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-mono">
+                        <span className={p.stock < 25 ? "text-amber-600 font-bold" : "text-black"}>
+                          {p.stock} units
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <StatusBadge status={p.is_active ? "published" : "draft"} />
+                      </td>
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
+                          <Link
+                            href={`/products/${p.slug}`}
+                            target="_blank"
+                            className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 rounded"
+                            title="Preview in Store"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </Link>
+                          {p.is_active && (
+                            <button
+                              onClick={() => handleArchive(p.id, p.name)}
+                              className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded"
+                              title="Archive to draft"
+                            >
+                              <Archive className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-neutral-600">{p.sku}</td>
-                    <td className="py-3 px-4">
-                      <span className="font-bold text-black">{p.fit}</span>
-                      <span className="text-neutral-500 block text-[11px]">{p.gsm} GSM</span>
-                    </td>
-                    <td className="py-3 px-4 font-bold text-black">{formatINR(p.price)}</td>
-                    <td className="py-3 px-4 text-neutral-600">
-                      <span>{p.colors.length} Col • {p.sizes.length} Sizes</span>
-                    </td>
-                    <td className="py-3 px-4 font-mono">
-                      <span className={p.stock < 25 ? "text-amber-600 font-bold" : "text-black"}>
-                        {p.stock} units
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <StatusBadge status="published" />
-                    </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link
-                          href={`/seller/products/${p.id}/edit`}
-                          className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 rounded"
-                          title="Edit Garment"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </Link>
-                        <Link
-                          href={`/products/${p.slug}`}
-                          target="_blank"
-                          className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 rounded"
-                          title="Preview in Store"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </Link>
-                        <button
-                          onClick={() => handleArchive(p.id, p.name)}
-                          className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded"
-                          title="Archive"
-                        >
-                          <Archive className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -179,8 +294,10 @@ export default function SellerProductsPage() {
 
         {/* Footer info */}
         <div className="p-4 border-t border-neutral-200 text-xs text-neutral-500 flex items-center justify-between">
-          <span>Showing {filteredProducts.length} of {PRODUCTS.length} catalog garments</span>
-          <span className="font-mono text-[11px]">[Phase 1 Prototype Catalog Fixture]</span>
+          <span>Showing {filteredProducts.length} live database records</span>
+          <span className="font-mono text-[11px] font-bold text-black">
+            Authoritative Price: ₹999 / piece
+          </span>
         </div>
       </div>
     </SellerLayout>

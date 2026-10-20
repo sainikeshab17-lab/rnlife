@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
@@ -7,14 +6,14 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 export const dynamic = "force-dynamic";
 
 const ProductSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  slug: z.string().trim().min(1).max(220),
+  name: z.string().trim().min(1, "Product name is required").max(200),
+  slug: z.string().trim().min(1, "Slug is required").max(220),
   tagline: z.string().max(500).nullable().optional(),
   description: z.string().max(10000).nullable().optional(),
-  category: z.string().trim().min(1).max(100),
+  category: z.string().trim().min(1, "Category is required").max(100),
   collection_slug: z.string().max(100).nullable().optional(),
-  sku: z.string().trim().min(1).max(100),
-  price: z.coerce.number().finite().min(0),
+  sku: z.string().trim().min(1, "SKU is required").max(100),
+  price: z.coerce.number().default(999),
   compare_at_price: z.coerce.number().finite().min(0).nullable().optional(),
   fit: z.string().max(50).nullable().optional(),
   gsm: z.coerce.number().int().min(1).max(1000).nullable().optional(),
@@ -22,7 +21,7 @@ const ProductSchema = z.object({
   neck: z.string().max(100).nullable().optional(),
   fabric_composition: z.string().max(300).nullable().optional(),
   print_technique: z.string().max(300).nullable().optional(),
-  images: z.array(z.string().url()).max(20).optional(),
+  images: z.array(z.string().min(1)).max(20).optional(),
   sizes: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
   colors: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
   color_variants: z.array(
@@ -48,7 +47,7 @@ async function getSeller() {
     };
   }
 
-  if (data.user.app_metadata?.role !== "seller") {
+  if (data.user.app_metadata?.role !== "seller" && data.user.app_metadata?.role !== "admin") {
     return {
       user: null,
       response: NextResponse.json({ error: "Seller access required" }, { status: 403 }),
@@ -114,10 +113,12 @@ export async function POST(request: NextRequest) {
   const input = parsed.data;
   const db = createAdminSupabaseClient();
 
+  // Enforce authoritative ₹999 price server-side
   const { data, error } = await db
     .from("products")
     .insert({
       ...input,
+      price: 999, // Strict fixed ₹999 price per Section 7 & 9
       seller_id: auth.user.id,
       description: input.description ?? null,
       tagline: input.tagline ?? null,
@@ -168,11 +169,17 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Invalid or empty product update." }, { status: 400 });
   }
 
+  const updateData = { ...parsed.data };
+  // Fixed ₹999 price enforcement: price cannot be changed
+  if ("price" in updateData) {
+    updateData.price = 999;
+  }
+
   const db = createAdminSupabaseClient();
 
   const { data, error } = await db
     .from("products")
-    .update(parsed.data)
+    .update(updateData)
     .eq("id", productId)
     .eq("seller_id", auth.user.id)
     .select("*")

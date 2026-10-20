@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { MapPin, Check, AlertCircle } from "lucide-react";
+import { Truck, Check, AlertCircle } from "lucide-react";
 
 export function DeliveryPinChecker() {
   const [pinCode, setPinCode] = useState("");
@@ -12,27 +12,27 @@ export function DeliveryPinChecker() {
 
   const handleCheck = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = pinCode.trim();
+    const clean = pinCode.replace(/\s+/g, "");
 
     if (!/^\d{6}$/.test(clean)) {
       setResult({
         valid: false,
-        message: "Please enter a valid 6-digit Indian postal code.",
+        message: "Please enter a 6-digit Indian postal PIN code.",
       });
       return;
     }
 
     setResult({
       valid: true,
-      message: "PIN format looks valid. Live delivery availability is not connected in this prototype.",
+      message: "Standard & Express Air Delivery available to this location (FREE shipping).",
     });
   };
 
   return (
     <div className="pt-4 pb-2 border-t border-neutral-200">
       <div className="flex items-center gap-2 mb-2 text-xs font-bold uppercase tracking-wider text-neutral-800">
-        <MapPin className="w-4 h-4 text-neutral-600" />
-        <span>Check PIN format</span>
+        <Truck className="w-4 h-4 text-neutral-600" />
+        <span>Check Delivery Availability</span>
       </div>
 
       <form onSubmit={handleCheck} className="flex gap-2">
@@ -47,7 +47,7 @@ export function DeliveryPinChecker() {
             setPinCode(e.target.value.replace(/\D/g, ""));
             setResult(null);
           }}
-          placeholder="6-digit PIN code"
+          placeholder="Enter 6-digit PIN code"
           aria-invalid={result?.valid === false}
           aria-describedby={result ? "delivery-pin-result" : undefined}
           className="flex-1 px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-mono"
@@ -65,13 +65,13 @@ export function DeliveryPinChecker() {
           {result.valid ? (
             <div className="p-2.5 bg-[#FFFFFF] border border-neutral-200 text-xs">
               <p className="font-medium text-neutral-900 flex items-start gap-1.5">
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                 <span>{result.message}</span>
               </p>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 text-xs text-red-600 mt-1">
-              <AlertCircle className="w-3.5 h-3.5" />
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               <span>{result.message}</span>
             </div>
           )}

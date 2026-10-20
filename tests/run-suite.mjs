@@ -12,6 +12,7 @@ fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "modu
 
 const filesToCompile = [
   { in: "src/types/index.ts", out: ".test-dist/src/types/index.js" },
+  { in: "src/data/product-categories.ts", out: ".test-dist/src/data/product-categories.js" },
   { in: "src/data/mock-data.ts", out: ".test-dist/src/data/mock-data.js" },
   { in: "src/lib/policies.ts", out: ".test-dist/src/lib/policies.js" },
   { in: "src/lib/shipping/provider.ts", out: ".test-dist/src/lib/shipping/provider.js" },
@@ -54,8 +55,12 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']@\/types["']/g, 'from "../../types/index.js"')
       .replace(/from\s+["']\.\/index["']/g, 'from "./index.js"');
   } else if (f.in.startsWith("src/data/")) {
-    code = code
-      .replace(/from\s+["']@\/types["']/g, 'from "../types/index.js"');
+  code = code
+    .replace(/from\s+["']@\/types["']/g, 'from "../types/index.js"')
+    .replace(
+      /from\s+["']@\/data\/product-categories["']/g,
+      'from "./product-categories.js"'
+    );
   } else if (f.in.startsWith("tests/")) {
     code = code
       .replace(/from\s+["']\.\.\/src\/services\/checkout-service\.ts["']/g, 'from "../src/services/checkout-service.js"')

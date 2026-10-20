@@ -7,7 +7,7 @@ import {
   RAZORPAY_KEY_ID,
   RAZORPAY_KEY_SECRET,
 } from "@/lib/razorpay";
-import { sendOrderConfirmationEmail } from "@/services/notification-service";
+import { dispatchAllOrderNotifications } from "@/services/notification-service";
 
 const VerifyPaymentSchema = z.object({
   orderId: z.string().min(1, "Order ID is required"),
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Check matching Razorpay order ID
-    if (order.razorpay_order_id && order.razorpay_order_id !== razorpayOrderId) {
+    if (!order.razorpay_order_id || order.razorpay_order_id !== razorpayOrderId) {
       await logPaymentAudit(order.id, "payment_mismatch_order_id", {
         expected: order.razorpay_order_id,
         received: razorpayOrderId,
@@ -59,29 +59,20 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const hasRealRazorpayKeys =
-      RAZORPAY_KEY_ID !== "rzp_test_placeholder_key" &&
-      RAZORPAY_KEY_SECRET !== "rzp_test_placeholder_secret";
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      console.error("Razorpay server credentials are missing.");
+      return NextResponse.json(
+        { error: "Payment verification is temporarily unavailable." },
+        { status: 500 }
+      );
+    }
 
     // 3. Verify cryptographic HMAC signature
-    let isSignatureValid = false;
-    if (hasRealRazorpayKeys) {
-      isSignatureValid = verifyPaymentSignature({
-        razorpayOrderId,
-        razorpayPaymentId,
-        razorpaySignature,
-      });
-    } else {
-      // In local dev test mode with placeholder keys, allow verified test signatures
-      isSignatureValid =
-        razorpaySignature === "test_signature_mock" ||
-        verifyPaymentSignature({
-          razorpayOrderId,
-          razorpayPaymentId,
-          razorpaySignature,
-          secret: RAZORPAY_KEY_SECRET,
-        });
-    }
+    const isSignatureValid = verifyPaymentSignature({
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    });
 
     if (!isSignatureValid) {
       await markOrderPaymentFailed(order.id, "Invalid payment signature");
@@ -96,41 +87,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Server-to-server confirmation with Razorpay API (when real test keys are active)
-    if (hasRealRazorpayKeys) {
-      try {
-        const rzp = getRazorpayClient();
-        const payment = await rzp.payments.fetch(razorpayPaymentId);
+    // Confirm payment details with Razorpay before updating the local order.
+    try {
+      const rzp = getRazorpayClient();
+      const payment = await rzp.payments.fetch(razorpayPaymentId);
+      const expectedPaisa = Math.round(order.total * 100);
 
-        // Verify currency and amount matches expected order total (in paisa)
-        const expectedPaisa = Math.round(order.total * 100);
-        if (payment.amount !== expectedPaisa) {
-          await logPaymentAudit(order.id, "payment_amount_mismatch", {
-            expected: expectedPaisa,
-            received: payment.amount,
-          });
-          await markOrderPaymentFailed(order.id, "Payment amount mismatch");
-          return NextResponse.json(
-            { error: "Payment amount does not match order total" },
-            { status: 400 }
-          );
-        }
-
-        if (payment.status !== "captured" && payment.status !== "authorized") {
-          await markOrderPaymentFailed(order.id, `Payment status is ${payment.status}`);
-          return NextResponse.json(
-            { error: `Payment is not successful (status: ${payment.status})` },
-            { status: 400 }
-          );
-        }
-      } catch (err: any) {
-        console.error("Failed to verify payment with Razorpay API:", err);
-        // If payment fetch failed, do not mark as paid
+      if (
+        payment.order_id !== razorpayOrderId ||
+        payment.amount !== expectedPaisa ||
+        payment.currency !== "INR"
+      ) {
+        await logPaymentAudit(order.id, "payment_details_mismatch", {
+          razorpayOrderId,
+          paymentOrderId: payment.order_id,
+          expectedAmount: expectedPaisa,
+          receivedAmount: payment.amount,
+          receivedCurrency: payment.currency,
+        });
+        await markOrderPaymentFailed(order.id, "Payment details do not match order");
         return NextResponse.json(
-          { error: "Unable to confirm payment status with Razorpay gateway" },
-          { status: 502 }
+          { error: "Payment details do not match the order." },
+          { status: 400 }
         );
       }
+
+      if (payment.status !== "captured" && payment.status !== "authorized") {
+        await markOrderPaymentFailed(order.id, `Payment status is ${payment.status}`);
+        return NextResponse.json(
+          { error: `Payment is not successful (status: ${payment.status})` },
+          { status: 400 }
+        );
+      }
+    } catch (error: unknown) {
+      console.error("Failed to verify payment with Razorpay API:", error);
+      return NextResponse.json(
+        { error: "Unable to confirm payment status with Razorpay gateway" },
+        { status: 500 }
+      );
     }
 
     // 5. Update database: Mark order as paid and commit inventory deduction
@@ -141,10 +135,10 @@ export async function POST(req: NextRequest) {
       amount: order.total,
     });
 
-    // 6. Send transactional confirmation email asynchronously
+    // 6. Send transactional confirmation email asynchronously (Customer, Admin, Seller)
     const refreshedOrder = await getOrderById(order.id) || order;
-    sendOrderConfirmationEmail(refreshedOrder).catch((err) => {
-      console.error("Email notification dispatch error:", err);
+    dispatchAllOrderNotifications(refreshedOrder).catch((err) => {
+      console.error("Order notification dispatch error:", err);
     });
 
     return NextResponse.json({

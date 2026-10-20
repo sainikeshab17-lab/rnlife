@@ -41,12 +41,17 @@ function OrdersContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
-  const activeEmail = emailParam || user?.email || "arjun@streetwear.in";
+  const activeEmail = emailParam || user?.email || "";
 
   useEffect(() => {
     let isMounted = true;
 
     async function fetchOrders() {
+      if (!activeEmail) {
+        setIsLoading(false);
+        setOrders([]);
+        return;
+      }
       setIsLoading(true);
       try {
         const res = await fetch(`/api/orders?email=${encodeURIComponent(activeEmail)}`);

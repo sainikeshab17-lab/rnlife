@@ -1,0 +1,1654 @@
+﻿
+========== src\app\checkout\page.tsx ==========
+
+  src\app\checkout\page.tsx:76:  const [paymentError, setPaymentError] = 
+useState<string | null>(null);
+  src\app\checkout\page.tsx:77:  const [promoInput, setPromoInput] = 
+useState("");
+  src\app\checkout\page.tsx:78:  const [appliedPromo, setAppliedPromo] = 
+useState<string | null>(null);
+  src\app\checkout\page.tsx:79:
+  src\app\checkout\page.tsx:80:  // Pending Razorpay Order Details
+> src\app\checkout\page.tsx:81:  const [pendingServerOrder, 
+setPendingServerOrder] = useState<any>(null);
+  src\app\checkout\page.tsx:82:  const [confirmedOrder, setConfirmedOrder] 
+= useState<ConfirmedOrderDetails | null>(null);
+  src\app\checkout\page.tsx:83:
+  src\app\checkout\page.tsx:84:  const validateAddressStep = (): boolean 
+=> {
+  src\app\checkout\page.tsx:85:    const errors: Record<string, string> = 
+{};
+  src\app\checkout\page.tsx:86:
+  src\app\checkout\page.tsx:87:    if (!customerEmail || 
+!customerEmail.includes("@")) {
+  src\app\checkout\page.tsx:88:      errors.email = "Please provide a 
+valid email address";
+  src\app\checkout\page.tsx:89:    }
+  src\app\checkout\page.tsx:90:
+  src\app\checkout\page.tsx:91:    if (!addressForm.fullName || 
+addressForm.fullName.trim().length < 2) {
+  src\app\checkout\page.tsx:92:      errors.fullName = "Please enter your 
+full name (at least 2 characters)";
+  src\app\checkout\page.tsx:93:    }
+  src\app\checkout\page.tsx:130:    setStep(3);
+  src\app\checkout\page.tsx:131:    window.scrollTo({ top: 0, behavior: 
+"smooth" });
+  src\app\checkout\page.tsx:132:  };
+  src\app\checkout\page.tsx:133:
+  src\app\checkout\page.tsx:134:  // Live Razorpay Payment Trigger
+> src\app\checkout\page.tsx:135:  const handleInitiateRazorpay = async () 
+=> {
+  src\app\checkout\page.tsx:136:    setIsProcessing(true);
+  src\app\checkout\page.tsx:137:    setPaymentError(null);
+  src\app\checkout\page.tsx:138:
+  src\app\checkout\page.tsx:139:    try {
+  src\app\checkout\page.tsx:140:      // 1. Create order on server using 
+trusted product prices (₹999)
+  src\app\checkout\page.tsx:141:      const res = await 
+fetch("/api/checkout/create-order", {
+  src\app\checkout\page.tsx:142:        method: "POST",
+  src\app\checkout\page.tsx:143:        headers: { "Content-Type": 
+"application/json" },
+  src\app\checkout\page.tsx:144:        body: JSON.stringify({
+  src\app\checkout\page.tsx:145:          customerName: 
+addressForm.fullName,
+  src\app\checkout\page.tsx:146:          customerEmail,
+  src\app\checkout\page.tsx:147:          customerPhone: addressForm.phone,
+  src\app\checkout\page.tsx:166:        setIsProcessing(false);
+  src\app\checkout\page.tsx:167:        setPaymentError(data.error || 
+"Failed to initialize order with server.");
+  src\app\checkout\page.tsx:168:        return;
+  src\app\checkout\page.tsx:169:      }
+  src\app\checkout\page.tsx:170:
+> src\app\checkout\page.tsx:171:      setPendingServerOrder(data);
+  src\app\checkout\page.tsx:172:
+  src\app\checkout\page.tsx:173:      // Check if Razorpay client SDK is 
+loaded
+  src\app\checkout\page.tsx:174:      if (typeof window !== "undefined" && 
+window.Razorpay && !data.isTestMode) {
+  src\app\checkout\page.tsx:175:        const options = {
+  src\app\checkout\page.tsx:176:          key: data.keyId,
+  src\app\checkout\page.tsx:177:          amount: data.amount,
+  src\app\checkout\page.tsx:178:          currency: data.currency,
+  src\app\checkout\page.tsx:179:          name: "RIGHTNOWLIFE",
+  src\app\checkout\page.tsx:180:          description: `Streetwear Order 
+#${data.orderNumber}`,
+  src\app\checkout\page.tsx:181:          image: 
+"/brand/rightnowlife-logo.jpg",
+  src\app\checkout\page.tsx:182:          order_id: data.razorpayOrderId,
+  src\app\checkout\page.tsx:183:          prefill: {
+  src\app\checkout\page.tsx:263:          discount: 
+serverOrder.pricing.discount,
+  src\app\checkout\page.tsx:264:          items: [...items],
+  src\app\checkout\page.tsx:265:          address: { ...addressForm },
+  src\app\checkout\page.tsx:266:          paymentId: razorpayPaymentId,
+  src\app\checkout\page.tsx:267:        });
+> src\app\checkout\page.tsx:268:        setStep(4);
+  src\app\checkout\page.tsx:269:        window.scrollTo({ top: 0, 
+behavior: "smooth" });
+  src\app\checkout\page.tsx:270:      } else {
+  src\app\checkout\page.tsx:271:        setPaymentError(data.error || 
+"Cryptographic payment verification failed.");
+  src\app\checkout\page.tsx:272:      }
+  src\app\checkout\page.tsx:273:    } catch (err: any) {
+  src\app\checkout\page.tsx:274:      console.error("Payment verification 
+call failed:", err);
+  src\app\checkout\page.tsx:275:      setPaymentError("Network error 
+occurred during payment verification.");
+  src\app\checkout\page.tsx:276:    } finally {
+  src\app\checkout\page.tsx:277:      setIsVerifying(false);
+  src\app\checkout\page.tsx:278:      setIsProcessing(false);
+  src\app\checkout\page.tsx:279:    }
+  src\app\checkout\page.tsx:280:  };
+  src\app\checkout\page.tsx:762:                    </button>
+  src\app\checkout\page.tsx:763:                  </div>
+  src\app\checkout\page.tsx:764:                </div>
+  src\app\checkout\page.tsx:765:              )}
+  src\app\checkout\page.tsx:766:
+> src\app\checkout\page.tsx:767:              {/* ── STEP 3: RAZORPAY 
+PAYMENT GATEWAY ── */}
+  src\app\checkout\page.tsx:768:              {step === 3 && (
+  src\app\checkout\page.tsx:769:                <div className="space-y-6">
+  src\app\checkout\page.tsx:770:                  <div className="border 
+border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm">
+  src\app\checkout\page.tsx:771:                    <div className="flex 
+items-center justify-between pb-2 border-b border-[#E5E5E5]">
+  src\app\checkout\page.tsx:772:                      <h2 
+className="text-xs font-bold uppercase tracking-wider text-[#111111] flex 
+items-center gap-2">
+  src\app\checkout\page.tsx:773:                        <CreditCard 
+className="w-4 h-4 text-[#FFB900]" />
+  src\app\checkout\page.tsx:774:                        <span>Select 
+Payment Gateway</span>
+  src\app\checkout\page.tsx:775:                      </h2>
+  src\app\checkout\page.tsx:776:                      <span 
+className="text-[10px] font-mono uppercase tracking-widest text-[#079447] 
+font-bold flex items-center gap-1">
+  src\app\checkout\page.tsx:777:                        <ShieldCheck 
+className="w-3.5 h-3.5" /> 256-Bit Encrypted
+  src\app\checkout\page.tsx:778:                      </span>
+  src\app\checkout\page.tsx:779:                    </div>
+  src\app\checkout\page.tsx:802:                        </div>
+  src\app\checkout\page.tsx:803:                      </div>
+  src\app\checkout\page.tsx:804:                    </div>
+  src\app\checkout\page.tsx:805:
+  src\app\checkout\page.tsx:806:                    {/* Test Mode 
+Interactive Sandbox Option */}
+> src\app\checkout\page.tsx:807:                    
+{pendingServerOrder?.isTestMode && (
+  src\app\checkout\page.tsx:808:                      <div className="mt-4 
+p-4 bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-2">
+  src\app\checkout\page.tsx:809:                        <div 
+className="flex items-center gap-1.5 font-bold">
+  src\app\checkout\page.tsx:810:                          <Sparkles 
+className="w-4 h-4 text-amber-700" />
+  src\app\checkout\page.tsx:811:                          <span>Local Test 
+Sandbox Active</span>
+  src\app\checkout\page.tsx:812:                        </div>
+  src\app\checkout\page.tsx:813:                        <p 
+className="text-[11px] leading-relaxed">
+> src\app\checkout\page.tsx:814:                          Server generated 
+order ID: <code 
+className="font-bold">{pendingServerOrder.razorpayOrderId}</code>. Click 
+below to verify and complete the mock transaction with server-side 
+inventory commitment.
+  src\app\checkout\page.tsx:815:                        </p>
+  src\app\checkout\page.tsx:816:                        <button
+  src\app\checkout\page.tsx:817:                          onClick={() =>
+  src\app\checkout\page.tsx:818:                            
+handleVerifyPayment(
+> src\app\checkout\page.tsx:819:                              
+pendingServerOrder.orderId,
+> src\app\checkout\page.tsx:820:                              
+pendingServerOrder.razorpayOrderId,
+  src\app\checkout\page.tsx:821:                              
+`pay_test_${Date.now()}`,
+  src\app\checkout\page.tsx:822:                              
+"test_signature_mock",
+> src\app\checkout\page.tsx:823:                              
+pendingServerOrder
+  src\app\checkout\page.tsx:824:                            )
+  src\app\checkout\page.tsx:825:                          }
+  src\app\checkout\page.tsx:826:                          
+disabled={isVerifying}
+  src\app\checkout\page.tsx:827:                          
+className="btn-morph btn-dark px-4 py-2 text-[11px] uppercase 
+tracking-wider font-bold inline-flex items-center gap-2"
+  src\app\checkout\page.tsx:828:                        >
+  src\app\checkout\page.tsx:829:                          {isVerifying ? 
+"Verifying..." : "Complete Simulated Test Payment"}
+  src\app\checkout\page.tsx:830:                        </button>
+  src\app\checkout\page.tsx:831:                      </div>
+  src\app\checkout\page.tsx:832:                    )}
+  src\app\checkout\page.tsx:833:
+  src\app\checkout\page.tsx:834:                    <div className="pt-4 
+flex items-center justify-between border-t border-[#E5E5E5]">
+  src\app\checkout\page.tsx:835:                      <button
+  src\app\checkout\page.tsx:838:                      >
+  src\app\checkout\page.tsx:839:                        <ArrowLeft 
+className="w-3.5 h-3.5" /> Back to Review
+  src\app\checkout\page.tsx:840:                      </button>
+  src\app\checkout\page.tsx:841:
+  src\app\checkout\page.tsx:842:                      <button
+> src\app\checkout\page.tsx:843:                        
+onClick={handleInitiateRazorpay}
+  src\app\checkout\page.tsx:844:                        
+disabled={isProcessing || isVerifying}
+  src\app\checkout\page.tsx:845:                        
+className="btn-morph btn-yellow px-8 py-4 text-xs uppercase 
+tracking-widest font-black flex items-center gap-2 shadow-md 
+disabled:opacity-50"
+  src\app\checkout\page.tsx:846:                      >
+  src\app\checkout\page.tsx:847:                        <Lock 
+className="w-4 h-4" />
+  src\app\checkout\page.tsx:848:                        <span>
+  src\app\checkout\page.tsx:849:                          {isVerifying
+  src\app\checkout\page.tsx:850:                            ? "Verifying 
+Signature..."
+  src\app\checkout\page.tsx:851:                            : isProcessing
+  src\app\checkout\page.tsx:852:                            ? "Opening 
+Razorpay..."
+> src\app\checkout\page.tsx:853:                            : `Authorize & 
+Pay ${formatINR(total)}`}
+  src\app\checkout\page.tsx:854:                        </span>
+  src\app\checkout\page.tsx:855:                      </button>
+  src\app\checkout\page.tsx:856:                    </div>
+  src\app\checkout\page.tsx:857:                  </div>
+  src\app\checkout\page.tsx:858:                </div>
+  src\app\checkout\page.tsx:859:              )}
+  src\app\checkout\page.tsx:860:            </div>
+  src\app\checkout\page.tsx:861:
+  src\app\checkout\page.tsx:862:            {/* Sidebar Order Summary (5 
+cols) */}
+  src\app\checkout\page.tsx:863:            <div className="lg:col-span-5">
+  src\app\checkout\page.tsx:864:              <div className="border 
+border-[#E5E5E5] bg-white p-6 space-y-4 shadow-sm sticky top-24">
+  src\app\checkout\page.tsx:865:                <h3 className="text-xs 
+font-bold uppercase tracking-wider text-[#111111] pb-2 border-b 
+border-[#E5E5E5]">
+
+========== src\services\notification-service.ts ==========
+import { getDb, DbNotificationJob, OrderWithDetails } from "@/lib/db";
+import { randomUUID } from "crypto";
+
+export interface EmailSendResult {
+  sent: boolean;
+  provider: "smtp" | "resend" | "none";
+  messageId?: string;
+  error?: string;
+}
+
+/**
+ * Enqueue a transactional email notification job to the persistent notification_jobs table.
+ * If credentials exist, attempts immediate dispatch; otherwise marks as 'skipped' with reason.
+ */
+export async function queueNotificationJob(params: {
+  orderId?: string | null;
+  recipientEmail: string;
+  recipientName?: string | null;
+  eventType: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText?: string | null;
+  idempotencyKey?: string | null;
+}): Promise<DbNotificationJob> {
+  const db = getDb();
+  const id = `notif_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const idempotencyKey = params.idempotencyKey || id;
+  const now = new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO notification_jobs (
+      id, order_id, recipient_email, recipient_name, event_type,
+      subject, body_text, body_html, status, attempts, max_attempts,
+      last_error, idempotency_key, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, NULL, ?, ?, ?)
+    ON CONFLICT (idempotency_key) DO NOTHING
+  `).run(
+    id,
+    params.orderId || null,
+    params.recipientEmail,
+    params.recipientName || null,
+    params.eventType,
+    params.subject,
+    params.bodyText || null,
+    params.bodyHtml,
+    idempotencyKey,
+    now,
+    now
+  );
+
+  // Attempt dispatch immediately
+  const job = await db.prepare("SELECT * FROM notification_jobs WHERE idempotency_key = ?")
+    .get<DbNotificationJob>(idempotencyKey);
+  if (!job) throw new Error("Notification job could not be retrieved after enqueue.");
+  if (job.id === id) await processNotificationJob(job.id);
+
+  return (await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+    .get<DbNotificationJob>(job.id)) ?? job;
+}
+
+/**
+ * Process a queued notification job by ID
+ */
+export async function processNotificationJob(jobId: string): Promise<EmailSendResult> {
+  const db = getDb();
+  const job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+    .get<DbNotificationJob>(jobId);
+
+  if (!job) {
+    return { sent: false, provider: "none", error: "Notification job not found." };
+  }
+
+  if (job.status === "sent") {
+    return { sent: true, provider: "none" };
+  }
+
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const smtpHost = process.env.SMTP_HOST;
+  const now = new Date().toISOString();
+
+  if (!resendApiKey && !smtpHost) {
+    // Graceful unconfigured fallback
+    await db.prepare(`
+      UPDATE notification_jobs
+      SET status = 'skipped',
+          last_error = 'No email provider configured (RESEND_API_KEY or SMTP_HOST missing).',
+          updated_at = ?
+      WHERE id = ?
+    `).run(now, jobId);
+
+    console.info(`[Notification] Job ${jobId} skipped: provider is unconfigured.`);
+    return { sent: false, provider: "none", error: "Email provider unconfigured." };
+  }
+
+  if (resendApiKey) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: process.env.EMAIL_FROM || "RightNowLife Orders <orders@rightnowlife.in>",
+          to: [job.recipient_email],
+          subject: job.subject,
+          html: job.body_html,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        await db.prepare(`
+          UPDATE notification_jobs
+          SET status = 'sent',
+              attempts = attempts + 1,
+              last_error = NULL,
+              updated_at = ?
+          WHERE id = ?
+        `).run(new Date().toISOString(), jobId);
+
+        return { sent: true, provider: "resend", messageId: data.id };
+      } else {
+        const errData = await response.text();
+        await db.prepare(`
+          UPDATE notification_jobs
+          SET attempts = attempts + 1,
+              status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
+              last_error = ?,
+              updated_at = ?
+          WHERE id = ?
+        `).run(`Resend error: ${errData}`, new Date().toISOString(), jobId);
+
+        return { sent: false, provider: "resend", error: errData };
+      }
+    } catch (err: any) {
+      await db.prepare(`
+        UPDATE notification_jobs
+        SET attempts = attempts + 1,
+            status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
+            last_error = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(err.message, new Date().toISOString(), jobId);
+
+      return { sent: false, provider: "resend", error: err.message };
+    }
+  }
+
+  return { sent: false, provider: "none", error: "Unsupported email provider." };
+}
+
+/**
+ * Trigger order confirmation notification
+ */
+export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promise<DbNotificationJob> {
+  const html = generateOrderEmailHtml(order);
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "order_confirmation",
+    subject: `Order Confirmed: #${order.order_number} â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_conf_${order.id}`,
+  });
+}
+
+/**
+ * Trigger shipping notification
+ */
+export async function sendShippingUpdateEmail(
+  order: OrderWithDetails,
+  courierName: string,
+  trackingNumber: string,
+  trackingUrl?: string | null
+): Promise<DbNotificationJob> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #0876A8; font-weight: bold;">YOUR ORDER IS ON THE WAY</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>Great news! Your Order <strong>#${order.order_number}</strong> has been handed over to <strong>${courierName}</strong>.</p>
+      <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Courier Partner:</strong> ${courierName}</p>
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Tracking Number (AWB):</strong> ${trackingNumber}</p>
+        ${
+          trackingUrl
+            ? `<p style="margin: 0; font-size: 13px;"><a href="${trackingUrl}" style="display: inline-block; background: #111111; color: #ffffff; text-decoration: none; padding: 8px 16px; font-weight: bold; border-radius: 4px;" target="_blank" rel="noopener noreferrer">Track Consignment &rarr;</a></p>`
+            : ""
+        }
+      </div>
+      <p style="font-size: 12px; color: #858585;">Estimated delivery within 2â€“4 business days across metro locations.</p>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "shipping_update",
+    subject: `Dispatched: Order #${order.order_number} is on the way â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_ship_${order.id}_${trackingNumber}`,
+  });
+}
+
+/**
+ * Trigger return status notification
+ */
+export async function sendReturnStatusEmail(
+  order: OrderWithDetails,
+  returnType: "return" | "exchange",
+  status: string,
+  adminNote?: string | null
+): Promise<DbNotificationJob> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #111111; font-weight: bold;">${returnType.toUpperCase()} STATUS UPDATE</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>Your request for a ${returnType} on Order <strong>#${order.order_number}</strong> has been updated to: <strong>${status.toUpperCase()}</strong>.</p>
+      ${adminNote ? `<p style="background: #f7f7f7; padding: 12px; border-left: 3px solid #111111; font-size: 13px;">${adminNote}</p>` : ""}
+      <p style="font-size: 12px; color: #858585;">You can view the full progress in your customer order dashboard.</p>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "return_status_update",
+    subject: `${returnType === "exchange" ? "Exchange" : "Return"} Status: #${order.order_number} (${status}) â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_ret_${order.id}_${status}_${Date.now()}`,
+  });
+}
+
+/**
+ * Trigger refund notification
+ */
+export async function sendRefundConfirmationEmail(
+  order: OrderWithDetails,
+  amount: number,
+  refundId: string
+): Promise<DbNotificationJob> {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">REFUND PROCESSED SUCCESSFULLY</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>A refund of <strong>â‚¹${amount.toLocaleString("en-IN")}</strong> for Order <strong>#${order.order_number}</strong> has been successfully initiated to your original payment method.</p>
+      <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Refund Reference ID:</strong> ${refundId}</p>
+        <p style="margin: 0; font-size: 13px;"><strong>Amount:</strong> â‚¹${amount.toLocaleString("en-IN")}</p>
+      </div>
+      <p style="font-size: 12px; color: #858585;">Bank / UPI processing times typically take 3â€“7 business days to reflect on your statement.</p>
+    </div>
+  `;
+
+  return queueNotificationJob({
+    orderId: order.id,
+    recipientEmail: order.customer_email,
+    recipientName: order.customer_name,
+    eventType: "refund_processed",
+    subject: `Refund Processed: â‚¹${amount} for #${order.order_number} â€” RightNowLife`,
+    bodyHtml: html,
+    idempotencyKey: `notif_rfnd_${refundId}`,
+  });
+}
+
+function generateOrderEmailHtml(order: OrderWithDetails): string {
+  const itemsHtml = order.items
+    .map(
+      (item) => `
+      <tr>
+        <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5;">
+          <strong>${item.product_name}</strong><br/>
+          <small>Size: ${item.size} | Color: ${item.color} | Qty: ${item.quantity}</small>
+        </td>
+        <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
+          â‚¹${(item.price * item.quantity).toLocaleString("en-IN")}
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+
+  return `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
+      <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">PAYMENT VERIFIED & ORDER CONFIRMED</p>
+      <p>Hey ${order.customer_name},</p>
+      <p>Thank you for choosing RightNowLife. Your payment for Order <strong>#${order.order_number}</strong> has been received and your garments are entering preparation.</p>
+      
+      <table style="width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 13px;">
+        <thead>
+          <tr style="text-align: left; border-bottom: 2px solid #111111;">
+            <th style="padding-bottom: 8px;">GARMENT</th>
+            <th style="padding-bottom: 8px; text-align: right;">TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td style="padding-top: 12px; font-weight: bold;">Subtotal</td>
+            <td style="padding-top: 12px; font-weight: bold; text-align: right;">â‚¹${order.subtotal.toLocaleString("en-IN")}</td>
+          </tr>
+          <tr>
+            <td style="padding-top: 6px;">Express Shipping</td>
+            <td style="padding-top: 6px; text-align: right;">${order.shipping === 0 ? "FREE" : "â‚¹" + order.shipping}</td>
+          </tr>
+          <tr style="font-size: 16px; font-weight: 900;">
+            <td style="padding-top: 10px; border-top: 1px solid #111111;">Total Paid</td>
+            <td style="padding-top: 10px; border-top: 1px solid #111111; text-align: right;">â‚¹${order.total.toLocaleString("en-IN")}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <p style="font-size: 12px; color: #858585;">
+        Delivery Address: ${order.address?.address_line1}, ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}<br/>
+        Air courier tracking details will be dispatched via SMS once picked up by our logistics partner.
+      </p>
+    </div>
+  `;
+}
+
+========== src\lib\db\index.ts ==========
+import "server-only";
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
+import { types } from "pg";
+import { toPostgresPlaceholders } from "./sql";
+
+types.setTypeParser(1184, (value) => value);
+
+declare global {
+  var rightnowlifePostgresPool: Pool | undefined;
+}
+
+export interface DbStatement {
+  get<T extends QueryResultRow = QueryResultRow>(...params: unknown[]): Promise<T | undefined>;
+  all<T extends QueryResultRow = QueryResultRow>(...params: unknown[]): Promise<T[]>;
+  run(...params: unknown[]): Promise<QueryResult>;
+}
+
+export interface DbConnection {
+  prepare(sql: string): DbStatement;
+}
+
+class PostgresConnection implements DbConnection {
+  constructor(private readonly client: Pool | PoolClient) {}
+
+  prepare(sql: string): DbStatement {
+    return {
+      get: async <T extends QueryResultRow = QueryResultRow>(...params: unknown[]): Promise<T | undefined> => {
+        const result = await this.client.query<T>(toPostgresPlaceholders(sql), params);
+        return result.rows[0];
+      },
+      all: async <T extends QueryResultRow>(...params: unknown[]) => {
+        const result = await this.client.query<T>(toPostgresPlaceholders(sql), params);
+        return result.rows;
+      },
+      run: (...params: unknown[]) =>
+        this.client.query(toPostgresPlaceholders(sql), params),
+    };
+  }
+}
+
+function getPool(): Pool {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is required for the PostgreSQL runtime.");
+  }
+
+  if (!globalThis.rightnowlifePostgresPool) {
+    const max = Number.parseInt(process.env.PG_POOL_MAX ?? "10", 10);
+    if (!Number.isInteger(max) || max < 1) {
+      throw new Error("PG_POOL_MAX must be a positive integer.");
+    }
+    globalThis.rightnowlifePostgresPool = new Pool({
+      connectionString,
+      max,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+      application_name: "rightnowlife",
+    });
+    globalThis.rightnowlifePostgresPool.on("error", (error) => {
+      console.error(`[database] Unexpected idle PostgreSQL client error (${getErrorCode(error)}).`);
+    });
+  }
+
+  return globalThis.rightnowlifePostgresPool;
+}
+
+function getErrorCode(error: unknown): string {
+  return error instanceof Error && "code" in error ? String(error.code) : "unknown";
+}
+
+export function getDb(): DbConnection {
+  return new PostgresConnection(getPool());
+}
+
+export async function withTransaction<T>(
+  callback: (db: DbConnection) => Promise<T>
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await callback(new PostgresConnection(client));
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error(`[database] Failed to roll back transaction (${getErrorCode(rollbackError)}).`);
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export interface DbOrder {
+  id: string;
+  order_number: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  total: number;
+  payment_method: string;
+  payment_status: string;
+  order_status: string;
+  razorpay_order_id: string | null;
+  razorpay_payment_id: string | null;
+  razorpay_signature: string | null;
+  guest_token: string;
+  user_id: string | null;
+  courier_name: string | null;
+  tracking_number: string | null;
+  tracking_url: string | null;
+  dispatch_date: string | null;
+  estimated_delivery_date: string | null;
+  actual_delivery_date: string | null;
+  cancellation_requested: number | null;
+  cancellation_requested_at: string | null;
+  cancellation_reason: string | null;
+  notes: string | null;
+  cancelled_reason: string | null;
+  refund_status: string | null;
+  refund_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbOrderItem {
+  id: string;
+  order_id: string;
+  product_id: string;
+  product_slug: string;
+  product_name: string;
+  color: string;
+  size: string;
+  price: number;
+  quantity: number;
+  image: string;
+  sku: string;
+  fit: string;
+}
+
+export interface DbOrderAddress {
+  id: string;
+  order_id: string;
+  full_name: string;
+  phone: string;
+  address_line1: string;
+  address_line2: string | null;
+  landmark: string | null;
+  city: string;
+  state: string;
+  pin_code: string;
+  country: string;
+}
+
+export interface DbOrderStatusHistory {
+  id: string;
+  order_id: string;
+  from_status: string | null;
+  to_status: string;
+  actor: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface DbShippingEvent {
+  id: string;
+  order_id: string;
+  status: string;
+  location: string | null;
+  description: string;
+  courier_name: string | null;
+  tracking_number: string | null;
+  occurred_at: string;
+  created_at: string;
+}
+
+export interface DbReturn {
+  id: string;
+  order_id: string;
+  return_number: string;
+  customer_email: string;
+  type: "return" | "exchange";
+  status: string;
+  reason: string;
+  customer_note: string | null;
+  customer_notes: string | null;
+  admin_note: string | null;
+  admin_notes: string | null;
+  resolution_type: string | null;
+  refund_amount: number | null;
+  inspection_result: string | null;
+  inspection_notes: string | null;
+  restocked: number;
+  exchange_item_id: string | null;
+  exchange_size: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbReturnItem {
+  id: string;
+  return_id: string;
+  order_item_id: string;
+  product_id: string;
+  product_name: string;
+  product_slug: string | null;
+  color: string;
+  size: string;
+  quantity: number;
+  price: number;
+  requested_exchange_size: string | null;
+  condition: string | null;
+  restocked: number | null;
+  created_at: string | null;
+}
+
+export interface DbRefundRecord {
+  id: string;
+  order_id: string;
+  return_id: string | null;
+  razorpay_refund_id: string | null;
+  razorpay_payment_id: string;
+  amount: number;
+  amount_paisa: number;
+  currency: string;
+  status: string;
+  reason: string | null;
+  idempotency_key: string;
+  raw_response: string | null;
+  initiated_by: string | null;
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbNotificationJob {
+  id: string;
+  order_id: string | null;
+  event_type: string;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  body_text: string | null;
+  body_html: string;
+  status: string;
+  provider: string;
+  provider_message_id: string | null;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrderWithDetails extends DbOrder {
+  items: DbOrderItem[];
+  address: DbOrderAddress | null;
+  history?: DbOrderStatusHistory[];
+  shipping_events?: DbShippingEvent[];
+  returns?: (DbReturn & { items: DbReturnItem[] })[];
+  refunds?: DbRefundRecord[];
+}
+
+export interface DbAdminUser {
+  id: string;
+  email: string;
+  name: string;
+  password_hash: string;
+  role: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbInventoryRow {
+  product_id: string;
+  size: string;
+  stock: number;
+  reserved: number;
+}
+
+export interface DbAuditLog {
+  id: string;
+  actor: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  before_value: string | null;
+  after_value: string | null;
+  metadata: string | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface DbProductOverride {
+  product_id: string;
+  is_active: number;
+  custom_description: string | null;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+========== src\lib\db\orders.ts ==========
+import { randomUUID } from "crypto";
+import {
+  getDb,
+  DbOrder,
+  DbOrderItem,
+  DbOrderAddress,
+  DbOrderStatusHistory,
+  DbShippingEvent,
+  DbReturn,
+  DbReturnItem,
+  DbRefundRecord,
+  DbConnection,
+  OrderWithDetails,
+  withTransaction,
+} from "./index";
+
+export async function checkAndReserveInventory(
+  items: Array<{ productId: string; size: string; quantity: number }>
+): Promise<{ ok: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const quantities = new Map<string, { productId: string; size: string; quantity: number }>();
+    for (const item of items) {
+      const key = `${item.productId}\0${item.size}`;
+      const existing = quantities.get(key);
+      quantities.set(key, {
+        ...item,
+        quantity: (existing?.quantity ?? 0) + item.quantity,
+      });
+    }
+
+    const lockedRows: Array<{
+      item: { productId: string; size: string; quantity: number };
+      available: number;
+    }> = [];
+
+    for (const item of quantities.values()) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, 20, 0)
+        ON CONFLICT (product_id, size) DO NOTHING
+      `).run(item.productId, item.size);
+
+      const row = await db.prepare(`
+        SELECT stock, reserved FROM inventory
+        WHERE product_id = ? AND size = ?
+        FOR UPDATE
+      `).get<{ stock: number; reserved: number }>(item.productId, item.size);
+      if (!row) throw new Error("Inventory row disappeared while reserving stock.");
+
+      const available = Math.max(0, row.stock - row.reserved);
+      if (available < item.quantity) {
+        return {
+          ok: false,
+          error: `Insufficient stock for product (${item.size}). Only ${available} available.`,
+        };
+      }
+      lockedRows.push({ item, available });
+    }
+
+    for (const { item } of lockedRows) {
+      await db.prepare(`
+        UPDATE inventory SET reserved = reserved + ?
+        WHERE product_id = ? AND size = ?
+      `).run(item.quantity, item.productId, item.size);
+    }
+    return { ok: true };
+  });
+}
+
+export async function releaseInventoryReservation(
+  items: Array<{ productId: string; size: string; quantity: number }>
+): Promise<void> {
+  await withTransaction(async (db) => {
+    for (const item of items) {
+      await db.prepare(`
+      UPDATE inventory 
+      SET reserved = GREATEST(0, reserved - ?) 
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.productId, item.size);
+    }
+  });
+}
+
+export async function commitInventoryDeduction(
+  items: Array<{ productId: string; size: string; quantity: number }>
+): Promise<void> {
+  await withTransaction(async (db) => {
+    for (const item of items) {
+      await db.prepare(`
+      UPDATE inventory 
+      SET stock = GREATEST(0, stock - ?), 
+          reserved = GREATEST(0, reserved - ?) 
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.quantity, item.productId, item.size);
+    }
+  });
+}
+
+export interface CreateOrderParams {
+  orderNumber: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  total: number;
+  paymentMethod: string;
+  razorpayOrderId?: string;
+  userId?: string | null;
+  items: Array<{
+    productId: string;
+    productSlug: string;
+    productName: string;
+    color: string;
+    size: string;
+    price: number;
+    quantity: number;
+    image: string;
+    sku: string;
+    fit: string;
+  }>;
+  address: {
+    fullName: string;
+    phone: string;
+    addressLine1: string;
+    addressLine2?: string;
+    landmark?: string;
+    city: string;
+    state: string;
+    pinCode: string;
+    country?: string;
+  };
+}
+
+export async function createPendingOrder(params: CreateOrderParams): Promise<{
+  order: DbOrder;
+  guestToken: string;
+}> {
+  const orderId = `ord_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const guestToken = randomUUID();
+  const now = new Date().toISOString();
+
+  return withTransaction(async (db) => {
+  await db.prepare(`
+    INSERT INTO orders (
+      id, order_number, customer_name, customer_email, customer_phone,
+      subtotal, shipping, discount, total, payment_method, payment_status,
+      order_status, razorpay_order_id, guest_token, user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', 'pending_payment', ?, ?, ?, ?, ?)
+  `).run(
+    orderId,
+    params.orderNumber,
+    params.customerName,
+    params.customerEmail.toLowerCase().trim(),
+    params.customerPhone.trim(),
+    params.subtotal,
+    params.shipping,
+    params.discount,
+    params.total,
+    params.paymentMethod,
+    params.razorpayOrderId || null,
+    guestToken,
+    params.userId || null,
+    now,
+    now
+  );
+
+  // Insert items
+  const insertItem = db.prepare(`
+    INSERT INTO order_items (
+      id, order_id, product_id, product_slug, product_name,
+      color, size, price, quantity, image, sku, fit
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const item of params.items) {
+    const itemId = `item_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    await insertItem.run(
+      itemId,
+      orderId,
+      item.productId,
+      item.productSlug,
+      item.productName,
+      item.color,
+      item.size,
+      item.price,
+      item.quantity,
+      item.image,
+      item.sku,
+      item.fit
+    );
+  }
+
+  // Insert delivery address
+  const addrId = `addr_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO order_addresses (
+      id, order_id, full_name, phone, address_line1, address_line2,
+      landmark, city, state, pin_code, country
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    addrId,
+    orderId,
+    params.address.fullName,
+    params.address.phone,
+    params.address.addressLine1,
+    params.address.addressLine2 || null,
+    params.address.landmark || null,
+    params.address.city,
+    params.address.state,
+    params.address.pinCode,
+    params.address.country || "India"
+  );
+
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  if (!order) throw new Error("Created order could not be retrieved.");
+  return { order, guestToken };
+  });
+}
+
+export async function updateOrderRazorpayId(orderId: string, razorpayOrderId: string): Promise<void> {
+  const db = getDb();
+  await db.prepare("UPDATE orders SET razorpay_order_id = ?, updated_at = ? WHERE id = ?").run(
+    razorpayOrderId,
+    new Date().toISOString(),
+    orderId
+  );
+}
+
+async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails> {
+  const db = getDb();
+  const items = await db
+    .prepare("SELECT * FROM order_items WHERE order_id = ?")
+    .all<DbOrderItem>(order.id);
+  const address = (await db
+    .prepare("SELECT * FROM order_addresses WHERE order_id = ?")
+    .get<DbOrderAddress>(order.id)) || null;
+  const history = await db
+    .prepare("SELECT * FROM order_status_history WHERE order_id = ? ORDER BY created_at ASC")
+    .all<DbOrderStatusHistory>(order.id);
+  const shipping_events = await db
+    .prepare("SELECT * FROM shipping_events WHERE order_id = ? ORDER BY occurred_at ASC")
+    .all<DbShippingEvent>(order.id);
+  const refunds = await db
+    .prepare("SELECT * FROM refund_records WHERE order_id = ? ORDER BY created_at DESC")
+    .all<DbRefundRecord>(order.id);
+
+  const returnRows = await db
+    .prepare("SELECT * FROM returns WHERE order_id = ? ORDER BY created_at DESC")
+    .all<DbReturn>(order.id);
+  const returns = await Promise.all(returnRows.map(async (ret) => {
+    const returnItems = await db
+      .prepare("SELECT * FROM return_items WHERE return_id = ?")
+      .all<DbReturnItem>(ret.id);
+    return { ...ret, items: returnItems };
+  }));
+
+  return {
+    ...order,
+    items,
+    address,
+    history,
+    shipping_events,
+    returns,
+    refunds,
+  };
+}
+
+export async function getOrderById(orderId: string): Promise<OrderWithDetails | null> {
+  const db = getDb();
+  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  if (!order) return null;
+  return populateOrderRelations(order);
+}
+
+export async function getOrderByRazorpayOrderId(rzpOrderId: string): Promise<OrderWithDetails | null> {
+  const db = getDb();
+  const order = await db
+    .prepare("SELECT * FROM orders WHERE razorpay_order_id = ?")
+    .get<DbOrder>(rzpOrderId);
+  if (!order) return null;
+  return populateOrderRelations(order);
+}
+
+export async function getOrderByNumber(orderNumber: string): Promise<OrderWithDetails | null> {
+  const db = getDb();
+  const order = await db
+    .prepare("SELECT * FROM orders WHERE order_number = ?")
+    .get<DbOrder>(orderNumber);
+  if (!order) return null;
+  return populateOrderRelations(order);
+}
+
+export async function getOrdersByEmail(email: string): Promise<OrderWithDetails[]> {
+  const db = getDb();
+  const orders = await db
+    .prepare("SELECT * FROM orders WHERE customer_email = ? ORDER BY created_at DESC")
+    .all<DbOrder>(email.toLowerCase().trim());
+
+  return Promise.all(orders.map(populateOrderRelations));
+}
+
+export async function getAllOrders(): Promise<OrderWithDetails[]> {
+  const db = getDb();
+  const orders = await db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all<DbOrder>();
+
+  return Promise.all(orders.map(populateOrderRelations));
+}
+
+/**
+ * Idempotently mark order as paid.
+ * Returns true if transition occurred, or true if already paid.
+ */
+export async function markOrderAsPaid(
+  orderId: string,
+  razorpayPaymentId: string,
+  razorpaySignature?: string
+): Promise<{ success: boolean; alreadyPaid: boolean }> {
+  return withTransaction(async (db) => {
+  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+  if (!current) return { success: false, alreadyPaid: false };
+  if (current.payment_status === "paid") return { success: true, alreadyPaid: true };
+
+  const now = new Date().toISOString();
+  await db.prepare(`
+    UPDATE orders 
+    SET payment_status = 'paid',
+        order_status = 'paid',
+        razorpay_payment_id = ?,
+        razorpay_signature = COALESCE(?, razorpay_signature),
+        updated_at = ?
+    WHERE id = ?
+  `).run(razorpayPaymentId, razorpaySignature || null, now, orderId);
+
+  // Deduct inventory
+  const items = await db
+    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+  for (const item of items) {
+    await db.prepare(`
+      UPDATE inventory
+      SET stock = GREATEST(0, stock - ?), reserved = GREATEST(0, reserved - ?)
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.quantity, item.product_id, item.size);
+  }
+
+  return { success: true, alreadyPaid: false };
+  });
+}
+
+export async function markOrderPaymentFailed(orderId: string, reason?: string): Promise<void> {
+  await withTransaction(async (db) => {
+  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+  if (!current || current.payment_status === "paid") return;
+
+  const now = new Date().toISOString();
+  await db.prepare(`
+    UPDATE orders 
+    SET payment_status = 'payment_failed',
+        order_status = 'payment_failed',
+        updated_at = ?
+    WHERE id = ?
+  `).run(now, orderId);
+
+  // Release reserved inventory
+  const items = await db
+    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+  for (const item of items) {
+    await db.prepare(`
+      UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+      WHERE product_id = ? AND size = ?
+    `).run(item.quantity, item.product_id, item.size);
+  }
+
+  await logPaymentAudit(orderId, "payment_failed", { reason: reason || "Payment failed or cancelled" }, db);
+  });
+}
+
+export async function logPaymentAudit(
+  orderId: string | null,
+  eventType: string,
+  payload: unknown,
+  connection?: DbConnection
+): Promise<void> {
+  const db = connection ?? getDb();
+  const auditId = `aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO payment_audits (id, order_id, event_type, payload, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(auditId, orderId || null, eventType, JSON.stringify(payload), new Date().toISOString());
+}
+
+/**
+ * Record a shipping timeline event (e.g. Dispatched, Out for Delivery, Delivered)
+ */
+export async function addShippingEvent(params: {
+  orderId: string;
+  status: string;
+  location?: string | null;
+  description: string;
+  occurredAt?: string;
+}): Promise<DbShippingEvent> {
+  const db = getDb();
+  const id = `shpe_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const occurredAt = params.occurredAt || new Date().toISOString();
+  const createdAt = new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO shipping_events (id, order_id, status, location, description, occurred_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.orderId,
+    params.status,
+    params.location || null,
+    params.description,
+    occurredAt,
+    createdAt
+  );
+
+  return {
+    id,
+    order_id: params.orderId,
+    status: params.status,
+    location: params.location || null,
+    description: params.description,
+    courier_name: null,
+    tracking_number: null,
+    occurred_at: occurredAt,
+    created_at: createdAt,
+  };
+}
+
+/**
+ * Record a status change in order_status_history
+ */
+export async function recordOrderStatusHistory(
+  orderId: string,
+  fromStatus: string | null,
+  toStatus: string,
+  actor: string,
+  note?: string | null,
+  connection?: DbConnection
+): Promise<void> {
+  const db = connection ?? getDb();
+  const id = `osh_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  await db.prepare(`
+    INSERT INTO order_status_history (id, order_id, from_status, to_status, actor, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, orderId, fromStatus, toStatus, actor, note || null, new Date().toISOString());
+}
+
+/**
+ * Customer requests cancellation.
+ * Allowed when order is pending_payment, paid, or processing (within policy).
+ */
+export async function requestOrderCancellation(orderId: string, reason: string): Promise<{ success: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.cancellation_requested) {
+      return { success: false, error: "Cancellation has already been requested for this order." };
+    }
+    if (["shipped", "delivered", "cancelled", "refunded"].includes(order.order_status)) {
+      return { success: false, error: `Order cannot be cancelled in '${order.order_status}' status.` };
+    }
+
+    const now = new Date().toISOString();
+    await db.prepare(`
+      UPDATE orders
+      SET cancellation_requested = 1,
+          cancellation_requested_at = ?,
+          cancellation_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(now, reason, now, orderId);
+
+    await recordOrderStatusHistory(
+      orderId,
+      order.order_status,
+      order.order_status,
+      order.customer_email,
+      `Customer requested cancellation: ${reason}`,
+      db
+    );
+
+    return { success: true };
+  });
+}
+
+/**
+ * Admin decides on cancellation request (approve or reject).
+ * If approved:
+ * - If unpaid: order marked cancelled, reserved inventory released.
+ * - If paid: order marked cancelled, order_status becomes refund_pending, inventory returned to stock.
+ */
+export async function decideOrderCancellation(
+  orderId: string,
+  approved: boolean,
+  actorEmail: string,
+  adminNote?: string
+): Promise<{ success: boolean; newStatus?: string; error?: string }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (!order.cancellation_requested) {
+      return { success: false, error: "There is no pending cancellation request for this order." };
+    }
+
+    const now = new Date().toISOString();
+    if (!approved) {
+      await db.prepare(`
+        UPDATE orders SET cancellation_requested = 0, updated_at = ? WHERE id = ?
+      `).run(now, orderId);
+      await recordOrderStatusHistory(
+        orderId,
+        order.order_status,
+        order.order_status,
+        actorEmail,
+        `Cancellation rejected by admin. Note: ${adminNote || "None"}`,
+        db
+      );
+      return { success: true, newStatus: order.order_status };
+    }
+
+    const isPaid = order.payment_status === "paid";
+    const newStatus = isPaid ? "refund_pending" : "cancelled";
+    await db.prepare(`
+      UPDATE orders
+      SET order_status = ?,
+          cancellation_requested = 0,
+          cancelled_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(newStatus, order.cancellation_reason || adminNote || "Approved cancellation", now, orderId);
+
+    const items = await db
+      .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id, size")
+      .all<{ product_id: string; size: string; quantity: number }>(orderId);
+
+    for (const item of items) {
+      const result = isPaid
+        ? await db.prepare(`
+            UPDATE inventory SET stock = stock + ?
+            WHERE product_id = ? AND size = ?
+          `).run(item.quantity, item.product_id, item.size)
+        : await db.prepare(`
+            UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
+            WHERE product_id = ? AND size = ?
+          `).run(item.quantity, item.product_id, item.size);
+      if (result.rowCount !== 1) throw new Error("Inventory row missing while processing order cancellation.");
+    }
+
+    await recordOrderStatusHistory(
+      orderId,
+      order.order_status,
+      newStatus,
+      actorEmail,
+      `Cancellation approved by admin. ${adminNote ? "Note: " + adminNote : ""}`,
+      db
+    );
+    return { success: true, newStatus };
+  });
+}
+
+/**
+ * Customer submits return or exchange request.
+ * Validates 7-day window and prevents returning more items than purchased.
+ */
+export async function requestReturnOrExchange(params: {
+  orderId: string;
+  type: "return" | "exchange";
+  reason: string;
+  customerNote?: string;
+  items: Array<{
+    orderItemId: string;
+    quantity: number;
+    requestedExchangeSize?: string;
+  }>;
+}): Promise<{ success: boolean; returnId?: string; error?: string }> {
+  if (!params.items?.length) {
+    return { success: false, error: "Please select at least one item to return or exchange." };
+  }
+  if (new Set(params.items.map((item) => item.orderItemId)).size !== params.items.length) {
+    return { success: false, error: "Each order item may only be listed once." };
+  }
+
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE")
+      .get<DbOrder>(params.orderId);
+    if (!order) return { success: false, error: "Order not found." };
+    if (order.order_status !== "delivered") {
+      return { success: false, error: "Returns and exchanges can only be requested for delivered orders." };
+    }
+
+    const deliveryTime = new Date(order.actual_delivery_date || order.updated_at).getTime();
+    const daysSinceDelivery = (Date.now() - deliveryTime) / (1000 * 60 * 60 * 24);
+    if (!Number.isFinite(deliveryTime) || daysSinceDelivery > 7) {
+      return { success: false, error: "Return window has expired (7 days policy)." };
+    }
+
+    const validatedItems: Array<{ request: typeof params.items[number]; orderItem: DbOrderItem }> = [];
+    let totalRefundAmount = 0;
+    for (const reqItem of params.items) {
+      if (!Number.isInteger(reqItem.quantity) || reqItem.quantity <= 0) {
+        return { success: false, error: "Return quantity must be at least 1." };
+      }
+      const orderItem = await db.prepare(
+        "SELECT * FROM order_items WHERE id = ? AND order_id = ? FOR UPDATE"
+      ).get<DbOrderItem>(reqItem.orderItemId, params.orderId);
+      if (!orderItem) return { success: false, error: "An order item was not found." };
+
+      const returned = await db.prepare(`
+        SELECT COALESCE(SUM(ri.quantity), 0) AS total_returned
+        FROM return_items ri
+        JOIN returns r ON ri.return_id = r.id
+        WHERE ri.order_item_id = ? AND r.status NOT IN ('rejected', 'cancelled')
+      `).get<{ total_returned: number | string }>(reqItem.orderItemId);
+      const remaining = orderItem.quantity - Number(returned?.total_returned ?? 0);
+      if (reqItem.quantity > remaining) {
+        return {
+          success: false,
+          error: `Cannot return ${reqItem.quantity} units of ${orderItem.product_name} (${orderItem.size}). Only ${remaining} eligible units remaining.`,
+        };
+      }
+      validatedItems.push({ request: reqItem, orderItem });
+      totalRefundAmount += orderItem.price * reqItem.quantity;
+    }
+
+    const returnId = `ret_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const returnNumber = `RET-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${randomUUID().slice(0, 8).toUpperCase()}`;
+    const now = new Date().toISOString();
+    await db.prepare(`
+      INSERT INTO returns (
+        id, order_id, return_number, customer_email, type, status, reason, customer_note, admin_note,
+        resolution_type, refund_amount, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'requested', ?, ?, NULL, ?, ?, ?, ?)
+    `).run(
+      returnId,
+      params.orderId,
+      returnNumber,
+      order.customer_email,
+      params.type,
+      params.reason,
+      params.customerNote || null,
+      params.type === "exchange" ? "exchange" : "refund",
+      params.type === "exchange" ? 0 : totalRefundAmount,
+      now,
+      now
+    );
+
+    const insertItem = db.prepare(`
+      INSERT INTO return_items (
+        id, return_id, order_item_id, product_id, product_name, product_slug, color, size,
+        quantity, price, requested_exchange_size, condition, restocked, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+    `);
+    for (const { request, orderItem } of validatedItems) {
+      await insertItem.run(
+        `reti_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        returnId,
+        request.orderItemId,
+        orderItem.product_id,
+        orderItem.product_name,
+        orderItem.product_slug,
+        orderItem.color || "As pictured",
+        orderItem.size,
+        request.quantity,
+        orderItem.price,
+        request.requestedExchangeSize || null,
+        now
+      );
+    }
+    await recordOrderStatusHistory(
+      params.orderId,
+      order.order_status,
+      order.order_status,
+      order.customer_email,
+      `${params.type === "exchange" ? "Exchange" : "Return"} requested for order (${returnId}). Reason: ${params.reason}`,
+      db
+    );
+    return { success: true, returnId };
+  });
+}
+
+/**
+ * Admin inspects return items and decides restocking condition.
+ */
+export async function inspectReturnItem(params: {
+  returnItemId: string;
+  condition: "resalable" | "damaged" | "unsuitable";
+  actorEmail: string;
+}): Promise<{ success: boolean; error?: string }> {
+  return withTransaction(async (db) => {
+    const item = await db.prepare("SELECT * FROM return_items WHERE id = ? FOR UPDATE")
+      .get<DbReturnItem>(params.returnItemId);
+    if (!item) return { success: false, error: "Return item not found." };
+
+    let restocked = item.restocked;
+    if (params.condition === "resalable" && !item.restocked) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT (product_id, size)
+        DO UPDATE SET stock = inventory.stock + EXCLUDED.stock
+      `).run(item.product_id, item.size, item.quantity);
+      restocked = 1;
+    }
+
+    await db.prepare(`
+      UPDATE return_items SET condition = ?, restocked = ? WHERE id = ?
+    `).run(params.condition, restocked, params.returnItemId);
+    return { success: true };
+  });
+}
+
+/**
+ * Record a refund record in the database
+ */
+export async function recordRefund(params: {
+  orderId: string;
+  returnId?: string | null;
+  razorpayRefundId?: string | null;
+  razorpayPaymentId?: string | null;
+  amount: number;
+  status: "pending" | "processed" | "failed";
+  reason: string;
+  initiatedBy: string;
+  failureReason?: string | null;
+}): Promise<DbRefundRecord> {
+  const db = getDb();
+  const id = `ref_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const now = new Date().toISOString();
+  const amountPaisa = Math.round(params.amount * 100);
+  const paymentId = params.razorpayPaymentId || "manual_unpaid_reversal";
+  const idempotencyKey = `idemp_${id}`;
+
+  await db.prepare(`
+    INSERT INTO refund_records (
+      id, order_id, return_id, razorpay_refund_id, razorpay_payment_id,
+      amount, amount_paisa, currency, status, reason, idempotency_key, initiated_by, failure_reason,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.orderId,
+    params.returnId || null,
+    params.razorpayRefundId || null,
+    paymentId,
+    params.amount,
+    amountPaisa,
+    params.status,
+    params.reason,
+    idempotencyKey,
+    params.initiatedBy,
+    params.failureReason || null,
+    now,
+    now
+  );
+
+  return {
+    id,
+    order_id: params.orderId,
+    return_id: params.returnId || null,
+    razorpay_refund_id: params.razorpayRefundId || null,
+    razorpay_payment_id: paymentId,
+    amount: params.amount,
+    amount_paisa: amountPaisa,
+    currency: "INR",
+    status: params.status,
+    reason: params.reason,
+    idempotency_key: idempotencyKey,
+    raw_response: null,
+    initiated_by: params.initiatedBy,
+    failure_reason: params.failureReason || null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+

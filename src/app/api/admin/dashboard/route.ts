@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb } from "@/lib/db/index";
-import { PRODUCTS } from "@/data/mock-data";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -96,12 +96,16 @@ export async function GET(req: NextRequest) {
     `).all<{ product_id: string; size: string; stock: number; reserved: number; available: number }>();
 
     // Enrich inventory warnings with product names
+    const supabase = createAdminSupabaseClient();
+    const { data: products, error: productsError } = await supabase
+      .from("products").select("id,name");
+    if (productsError) throw new Error(`Unable to load product labels: ${productsError.message}`);
     const productNames: Record<string, string> = {};
-    for (const p of PRODUCTS) productNames[p.id] = p.name;
+    for (const p of products ?? []) productNames[p.id] = p.name;
 
     const enrichedWarnings = inventoryWarnings.map((w) => ({
       ...w,
-      product_name: productNames[w.product_id] ?? w.product_id,
+      product_name: productNames[w.product_id] ?? `Unknown product (${w.product_id})`,
     }));
 
     return NextResponse.json({

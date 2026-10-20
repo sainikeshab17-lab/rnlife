@@ -22,7 +22,7 @@ import {
 
 describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
   test("Server strictly enforces ₹999 price per T-shirt and calculates correct shipping", () => {
-    // 1 item: ₹999 + ₹99 express shipping = ₹1,098
+    // 1 item: ₹999 + ₹0 express shipping = ₹999
     const singleResult = calculateTrustedOrderPricing([
       { productId: "rnl-design-01", size: "L", quantity: 1, color: "As pictured" },
     ]);
@@ -30,11 +30,11 @@ describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
     if (singleResult.success) {
       assert.strictEqual(singleResult.pricing.items[0].price, 999);
       assert.strictEqual(singleResult.pricing.subtotal, 999);
-      assert.strictEqual(singleResult.pricing.shipping, 99);
-      assert.strictEqual(singleResult.pricing.total, 1098);
+      assert.strictEqual(singleResult.pricing.shipping, 0);
+      assert.strictEqual(singleResult.pricing.total, 999);
     }
 
-    // 2 items: 2 * ₹999 = ₹1,998 (> ₹1,499) -> Free Shipping
+    // 2 items: 2 * ₹999 = ₹1,998 + ₹0 shipping = ₹1,998
     const multiResult = calculateTrustedOrderPricing([
       { productId: "rnl-design-01", size: "M", quantity: 1, color: "As pictured" },
       { productId: "rnl-design-02", size: "XL", quantity: 1, color: "As pictured" },
@@ -47,7 +47,7 @@ describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
     }
   });
 
-  test("Server calculates promotional discounts accurately on server", () => {
+  test("Server enforces no discounts when promo codes are disabled", () => {
     const promoResult = calculateTrustedOrderPricing(
       [{ productId: "rnl-design-03", size: "L", quantity: 2, color: "As pictured" }],
       "DROP20"
@@ -55,11 +55,8 @@ describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
     assert.strictEqual(promoResult.success, true);
     if (promoResult.success) {
       assert.strictEqual(promoResult.pricing.subtotal, 1998);
-      assert.strictEqual(promoResult.pricing.discount, Math.round(1998 * 0.2)); // 20%
-      assert.strictEqual(
-        promoResult.pricing.total,
-        1998 - Math.round(1998 * 0.2)
-      );
+      assert.strictEqual(promoResult.pricing.discount, 0); // Promo codes removed
+      assert.strictEqual(promoResult.pricing.total, 1998);
     }
   });
 

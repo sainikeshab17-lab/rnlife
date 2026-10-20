@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   ShieldAlert,
   LayoutDashboard,
@@ -73,9 +74,23 @@ export function AdminLayout({
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/admin/logout", { method: "POST" });
-    } finally {
-      router.push("/admin/login");
+      const res = await fetch("/api/admin/logout", { method: "POST" });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to sign out of admin session.");
+      }
+      try {
+        const supabase = createClient();
+        await supabase.auth.signOut();
+      } catch {
+        // Optional Supabase session cleanup
+      }
+      router.push("/");
+      router.refresh();
+    } catch (err) {
+      console.error("Admin logout error:", err);
+      // In case of error, still clear client cookies and navigate to home safely
+      router.push("/");
       router.refresh();
     }
   };
