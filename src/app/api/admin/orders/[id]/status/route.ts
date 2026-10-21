@@ -3,7 +3,7 @@ import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb, DbOrder, withTransaction } from "@/lib/db/index";
 import { isValidAdminTransition, requiresRefund } from "@/lib/order-status-machine";
 import { writeAuditLog } from "@/lib/db/audit";
-import { releaseInventoryReservation } from "@/lib/db/orders";
+import { lockInventoryVariants } from "@/lib/db/orders";
 import { randomBytes } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -81,8 +81,9 @@ export async function POST(
 
     if (newStatus === "cancelled" && current.payment_status === "pending_payment") {
       const items = await transaction.prepare(
-        "SELECT product_id, size, quantity FROM order_items WHERE order_id = ?"
+        'SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id COLLATE "C", size COLLATE "C"'
       ).all<{ product_id: string; size: string; quantity: number }>(id);
+      await lockInventoryVariants(transaction, items.map(({ product_id, size }) => ({ productId: product_id, size })));
       for (const item of items) {
         await transaction.prepare(`
           UPDATE inventory SET reserved = GREATEST(0, reserved - ?)

@@ -3,43 +3,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   CreateCheckoutOrderSchema,
+  CheckoutIdempotencyKeySchema,
   calculateTrustedOrderPricing,
+  createCheckoutRequestHash,
   generateOrderNumber,
 } from "@/services/checkout-service";
 import {
   checkAndReserveInventory,
-  releaseInventoryReservation,
   createPendingOrder,
   getOrderById,
   logPaymentAudit,
+  scopeCheckoutIdempotencyKey,
+  withCheckoutIdempotency,
 } from "@/lib/db/orders";
 import { dispatchAllOrderNotifications } from "@/services/notification-service";
 
 export const dynamic = "force-dynamic";
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => {
-    const entities: Record<string, string> = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
+const CheckoutRequestSchema = CreateCheckoutOrderSchema.extend({
+  idempotencyKey: CheckoutIdempotencyKeySchema,
+});
 
-    return entities[char];
-  });
-}
+class InventoryConflictError extends Error {}
 
 export async function POST(req: NextRequest) {
-  let reservedItems: Array<{
-    productId: string;
-    size: string;
-    quantity: number;
-  }> = [];
-
-  let reservationHeld = false;
-
   try {
     // 1. Verify the user's actual Supabase session.
     const supabase = await createClient();
@@ -55,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Validate the checkout payload.
     const body: unknown = await req.json();
-    const validation = CreateCheckoutOrderSchema.safeParse(body);
+    const validation = CheckoutRequestSchema.safeParse(body);
 
     if (!validation.success) {
       return NextResponse.json(
@@ -74,6 +61,7 @@ export async function POST(req: NextRequest) {
       address,
       items,
       promoCode,
+      idempotencyKey: requestKey,
     } = validation.data;
 
     // Always use the authenticated account's email and ID.
@@ -92,64 +80,79 @@ export async function POST(req: NextRequest) {
     const pricing = pricingResult.pricing;
 
     // 4. Reserve inventory before creating the order.
-    reservedItems = items.map((item) => ({
+    const reservedItems = items.map((item) => ({
       productId: item.productId,
       size: item.size,
       quantity: item.quantity,
     }));
 
-    const inventory = await checkAndReserveInventory(reservedItems);
-
-    if (!inventory.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: inventory.error || "Insufficient stock.",
-        },
-        { status: 409 }
-      );
-    }
-
-    reservationHeld = true;
-
-    // 5. Create the order. COD does not create a Razorpay order.
-    const { order, guestToken } = await createPendingOrder({
-      orderNumber: generateOrderNumber(),
-      customerName,
+    const idempotencyKey = scopeCheckoutIdempotencyKey(user.id, requestKey);
+    const requestHash = createCheckoutRequestHash({
+      userId: user.id,
       customerEmail,
+      paymentMethod: "Cash on Delivery",
+      customerName,
       customerPhone,
+      address,
+      items: pricing.items,
       subtotal: pricing.subtotal,
       shipping: pricing.shipping,
       discount: pricing.discount,
       total: pricing.total,
-      paymentMethod: "Cash on Delivery",
-      userId: user.id,
-      items: pricing.items,
-      address,
     });
 
-    // The order now exists; do not release its reservation because
-    // an audit or notification operation subsequently fails.
-    reservationHeld = false;
+    // The lock, reservation and order insert share one transaction. Repeated
+    // requests return the original order and cannot reserve stock twice.
+    const checkout = await withCheckoutIdempotency({
+      idempotencyKey,
+      requestHash,
+      create: async (db) => {
+        const inventory = await checkAndReserveInventory(reservedItems, db);
+        if (!inventory.ok) throw new InventoryConflictError(inventory.error || "Insufficient stock.");
+        return createPendingOrder({
+          orderNumber: generateOrderNumber(),
+          customerName,
+          customerEmail,
+          customerPhone,
+          subtotal: pricing.subtotal,
+          shipping: pricing.shipping,
+          discount: pricing.discount,
+          total: pricing.total,
+          paymentMethod: "Cash on Delivery",
+          userId: user.id,
+          items: pricing.items,
+          address,
+        }, db);
+      },
+    });
+
+    if (checkout.status === "conflict") {
+      return NextResponse.json({ success: false, error: "This checkout key was already used with different order details. Start a new checkout." }, { status: 409 });
+    }
+    const { order } = checkout;
+    if (checkout.status === "replayed" &&
+        (order.payment_status !== "pending_payment" || order.order_status !== "pending_payment")) {
+      return NextResponse.json({ success: false, error: "This checkout order is no longer pending. Open My Orders to check its status." }, { status: 409 });
+    }
 
     // 6. Log the COD order. Logging failure should not lose the order.
-    try {
-      await logPaymentAudit(order.id, "cod_order_created", {
+    if (checkout.status === "created") {
+      try {
+        await logPaymentAudit(order.id, "cod_order_created", {
         orderNumber: order.order_number,
         amount: pricing.total,
         paymentMethod: "Cash on Delivery",
-      });
-    } catch {
-      console.error("[COD] Audit logging failed for order:", order.id);
+        });
+      } catch {
+        console.error("[COD] Audit logging failed for order:", order.id);
+      }
     }
 
     // 7. Dispatch notifications (customer confirmation, admin alert, seller fulfillment)
     try {
       const fullOrder = await getOrderById(order.id);
       if (fullOrder) {
-        dispatchAllOrderNotifications(fullOrder).catch((err) => {
-          console.error("[COD] Notification dispatch error:", err);
-        });
+        await dispatchAllOrderNotifications(fullOrder);
       }
     } catch {
       console.error("[COD] Failed to dispatch order notifications for:", order.id);
@@ -162,7 +165,6 @@ export async function POST(req: NextRequest) {
         paymentMethod: "COD",
         orderId: order.id,
         orderNumber: order.order_number,
-        guestToken,
         pricing: {
           subtotal: pricing.subtotal,
           shipping: pricing.shipping,
@@ -171,16 +173,11 @@ export async function POST(req: NextRequest) {
         },
         message: "Your COD order has been placed.",
       },
-      { status: 201 }
+      { status: checkout.status === "created" ? 201 : 200 }
     );
   } catch (error) {
-    // Only release stock if an order was not successfully created.
-    if (reservationHeld && reservedItems.length > 0) {
-      try {
-        await releaseInventoryReservation(reservedItems);
-      } catch {
-        console.error("[COD] Inventory reservation release failed.");
-      }
+    if (error instanceof InventoryConflictError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 409 });
     }
 
     // Avoid returning internal database or provider details to clients.

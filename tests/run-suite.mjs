@@ -24,6 +24,9 @@ const filesToCompile = [
   { in: "src/lib/order-status-machine.ts", out: ".test-dist/src/lib/order-status-machine.js" },
   { in: "src/lib/razorpay.ts", out: ".test-dist/src/lib/razorpay.js" },
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
+  { in: "src/services/checkout-idempotency.ts", out: ".test-dist/src/services/checkout-idempotency.js" },
+  { in: "src/services/razorpay-order-recovery.ts", out: ".test-dist/src/services/razorpay-order-recovery.js" },
+  { in: "src/services/notification-service.ts", out: ".test-dist/src/services/notification-service.js" },
   { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" },
   { in: "tests/admin-and-dashboard.test.mjs", out: ".test-dist/tests/admin-and-dashboard.test.mjs" },
   { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
@@ -42,7 +45,8 @@ for (const f of filesToCompile) {
   if (f.in.startsWith("src/services/")) {
     code = code
       .replace(/from\s+["']@\/data\/mock-data["']/g, 'from "../data/mock-data.js"')
-      .replace(/from\s+["']@\/types["']/g, 'from "../types/index.js"');
+      .replace(/from\s+["']@\/types["']/g, 'from "../types/index.js"')
+      .replace(/from\s+["']@\/lib\/db["']/g, 'from "../lib/db/index.js"');
   } else if (f.in.startsWith("src/lib/auth/")) {
     code = code.replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "../db/index.js"');
   } else if (f.in.startsWith("src/lib/shipping/")) {
@@ -64,6 +68,9 @@ for (const f of filesToCompile) {
   } else if (f.in.startsWith("tests/")) {
     code = code
       .replace(/from\s+["']\.\.\/src\/services\/checkout-service\.ts["']/g, 'from "../src/services/checkout-service.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/checkout-idempotency\.ts["']/g, 'from "../src/services/checkout-idempotency.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/razorpay-order-recovery\.ts["']/g, 'from "../src/services/razorpay-order-recovery.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/notification-service\.ts["']/g, 'from "../src/services/notification-service.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/policies\.ts["']/g, 'from "../src/lib/policies.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/shipping\/provider\.ts["']/g, 'from "../src/lib/shipping/provider.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/razorpay\.ts["']/g, 'from "../src/lib/razorpay.js"')

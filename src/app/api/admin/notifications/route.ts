@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
   }
 
-  const result = await processNotificationJob(jobId);
+  const result = await processNotificationJob(jobId, { manualRetry: true });
 
   await writeAuditLog({
     actor: admin.email,
@@ -48,5 +48,10 @@ export async function POST(req: NextRequest) {
     ipAddress: req.headers.get("x-forwarded-for"),
   });
 
-  return NextResponse.json({ success: true, result });
+  return NextResponse.json({
+    success: true,
+    providerAccepted: result.sent,
+    deliveryConfirmed: false,
+    result,
+  });
 }

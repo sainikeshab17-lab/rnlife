@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrderById, requestOrderCancellation } from "@/lib/db/orders";
+import { getOrderById, isOrderOwnedByCustomer, requestOrderCancellation, stripGuestToken } from "@/lib/db/orders";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,16 +19,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const body = await req.json();
-    const { reason, token, email } = body;
+    const { reason, token } = body;
 
     // Authorization check: guest_token or customer_email
     const authHeader = req.headers.get("x-order-token");
     const providedToken = token || authHeader;
-    const providedEmail = email ? email.toLowerCase().trim() : null;
 
-    const isAuthorized =
-      (providedToken && providedToken === order.guest_token) ||
-      (providedEmail && providedEmail === order.customer_email.toLowerCase().trim());
+    const supabase = await createClient();
+    const { data: authData } = await supabase.auth.getUser();
+    const isAccountOwner = Boolean(authData.user && isOrderOwnedByCustomer(order, {
+      userId: authData.user.id,
+      email: authData.user.email,
+      emailVerified: Boolean(authData.user.email_confirmed_at),
+    }));
+    const isAuthorized = Boolean((providedToken && providedToken === order.guest_token) || isAccountOwner);
 
     if (!isAuthorized) {
       return NextResponse.json(
@@ -52,9 +57,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({
       success: true,
       message: "Cancellation request received and pending store review.",
-      order: updated,
+      order: updated ? stripGuestToken(updated) : null,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Cancellation request failed:", err);
     return NextResponse.json(
       { error: "Failed to process cancellation request." },

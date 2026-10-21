@@ -45,7 +45,7 @@ export function BrandLogo({
           height={1080}
           sizes={
             size === "lg"
-              ? "64px"
+              ? "(max-width: 640px) 64px, 80px"
               : size === "md"
                 ? "32px"
                 : "24px"

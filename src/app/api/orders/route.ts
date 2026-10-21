@@ -1,28 +1,21 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getOrdersByEmail, getAllOrders } from "@/lib/db/orders";
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { getOrdersByCustomer } from "@/lib/db/orders";
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(req.url);
-    const email = searchParams.get("email");
-    const role = searchParams.get("role");
-
-    // If staff/admin role requested
-    if (role === "admin" || role === "seller") {
-      const all = await getAllOrders();
-      return NextResponse.json({ orders: all });
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user?.id || !data.user.email) {
+      return NextResponse.json({ error: "Please sign in to view your orders." }, { status: 401 });
     }
 
-    if (!email) {
-      return NextResponse.json(
-        { error: "Email query parameter is required to retrieve customer order history" },
-        { status: 400 }
-      );
-    }
-
-    const orders = await getOrdersByEmail(email);
+    const orders = await getOrdersByCustomer(
+      data.user.id,
+      data.user.email_confirmed_at ? data.user.email : ""
+    );
     return NextResponse.json({ orders });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Error in GET /api/orders:", err);
     return NextResponse.json({ error: "Failed to fetch orders" }, { status: 500 });
   }

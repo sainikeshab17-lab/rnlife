@@ -3,12 +3,12 @@
 import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useSearchParams } from "next/navigation";
 import { Package, Truck, ExternalLink, ArrowRight, Loader2 } from "lucide-react";
 import { AccountLayout } from "@/components/layout/AccountLayout";
 import { useAuth } from "@/context/auth-context";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { formatINR } from "@/lib/utils";
+import type { OrderStatus } from "@/types";
 
 interface OrderItem {
   id: string;
@@ -28,20 +28,18 @@ interface OrderRecord {
   order_status: string;
   payment_status: string;
   total: number;
-  guest_token: string;
   items: OrderItem[];
 }
 
 function OrdersContent() {
   const { user } = useAuth();
-  const searchParams = useSearchParams();
-  const emailParam = searchParams.get("email");
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
-  const activeEmail = emailParam || user?.email || "";
+  const activeEmail = user?.email || "";
 
   useEffect(() => {
     let isMounted = true;
@@ -50,19 +48,25 @@ function OrdersContent() {
       if (!activeEmail) {
         setIsLoading(false);
         setOrders([]);
+        setOrdersError("Sign in to view your orders.");
         return;
       }
       setIsLoading(true);
+      setOrders([]);
+      setOrdersError(null);
       try {
-        const res = await fetch(`/api/orders?email=${encodeURIComponent(activeEmail)}`);
+        const res = await fetch("/api/orders", { credentials: "same-origin", cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
           if (isMounted && data.orders) {
             setOrders(data.orders);
           }
+        } else if (isMounted) {
+          setOrdersError(res.status === 401 ? "Sign in to view your orders." : "We could not load your orders. Please try again.");
         }
       } catch (err) {
         console.error("Failed to load customer orders:", err);
+        if (isMounted) setOrdersError("We could not load your orders. Please try again.");
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -132,6 +136,10 @@ function OrdersContent() {
               Loading verified customer orders...
             </p>
           </div>
+        ) : ordersError ? (
+          <div role="alert" className="p-8 text-center border border-red-200 bg-red-50 text-sm text-red-800">
+            {ordersError}
+          </div>
         ) : filteredOrders.length === 0 ? (
           <div className="p-12 text-center border border-dashed border-[#E5E5E5] bg-white">
             <Package className="w-10 h-10 text-[#858585] mx-auto mb-3" />
@@ -184,7 +192,7 @@ function OrdersContent() {
                       >
                         {isPaid ? "PAID" : "PENDING PAYMENT"}
                       </span>
-                      <StatusBadge status={order.order_status as any} />
+                      <StatusBadge status={order.order_status as OrderStatus} />
                       <span className="text-xs font-black text-[#111111]">
                         {formatINR(order.total)}
                       </span>
@@ -211,11 +219,11 @@ function OrdersContent() {
                             {item.product_name}
                           </Link>
                           <p className="text-[11px] text-[#858585] mt-0.5">
-                            Size: {item.size} • Color: {item.color} • Qty: {item.quantity} (₹999 each)
+                            Size: {item.size} • Color: {item.color} • Qty: {item.quantity} ({formatINR(item.price)} each)
                           </p>
                         </div>
                         <span className="text-xs font-semibold text-[#111111]">
-                          {formatINR(999 * item.quantity)}
+                          {formatINR(item.price * item.quantity)}
                         </span>
                       </div>
                     ))}
@@ -229,7 +237,7 @@ function OrdersContent() {
                     </span>
 
                     <Link
-                      href={`/account/orders/${order.id}?token=${order.guest_token}&email=${encodeURIComponent(activeEmail)}`}
+                      href={`/account/orders/${order.id}`}
                       className="text-xs uppercase font-bold tracking-wider text-[#0876A8] hover:text-[#111111] flex items-center gap-1"
                     >
                       <span>View Full Order Details</span>

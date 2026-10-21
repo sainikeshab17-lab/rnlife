@@ -1,158 +1,283 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  CheckoutIdempotencyKeySchema,
   CreateCheckoutOrderSchema,
   calculateTrustedOrderPricing,
+  createCheckoutRequestHash,
   generateOrderNumber,
 } from "@/services/checkout-service";
 import {
   checkAndReserveInventory,
-  releaseInventoryReservation,
+  claimRazorpayOrderCreation,
   createPendingOrder,
-  updateOrderRazorpayId,
+  getRazorpayOrderCreationState,
+  getOrderById,
   logPaymentAudit,
+  markRazorpayOrderCreationRetryable,
+  markRazorpayOrderCreationUnknown,
+  markStaleRazorpayOrderCreationUnknown,
+  scopeCheckoutIdempotencyKey,
+  updateOrderRazorpayId,
+  withCheckoutIdempotency,
 } from "@/lib/db/orders";
-import { getRazorpayClient, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } from "@/lib/razorpay";
+import { findRazorpayOrdersByReceipt, getRazorpayClient, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } from "@/lib/razorpay";
+import { createClient } from "@/lib/supabase/server";
+import type { DbOrder } from "@/lib/db";
+import {
+  classifyRazorpayOrderCreateFailure,
+  getRazorpayOrderRecoveryAction,
+  validateRazorpayOrderLookup,
+  validateRazorpayOrderResponse,
+  classifyRazorpayOrderPayments,
+  type RazorpayOrderCreationState,
+} from "@/services/razorpay-order-recovery";
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
+const CheckoutRequestSchema = CreateCheckoutOrderSchema.extend({
+  idempotencyKey: CheckoutIdempotencyKeySchema,
+});
 
-    // 1. Validate payload with Zod
-    const validation = CreateCheckoutOrderSchema.safeParse(body);
-    if (!validation.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid checkout request",
-          details: validation.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
+class InventoryConflictError extends Error {}
 
-    const { customerName, customerEmail, customerPhone, address, items, promoCode, userId } =
-      validation.data;
+type RazorpayOrderResolution =
+  | { status: "ready"; razorpayOrderId: string }
+  | { status: "processing" | "reconciliation_required" | "retryable" };
 
-    // 2. Server-side trusted price calculation (₹999 per item)
-    const pricingResult = calculateTrustedOrderPricing(items, promoCode);
-    if (!pricingResult.success) {
-      return NextResponse.json({ error: pricingResult.error }, { status: 400 });
-    }
-
-    const pricing = pricingResult.pricing;
-    const amountInPaisa = Math.round(pricing.total * 100);
-
-    if (!Number.isSafeInteger(amountInPaisa) || amountInPaisa < 100) {
-      return NextResponse.json(
-        { error: "The minimum online payment is ₹1." },
-        { status: 400 }
-      );
-    }
-
-    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-      console.error("Razorpay server credentials are missing.");
-      return NextResponse.json(
-        { error: "Online payments are temporarily unavailable." },
-        { status: 500 }
-      );
-    }
-
-    // 3. Check and reserve inventory
-    const inventoryCheck = await checkAndReserveInventory(
-      items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
-    );
-
-    if (!inventoryCheck.ok) {
-      return NextResponse.json({ error: inventoryCheck.error }, { status: 400 });
-    }
-
-    // 4. Create pending order in database
-    const orderNumber = generateOrderNumber();
-    let createdOrder: Awaited<ReturnType<typeof createPendingOrder>>;
+async function resolveRazorpayOrder(order: DbOrder, receipt: string, allowClaim = true): Promise<RazorpayOrderResolution> {
+  if (order.razorpay_order_id) {
     try {
-      createdOrder = await createPendingOrder({
-      orderNumber,
-      customerName,
-      customerEmail,
-      customerPhone,
-      subtotal: pricing.subtotal,
-      shipping: pricing.shipping,
-      discount: pricing.discount,
-      total: pricing.total,
-      paymentMethod: "Razorpay (UPI / Cards / NetBanking)",
-      userId: userId || null,
-      items: pricing.items,
-        address,
+      const payments = await getRazorpayClient().orders.fetchPayments(order.razorpay_order_id);
+      const outcome = classifyRazorpayOrderPayments(payments, {
+        orderId: order.razorpay_order_id,
+        amount: Math.round(order.total * 100),
       });
-    } catch (error) {
-      await releaseInventoryReservation(
-        items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
-      );
-      throw error;
+      if (outcome === "none" || outcome === "failed") {
+        return { status: "ready", razorpayOrderId: order.razorpay_order_id };
+      }
+      if (outcome === "authorized") return { status: "processing" };
+      return { status: "reconciliation_required" };
+    } catch (error: unknown) {
+      console.error(`[Checkout] Could not confirm existing Razorpay order status for local order ${order.id}.`, error);
+      return { status: "reconciliation_required" };
     }
-    const { order, guestToken } = createdOrder;
+  }
 
-    // 5. Create Razorpay order on server
-    let razorpayOrderId: string;
+  const creation = await getRazorpayOrderCreationState(order.id);
+
+  const expected = {
+    receipt,
+    amount: Math.round(order.total * 100),
+    orderId: order.id,
+  };
+  const action = getRazorpayOrderRecoveryAction({
+    state: (creation.state ?? null) as RazorpayOrderCreationState,
+    razorpayOrderId: order.razorpay_order_id,
+    attemptedAt: creation.createdAt,
+  });
+
+  if (action === "claim_creation") {
+    if (!allowClaim) return { status: "processing" };
+    const claimed = await claimRazorpayOrderCreation(order.id);
+    if (!claimed) {
+      const latest = await getOrderById(order.id);
+      return latest ? resolveRazorpayOrder(latest, receipt, false) : { status: "reconciliation_required" };
+    }
+
     try {
-      const rzp = getRazorpayClient();
-      const rzpOrder = await rzp.orders.create({
-        amount: amountInPaisa,
+      const providerOrder = await getRazorpayClient().orders.create({
+        amount: expected.amount,
         currency: "INR",
-        receipt: order.order_number,
+        receipt: expected.receipt,
         notes: {
-          orderId: order.id,
+          orderId: expected.orderId,
           orderNumber: order.order_number,
           customerEmail: order.customer_email,
         },
       });
-      razorpayOrderId = rzpOrder.id;
+      const validation = validateRazorpayOrderResponse(providerOrder, expected);
+      if (!validation.valid) {
+        await markRazorpayOrderCreationUnknown(order.id);
+        console.error(`[Checkout] Razorpay returned an order with unexpected details for local order ${order.id}; reconciliation is required.`);
+        return { status: "reconciliation_required" };
+      }
+      const persisted = await updateOrderRazorpayId(order.id, validation.razorpayOrderId);
+      if (!persisted) {
+        await markRazorpayOrderCreationUnknown(order.id);
+        console.error(`[Checkout] Razorpay order could not be attached to local order ${order.id}; reconciliation is required.`);
+        return { status: "reconciliation_required" };
+      }
+      return { status: "ready", razorpayOrderId: validation.razorpayOrderId };
     } catch (error: unknown) {
-      await releaseInventoryReservation(
-        items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity }))
-      );
-      await logPaymentAudit(order.id, "razorpay_order_creation_failed", {
-        error: error instanceof Error ? error.message : "Razorpay API error",
-      });
+      const failureState = classifyRazorpayOrderCreateFailure(error);
+      try {
+        if (failureState === "retryable") await markRazorpayOrderCreationRetryable(order.id);
+        else await markRazorpayOrderCreationUnknown(order.id);
+      } catch (stateError: unknown) {
+        console.error(`[Checkout] Could not persist Razorpay creation outcome for local order ${order.id}; the creating claim will require reconciliation.`, stateError);
+      }
+      const statusCode = error && typeof error === "object" && "statusCode" in error
+        ? Number((error as { statusCode: unknown }).statusCode)
+        : undefined;
+      console.error(`[Checkout] Razorpay order creation ${failureState} for local order ${order.id} (provider status ${Number.isInteger(statusCode) ? statusCode : "unknown"}).`);
+      return { status: failureState === "retryable" ? "retryable" : "reconciliation_required" };
+    }
+  }
 
-      const statusCode =
-        typeof error === "object" &&
-        error !== null &&
-        "statusCode" in error &&
-        error.statusCode === 401
-          ? 401
-          : 500;
+  if (action === "wait") return { status: "processing" };
 
-      console.error("Razorpay orders.create failed:", error);
+  if (creation.state === "creating") {
+    await markStaleRazorpayOrderCreationUnknown(order.id);
+    const latestOrder = await getOrderById(order.id);
+    if (!latestOrder) return { status: "reconciliation_required" };
+    if (latestOrder.razorpay_order_id) return { status: "ready", razorpayOrderId: latestOrder.razorpay_order_id };
+    const latestState = await getRazorpayOrderCreationState(order.id);
+    if (latestState.state === "creating") return { status: "processing" };
+  }
+
+  try {
+    const lookup = await findRazorpayOrdersByReceipt(receipt);
+    const result = validateRazorpayOrderLookup(lookup, expected);
+    if (result.status === "found") {
+      const persisted = await updateOrderRazorpayId(order.id, result.razorpayOrderId);
+      if (persisted) return { status: "ready", razorpayOrderId: result.razorpayOrderId };
+      console.error(`[Checkout] Reconciled Razorpay order could not be attached to local order ${order.id}.`);
+    } else if (result.status === "ambiguous") {
+      console.error(`[Checkout] Razorpay order receipt lookup is ambiguous for local order ${order.id}: ${result.reason}`);
+    }
+  } catch (error: unknown) {
+    console.error(`[Checkout] Razorpay receipt reconciliation failed for local order ${order.id}.`, error);
+  }
+  return { status: "reconciliation_required" };
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body: unknown = await req.json();
+    const validation = CheckoutRequestSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        {
-          error:
-            statusCode === 401
-              ? "Razorpay authentication failed. Check the server credentials."
-              : "Unable to initiate payment with Razorpay. Please try again.",
-        },
-        { status: statusCode }
+        { error: "Invalid checkout request", details: validation.error.flatten().fieldErrors },
+        { status: 400 }
       );
     }
 
-    // Update order with Razorpay order ID
-    await updateOrderRazorpayId(order.id, razorpayOrderId);
+    const {
+      customerName, customerEmail: submittedEmail, customerPhone,
+      address, items, promoCode, idempotencyKey: requestKey,
+    } = validation.data;
 
-    await logPaymentAudit(order.id, "order_created", {
-      orderNumber: order.order_number,
-      razorpayOrderId,
-      amount: pricing.total,
+    const supabase = await createClient();
+    const { data: authData } = await supabase.auth.getUser();
+    const customerEmail = authData.user?.email ?? submittedEmail;
+    const userId = authData.user?.id ?? null;
+
+    const pricingResult = calculateTrustedOrderPricing(items, promoCode);
+    if (!pricingResult.success) {
+      return NextResponse.json({ error: pricingResult.error }, { status: 400 });
+    }
+    const pricing = pricingResult.pricing;
+    const amountInPaisa = Math.round(pricing.total * 100);
+    if (!Number.isSafeInteger(amountInPaisa) || amountInPaisa < 100) {
+      return NextResponse.json({ error: "The minimum online payment is ₹1." }, { status: 400 });
+    }
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      console.error("Razorpay server credentials are missing.");
+      return NextResponse.json({ error: "Online payments are temporarily unavailable." }, { status: 500 });
+    }
+
+    const reservedItems = items.map((item) => ({
+      productId: item.productId,
+      size: item.size,
+      quantity: item.quantity,
+    }));
+    const idempotencyKey = scopeCheckoutIdempotencyKey(userId ?? customerEmail, requestKey);
+    const paymentMethod = "Razorpay (UPI / Cards / NetBanking)";
+    const requestHash = createCheckoutRequestHash({
+      userId,
+      customerEmail,
+      paymentMethod,
+      customerName,
+      customerPhone,
+      address,
+      items: pricing.items,
+      subtotal: pricing.subtotal,
+      shipping: pricing.shipping,
+      discount: pricing.discount,
+      total: pricing.total,
     });
 
-    // 6. Return minimal public checkout details to client
+    // Commit the idempotent local order and stock reservation first. The
+    // provider call happens afterward under a durable per-order claim.
+    const checkout = await withCheckoutIdempotency({
+      idempotencyKey,
+      requestHash,
+      create: async (db) => {
+        const inventory = await checkAndReserveInventory(reservedItems, db);
+        if (!inventory.ok) throw new InventoryConflictError(inventory.error || "Insufficient stock.");
+
+        return createPendingOrder({
+          orderNumber: generateOrderNumber(),
+          customerName,
+          customerEmail,
+          customerPhone,
+          subtotal: pricing.subtotal,
+          shipping: pricing.shipping,
+          discount: pricing.discount,
+          total: pricing.total,
+          paymentMethod,
+          userId,
+          items: pricing.items,
+          address,
+        }, db);
+      },
+    });
+
+    if (checkout.status === "conflict") {
+      return NextResponse.json({ error: "This checkout key was already used with different order details. Start a new checkout." }, { status: 409 });
+    }
+    let { order, guestToken } = checkout;
+
+    if (checkout.status === "replayed" &&
+        (order.payment_status !== "pending_payment" || order.order_status !== "pending_payment")) {
+      return NextResponse.json({ error: "This checkout order is no longer pending. Open My Orders to check its status." }, { status: 409 });
+    }
+    const resolution = await resolveRazorpayOrder(order, order.order_number);
+    if (resolution.status !== "ready") {
+      const statusCode = resolution.status === "processing" ? 202 : resolution.status === "retryable" ? 502 : 503;
+      return NextResponse.json({
+        success: false,
+        status: resolution.status,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        error: resolution.status === "processing"
+          ? "Payment order creation is still processing. Retry this checkout shortly."
+          : resolution.status === "retryable"
+            ? "Razorpay rejected order creation. Correct the issue and retry this same checkout."
+            : "Payment order creation needs reconciliation. Your order and stock reservation are saved; do not start a new checkout.",
+      }, { status: statusCode });
+    }
+
+    if (checkout.status === "created") {
+      try {
+        await logPaymentAudit(order.id, "order_created", {
+          orderNumber: order.order_number,
+          razorpayOrderId: resolution.razorpayOrderId,
+          amount: pricing.total,
+        });
+      } catch {
+        console.error("[Checkout] Order creation audit failed for order:", order.id);
+      }
+    }
+
     return NextResponse.json({
       success: true,
+      alreadyCreated: checkout.status === "replayed",
       orderId: order.id,
       orderNumber: order.order_number,
-      razorpayOrderId,
+      razorpayOrderId: resolution.razorpayOrderId,
       amount: amountInPaisa,
       currency: "INR",
       keyId: RAZORPAY_KEY_ID,
-      guestToken,
+      ...(order.user_id === null ? { guestToken } : {}),
       pricing: {
         subtotal: pricing.subtotal,
         shipping: pricing.shipping,
@@ -164,12 +289,18 @@ export async function POST(req: NextRequest) {
         email: order.customer_email,
         phone: order.customer_phone,
       },
-    });
-  } catch (err: any) {
-    console.error("Error in /api/checkout/create-order:", err);
-    return NextResponse.json(
-      { error: "Internal server error occurred while creating order" },
-      { status: 500 }
-    );
+    }, { status: checkout.status === "created" ? 201 : 200 });
+  } catch (error) {
+    if (error instanceof InventoryConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    const statusCode = typeof error === "object" && error !== null &&
+      "statusCode" in error && error.statusCode === 401 ? 401 : 500;
+    console.error("Error in /api/checkout/create-order:", error);
+    return NextResponse.json({
+      error: statusCode === 401
+        ? "Razorpay authentication failed. Check the server credentials."
+        : "Unable to initiate payment with Razorpay. Please retry the same checkout.",
+    }, { status: statusCode });
   }
 }

@@ -173,6 +173,7 @@ describe("Phase 4: Customer Order Ownership & Cancellation Flow", () => {
       discount: 0,
       total: 1098,
       paymentMethod: "Razorpay",
+      razorpayOrderId: "order_test_paid_cancel",
       items: [
         {
           productId: "rnl-design-03",
@@ -198,7 +199,7 @@ describe("Phase 4: Customer Order Ownership & Cancellation Flow", () => {
     });
 
     // Mark paid
-    await markOrderAsPaid(order.id, "pay_test_paid_cancel_123");
+    await markOrderAsPaid(order.id, "pay_test_paid_cancel_123", "order_test_paid_cancel");
 
     // Request cancellation
     await requestOrderCancellation(order.id, "Change of travel plans");
@@ -226,6 +227,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
       discount: 0,
       total: 1998,
       paymentMethod: "Razorpay",
+      razorpayOrderId: "order_test_return",
       items: [
         {
           productId: "rnl-design-04",
@@ -250,7 +252,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
       },
     });
 
-    await markOrderAsPaid(order.id, "pay_return_test_1");
+    await markOrderAsPaid(order.id, "pay_return_test_1", "order_test_return");
 
     // Transition to delivered
     const db = getDb();
@@ -314,6 +316,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
       discount: 0,
       total: 1098,
       paymentMethod: "Razorpay",
+      razorpayOrderId: "order_test_inspect",
       items: [
         {
           productId: "rnl-design-05",
@@ -338,7 +341,7 @@ describe("Phase 4: Returns, Exchanges & Inspection Workflow", () => {
       },
     });
 
-    await markOrderAsPaid(order.id, "pay_inspect_test_1");
+    await markOrderAsPaid(order.id, "pay_inspect_test_1", "order_test_inspect");
     await db.prepare("UPDATE orders SET order_status = 'delivered', actual_delivery_date = ? WHERE id = ?").run(
       new Date().toISOString(),
       order.id

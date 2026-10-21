@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
   getDb,
   DbOrder,
@@ -14,10 +14,67 @@ import {
   withTransaction,
 } from "./index";
 
+export function orderInventoryVariants<T extends { productId: string; size: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) =>
+    Buffer.compare(Buffer.from(a.productId, "utf8"), Buffer.from(b.productId, "utf8")) ||
+    Buffer.compare(Buffer.from(a.size, "utf8"), Buffer.from(b.size, "utf8"))
+  );
+}
+
+export async function lockInventoryVariants(
+  db: DbConnection,
+  variants: Array<{ productId: string; size: string }>,
+  createMissing = false
+): Promise<Array<{ productId: string; size: string }>> {
+  const ordered = orderInventoryVariants(
+    [...new Map(variants.map((variant) => [`${variant.productId}\0${variant.size}`, variant])).values()]
+  );
+  if (!ordered.length) return ordered;
+
+  if (createMissing) {
+    for (const variant of ordered) {
+      await db.prepare(`
+        INSERT INTO inventory (product_id, size, stock, reserved)
+        VALUES (?, ?, 20, 0)
+        ON CONFLICT (product_id, size) DO NOTHING
+      `).run(variant.productId, variant.size);
+    }
+  }
+
+  const tupleList = ordered.map(() => "(?, ?)").join(", ");
+  const parameters = ordered.flatMap((variant) => [variant.productId, variant.size]);
+  const rows = await db.prepare(`
+    SELECT product_id, size FROM inventory
+    WHERE (product_id, size) IN (${tupleList})
+    ORDER BY product_id COLLATE "C", size COLLATE "C"
+    FOR UPDATE
+  `).all<{ product_id: string; size: string }>(...parameters);
+  if (rows.length !== ordered.length) {
+    throw new Error("Inventory row missing while locking stock variants.");
+  }
+  return rows.map((row) => ({ productId: row.product_id, size: row.size }));
+}
+
+export function isOrderOwnedByCustomer(
+  order: Pick<DbOrder, "user_id" | "customer_email">,
+  customer: { userId: string; email?: string | null; emailVerified: boolean }
+): boolean {
+  if (order.user_id === customer.userId) return true;
+  return Boolean(
+    customer.emailVerified && customer.email &&
+    order.customer_email.toLowerCase().trim() === customer.email.toLowerCase().trim()
+  );
+}
+
+export function stripGuestToken<T extends { guest_token: string }>(record: T): Omit<T, "guest_token"> {
+  return Object.fromEntries(Object.entries(record).filter(([field]) => field !== "guest_token")) as Omit<T, "guest_token">;
+}
+
 export async function checkAndReserveInventory(
-  items: Array<{ productId: string; size: string; quantity: number }>
+  items: Array<{ productId: string; size: string; quantity: number }>,
+  connection?: DbConnection
 ): Promise<{ ok: boolean; error?: string }> {
-  return withTransaction(async (db) => {
+  const reserve = async (db: DbConnection) => {
     const quantities = new Map<string, { productId: string; size: string; quantity: number }>();
     for (const item of items) {
       const key = `${item.productId}\0${item.size}`;
@@ -28,33 +85,24 @@ export async function checkAndReserveInventory(
       });
     }
 
-    const lockedRows: Array<{
-      item: { productId: string; size: string; quantity: number };
-      available: number;
-    }> = [];
-
-    for (const item of quantities.values()) {
-      await db.prepare(`
-        INSERT INTO inventory (product_id, size, stock, reserved)
-        VALUES (?, ?, 20, 0)
-        ON CONFLICT (product_id, size) DO NOTHING
-      `).run(item.productId, item.size);
-
+    const orderedQuantities = orderInventoryVariants([...quantities.values()]);
+    const lockedVariants = await lockInventoryVariants(db, orderedQuantities, true);
+    const lockedRows: Array<{ item: (typeof orderedQuantities)[number]; available: number }> = [];
+    for (const item of lockedVariants) {
+      const quantity = quantities.get(`${item.productId}\0${item.size}`);
+      if (!quantity) throw new Error("Locked inventory variant was not part of the reservation.");
       const row = await db.prepare(`
-        SELECT stock, reserved FROM inventory
-        WHERE product_id = ? AND size = ?
-        FOR UPDATE
+        SELECT stock, reserved FROM inventory WHERE product_id = ? AND size = ?
       `).get<{ stock: number; reserved: number }>(item.productId, item.size);
       if (!row) throw new Error("Inventory row disappeared while reserving stock.");
-
       const available = Math.max(0, row.stock - row.reserved);
-      if (available < item.quantity) {
+      if (available < quantity.quantity) {
         return {
           ok: false,
           error: `Insufficient stock for product (${item.size}). Only ${available} available.`,
         };
       }
-      lockedRows.push({ item, available });
+      lockedRows.push({ item: quantity, available });
     }
 
     for (const { item } of lockedRows) {
@@ -64,14 +112,17 @@ export async function checkAndReserveInventory(
       `).run(item.quantity, item.productId, item.size);
     }
     return { ok: true };
-  });
+  };
+  return connection ? reserve(connection) : withTransaction(reserve);
 }
 
 export async function releaseInventoryReservation(
   items: Array<{ productId: string; size: string; quantity: number }>
 ): Promise<void> {
   await withTransaction(async (db) => {
-    for (const item of items) {
+    const ordered = orderInventoryVariants(items);
+    await lockInventoryVariants(db, ordered);
+    for (const item of ordered) {
       await db.prepare(`
       UPDATE inventory 
       SET reserved = GREATEST(0, reserved - ?) 
@@ -85,13 +136,14 @@ export async function commitInventoryDeduction(
   items: Array<{ productId: string; size: string; quantity: number }>
 ): Promise<void> {
   await withTransaction(async (db) => {
-    for (const item of items) {
-      await db.prepare(`
-      UPDATE inventory 
-      SET stock = GREATEST(0, stock - ?), 
-          reserved = GREATEST(0, reserved - ?) 
-      WHERE product_id = ? AND size = ?
-    `).run(item.quantity, item.quantity, item.productId, item.size);
+    const ordered = orderInventoryVariants(items);
+    await lockInventoryVariants(db, ordered);
+    for (const item of ordered) {
+      const result = await db.prepare(`
+        UPDATE inventory SET stock = stock - ?, reserved = reserved - ?
+        WHERE product_id = ? AND size = ? AND stock >= ? AND reserved >= ?
+      `).run(item.quantity, item.quantity, item.productId, item.size, item.quantity, item.quantity);
+      if (result.rowCount !== 1) throw new Error("Inventory reservation missing while committing deduction.");
     }
   });
 }
@@ -133,15 +185,14 @@ export interface CreateOrderParams {
   };
 }
 
-export async function createPendingOrder(params: CreateOrderParams): Promise<{
+export async function createPendingOrder(params: CreateOrderParams, connection?: DbConnection): Promise<{
   order: DbOrder;
   guestToken: string;
 }> {
   const orderId = `ord_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   const guestToken = randomUUID();
   const now = new Date().toISOString();
-
-  return withTransaction(async (db) => {
+  const create = async (db: DbConnection) => {
   await db.prepare(`
     INSERT INTO orders (
       id, order_number, customer_name, customer_email, customer_phone,
@@ -213,19 +264,157 @@ export async function createPendingOrder(params: CreateOrderParams): Promise<{
     params.address.country || "India"
   );
 
+  if (params.paymentMethod.startsWith("Razorpay")) {
+    await writeRazorpayCreationState(db, orderId, params.razorpayOrderId ? "ready" : "pending", {
+      ...(params.razorpayOrderId ? { razorpayOrderId: params.razorpayOrderId } : {}),
+    });
+  }
+
   const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
   if (!order) throw new Error("Created order could not be retrieved.");
   return { order, guestToken };
+  };
+  return connection ? create(connection) : withTransaction(create);
+}
+
+export async function updateOrderRazorpayId(
+  orderId: string,
+  razorpayOrderId: string,
+  connection?: DbConnection
+): Promise<boolean> {
+  const attach = async (db: DbConnection) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order) return false;
+    if (order.razorpay_order_id) return order.razorpay_order_id === razorpayOrderId;
+    const now = new Date().toISOString();
+    const orderUpdate = await db.prepare(`
+      UPDATE orders SET razorpay_order_id = ?, updated_at = ?
+      WHERE id = ? AND razorpay_order_id IS NULL
+    `).run(razorpayOrderId, now, orderId);
+    if (orderUpdate.rowCount !== 1) {
+      const existing = await db.prepare("SELECT razorpay_order_id FROM orders WHERE id = ?")
+        .get<{ razorpay_order_id: string | null }>(orderId);
+      return existing?.razorpay_order_id === razorpayOrderId;
+    }
+    await writeRazorpayCreationState(db, orderId, "ready", { razorpayOrderId });
+    return true;
+  };
+  return connection ? attach(connection) : withTransaction(attach);
+}
+
+async function writeRazorpayCreationState(db: DbConnection, orderId: string, state: string, payload: unknown = {}): Promise<void> {
+  await db.prepare(`INSERT INTO payment_audits (id, order_id, event_type, payload, created_at) VALUES (?, ?, ?, ?, NOW())`)
+    .run(`aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`, orderId, `razorpay_order_creation:${state}`, JSON.stringify(payload));
+}
+
+export async function getRazorpayOrderCreationState(orderId: string): Promise<{ state: string | null; createdAt: string | null }> {
+  const row = await getDb().prepare(`SELECT event_type, created_at FROM payment_audits
+    WHERE order_id = ? AND event_type IN (
+      'razorpay_order_creation:pending', 'razorpay_order_creation:creating',
+      'razorpay_order_creation:ready', 'razorpay_order_creation:unknown',
+      'razorpay_order_creation:retryable'
+    ) ORDER BY created_at DESC LIMIT 1`)
+    .get<{ event_type: string; created_at: string }>(orderId);
+  return row ? { state: row.event_type.split(":").at(-1) ?? null, createdAt: row.created_at } : { state: null, createdAt: null };
+}
+
+export async function claimRazorpayOrderCreation(orderId: string): Promise<boolean> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order || order.razorpay_order_id) return false;
+    const latest = await db.prepare(`SELECT event_type FROM payment_audits
+      WHERE order_id = ? AND event_type IN (
+        'razorpay_order_creation:pending', 'razorpay_order_creation:creating',
+        'razorpay_order_creation:ready', 'razorpay_order_creation:unknown',
+        'razorpay_order_creation:retryable'
+      ) ORDER BY created_at DESC LIMIT 1`)
+      .get<{ event_type: string }>(orderId);
+    const state = latest?.event_type.split(":").at(-1);
+    if (state && state !== "pending" && state !== "retryable") return false;
+    await writeRazorpayCreationState(db, orderId, "creating");
+    return true;
   });
 }
 
-export async function updateOrderRazorpayId(orderId: string, razorpayOrderId: string): Promise<void> {
-  const db = getDb();
-  await db.prepare("UPDATE orders SET razorpay_order_id = ?, updated_at = ? WHERE id = ?").run(
-    razorpayOrderId,
-    new Date().toISOString(),
-    orderId
-  );
+export async function markRazorpayOrderCreationRetryable(orderId: string): Promise<boolean> {
+  return updateRazorpayOrderCreationState(orderId, "retryable", ["creating"]);
+}
+
+export async function markRazorpayOrderCreationUnknown(orderId: string): Promise<boolean> {
+  return updateRazorpayOrderCreationState(orderId, "unknown", ["creating", "unknown"]);
+}
+
+export async function markStaleRazorpayOrderCreationUnknown(orderId: string): Promise<boolean> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order || order.razorpay_order_id) return false;
+    const latest = await db.prepare(`SELECT event_type, created_at FROM payment_audits
+      WHERE order_id = ? AND event_type IN (
+        'razorpay_order_creation:pending', 'razorpay_order_creation:creating',
+        'razorpay_order_creation:ready', 'razorpay_order_creation:unknown',
+        'razorpay_order_creation:retryable'
+      ) ORDER BY created_at DESC LIMIT 1 FOR UPDATE`)
+      .get<{ event_type: string; created_at: string }>(orderId);
+    if (latest?.event_type !== "razorpay_order_creation:creating" || Date.now() - Date.parse(latest.created_at) < 120_000) return false;
+    await writeRazorpayCreationState(db, orderId, "unknown", { reason: "stale_claim" });
+    return true;
+  });
+}
+
+async function updateRazorpayOrderCreationState(orderId: string, state: "retryable" | "unknown", allowed: string[]): Promise<boolean> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
+    if (!order || order.razorpay_order_id) return false;
+    const latest = await db.prepare(`SELECT event_type FROM payment_audits
+      WHERE order_id = ? AND event_type IN (
+        'razorpay_order_creation:pending', 'razorpay_order_creation:creating',
+        'razorpay_order_creation:ready', 'razorpay_order_creation:unknown',
+        'razorpay_order_creation:retryable'
+      ) ORDER BY created_at DESC LIMIT 1`)
+      .get<{ event_type: string }>(orderId);
+    const current = latest?.event_type.split(":").at(-1);
+    if (!current || !allowed.includes(current)) return false;
+    await writeRazorpayCreationState(db, orderId, state);
+    return true;
+  });
+}
+
+export function scopeCheckoutIdempotencyKey(identity: string, requestKey: string): string {
+  return createHash("sha256")
+    .update(`${identity.trim().toLowerCase()}\0${requestKey}`)
+    .digest("hex");
+}
+
+export async function withCheckoutIdempotency(params: {
+  idempotencyKey: string;
+  requestHash: string;
+  create: (connection: DbConnection) => Promise<{ order: DbOrder; guestToken: string }>;
+}): Promise<
+  | { status: "created" | "replayed"; order: DbOrder; guestToken: string }
+  | { status: "conflict" }
+> {
+  return withTransaction(async (db) => {
+    await db.prepare("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))")
+      .get(params.idempotencyKey);
+
+    const existing = await db.prepare(`
+      SELECT o.*, a.payload AS checkout_idempotency_payload
+      FROM payment_audits a JOIN orders o ON o.id = a.order_id
+      WHERE a.event_type = ? FOR UPDATE OF o
+    `).get<DbOrder & { checkout_idempotency_payload: string }>(`checkout_idempotency:${params.idempotencyKey}`);
+    if (existing) {
+      const metadata = JSON.parse(existing.checkout_idempotency_payload) as { requestHash?: string };
+      if (metadata.requestHash !== params.requestHash) return { status: "conflict" };
+      return { status: "replayed", order: existing, guestToken: existing.guest_token };
+    }
+
+    const created = await params.create(db);
+    await db.prepare(`INSERT INTO payment_audits (id, order_id, event_type, payload, created_at)
+      VALUES (?, ?, ?, ?, NOW())`)
+      .run(`aud_${randomUUID().replace(/-/g, "").slice(0, 16)}`, created.order.id,
+        `checkout_idempotency:${params.idempotencyKey}`, JSON.stringify({ requestHash: params.requestHash }));
+    return { status: "created", ...created };
+  });
 }
 
 async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails> {
@@ -301,6 +490,20 @@ export async function getOrdersByEmail(email: string): Promise<OrderWithDetails[
   return Promise.all(orders.map(populateOrderRelations));
 }
 
+export async function getOrdersByCustomer(userId: string, email: string): Promise<OrderWithDetails[]> {
+  const db = getDb();
+  const orders = await db
+    .prepare(`
+      SELECT * FROM orders
+      WHERE user_id = ? OR lower(customer_email) = ?
+      ORDER BY created_at DESC
+    `)
+    .all<DbOrder>(userId, email.toLowerCase().trim());
+
+  const populated = await Promise.all(orders.map(populateOrderRelations));
+  return populated.map(stripGuestToken) as OrderWithDetails[];
+}
+
 export async function getAllOrders(): Promise<OrderWithDetails[]> {
   const db = getDb();
   const orders = await db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all<DbOrder>();
@@ -315,68 +518,52 @@ export async function getAllOrders(): Promise<OrderWithDetails[]> {
 export async function markOrderAsPaid(
   orderId: string,
   razorpayPaymentId: string,
+  expectedRazorpayOrderId: string,
   razorpaySignature?: string
 ): Promise<{ success: boolean; alreadyPaid: boolean }> {
   return withTransaction(async (db) => {
   const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
   if (!current) return { success: false, alreadyPaid: false };
-  if (current.payment_status === "paid") return { success: true, alreadyPaid: true };
+  if (current.razorpay_order_id !== expectedRazorpayOrderId) return { success: false, alreadyPaid: false };
+  if (current.payment_status === "paid") {
+    return current.razorpay_payment_id === razorpayPaymentId
+      ? { success: true, alreadyPaid: true }
+      : { success: false, alreadyPaid: true };
+  }
+  if (current.payment_status !== "pending_payment" || current.order_status !== "pending_payment") {
+    return { success: false, alreadyPaid: false };
+  }
+
+  // Deduct inventory
+  const items = await db
+    .prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id COLLATE "C", size COLLATE "C"')
+    .all<{ product_id: string; size: string; quantity: number }>(orderId);
+    await lockInventoryVariants(db, items.map(({ product_id, size }) => ({ productId: product_id, size })));
+
+  for (const item of items) {
+    const deduction = await db.prepare(`
+      UPDATE inventory
+      SET stock = stock - ?, reserved = reserved - ?
+      WHERE product_id = ? AND size = ? AND stock >= ? AND reserved >= ?
+    `).run(item.quantity, item.quantity, item.product_id, item.size, item.quantity, item.quantity);
+    if (deduction.rowCount !== 1) {
+      throw new Error(`Inventory reservation missing for paid order ${orderId}.`);
+    }
+  }
 
   const now = new Date().toISOString();
-  await db.prepare(`
-    UPDATE orders 
+  const transition = await db.prepare(`
+    UPDATE orders
     SET payment_status = 'paid',
         order_status = 'paid',
         razorpay_payment_id = ?,
         razorpay_signature = COALESCE(?, razorpay_signature),
         updated_at = ?
-    WHERE id = ?
+    WHERE id = ? AND payment_status = 'pending_payment' AND order_status = 'pending_payment'
   `).run(razorpayPaymentId, razorpaySignature || null, now, orderId);
-
-  // Deduct inventory
-  const items = await db
-    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
-    .all<{ product_id: string; size: string; quantity: number }>(orderId);
-
-  for (const item of items) {
-    await db.prepare(`
-      UPDATE inventory
-      SET stock = GREATEST(0, stock - ?), reserved = GREATEST(0, reserved - ?)
-      WHERE product_id = ? AND size = ?
-    `).run(item.quantity, item.quantity, item.product_id, item.size);
-  }
+  if (transition.rowCount !== 1) throw new Error(`Order payment state changed during capture for ${orderId}.`);
 
   return { success: true, alreadyPaid: false };
-  });
-}
-
-export async function markOrderPaymentFailed(orderId: string, reason?: string): Promise<void> {
-  await withTransaction(async (db) => {
-  const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
-  if (!current || current.payment_status === "paid") return;
-
-  const now = new Date().toISOString();
-  await db.prepare(`
-    UPDATE orders 
-    SET payment_status = 'payment_failed',
-        order_status = 'payment_failed',
-        updated_at = ?
-    WHERE id = ?
-  `).run(now, orderId);
-
-  // Release reserved inventory
-  const items = await db
-    .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ?")
-    .all<{ product_id: string; size: string; quantity: number }>(orderId);
-
-  for (const item of items) {
-    await db.prepare(`
-      UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
-      WHERE product_id = ? AND size = ?
-    `).run(item.quantity, item.product_id, item.size);
-  }
-
-  await logPaymentAudit(orderId, "payment_failed", { reason: reason || "Payment failed or cancelled" }, db);
   });
 }
 
@@ -392,6 +579,14 @@ export async function logPaymentAudit(
     INSERT INTO payment_audits (id, order_id, event_type, payload, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(auditId, orderId || null, eventType, JSON.stringify(payload), new Date().toISOString());
+}
+
+export async function recordPaymentAttemptFailure(
+  orderId: string,
+  paymentId: string,
+  reason: string
+): Promise<void> {
+  await logPaymentAudit(orderId, "payment_attempt_failed", { paymentId, reason });
 }
 
 /**
@@ -539,8 +734,9 @@ export async function decideOrderCancellation(
     `).run(newStatus, order.cancellation_reason || adminNote || "Approved cancellation", now, orderId);
 
     const items = await db
-      .prepare("SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id, size")
+    .prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id COLLATE "C", size COLLATE "C"')
       .all<{ product_id: string; size: string; quantity: number }>(orderId);
+    await lockInventoryVariants(db, items.map(({ product_id, size }) => ({ productId: product_id, size })));
 
     for (const item of items) {
       const result = isPaid

@@ -27,6 +27,11 @@ export function getRazorpayClient(): Razorpay {
   return razorpayClient;
 }
 
+export async function findRazorpayOrdersByReceipt(receipt: string) {
+  // Supported by the installed Razorpay SDK's orders.all({ receipt, count }) API.
+  return getRazorpayClient().orders.all({ receipt, count: 100 });
+}
+
 export interface VerifyPaymentSignatureParams {
   razorpayOrderId: string;
   razorpayPaymentId: string;
@@ -101,6 +106,59 @@ export function verifyWebhookSignature(
   }
 }
 
+export function isPaymentCaptured(status: string | undefined): boolean {
+  return status === "captured";
+}
+
+export function isVerifiedCapturedWebhookPayment(payment: unknown): payment is {
+  id: string;
+  order_id: string;
+  status: "captured";
+  captured: true;
+  currency: "INR";
+  amount: number;
+} {
+  if (!payment || typeof payment !== "object") return false;
+  const candidate = payment as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.order_id === "string" &&
+    candidate.status === "captured" &&
+    candidate.captured === true &&
+    candidate.currency === "INR" &&
+    typeof candidate.amount === "number" &&
+    Number.isSafeInteger(candidate.amount) &&
+    candidate.amount > 0
+  );
+}
+
+export function isVerifiedCapturedPaymentDetails(
+  payment: unknown,
+  expectedOrderId: string,
+  expectedAmountPaisa: number
+): boolean {
+  return isVerifiedCapturedWebhookPayment(payment) &&
+    payment.order_id === expectedOrderId &&
+    payment.amount === expectedAmountPaisa;
+}
+
+/** Validates a fetched provider payment's identity and price before branching on its state. */
+export function isVerifiedPaymentDetails(
+  payment: unknown,
+  expectedOrderId: string,
+  expectedAmountPaisa: number
+): payment is { id: string; order_id: string; amount: number; currency: "INR"; status: string; captured: boolean } {
+  if (!payment || typeof payment !== "object") return false;
+  const candidate = payment as Record<string, unknown>;
+  return typeof candidate.id === "string" && candidate.id.length > 0 &&
+    candidate.order_id === expectedOrderId &&
+    candidate.amount === expectedAmountPaisa &&
+    candidate.currency === "INR" &&
+    Number.isSafeInteger(candidate.amount) &&
+    ["created", "authorized", "captured", "refunded", "failed"].includes(String(candidate.status)) &&
+    typeof candidate.captured === "boolean";
+}
+
 export interface CreateRefundParams {
   paymentId: string;
   amountPaisa?: number; // In paisa (e.g. 99900 for ₹999.00). If omitted, full refund.
@@ -138,12 +196,12 @@ export async function createRazorpayRefund({
 
   try {
     const client = getRazorpayClient();
-    const payload: any = {};
+    const payload: Parameters<Razorpay["payments"]["refund"]>[1] = {};
     if (amountPaisa) payload.amount = amountPaisa;
     if (notes) payload.notes = notes;
     if (receipt) payload.receipt = receipt;
 
-    const refund = await (client.payments as any).refund(paymentId, payload);
+    const refund = await client.payments.refund(paymentId, payload);
 
     return {
       success: true,
@@ -151,11 +209,14 @@ export async function createRazorpayRefund({
       amount: refund.amount,
       status: refund.status,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Razorpay refund creation failed:", err);
+    const details = err && typeof err === "object"
+      ? err as { error?: { description?: string }; message?: string }
+      : undefined;
     return {
       success: false,
-      error: err?.error?.description || err?.message || "Refund failed",
+      error: details?.error?.description || details?.message || "Refund failed",
     };
   }
 }

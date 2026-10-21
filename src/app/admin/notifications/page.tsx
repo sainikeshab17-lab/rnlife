@@ -54,8 +54,11 @@ export default function AdminNotificationsPage() {
         throw new Error(err.error || "Retry failed.");
       }
 
+      const data = await res.json();
       await fetchJobs();
-      alert("Notification retry dispatched.");
+      alert(data.result?.sent
+        ? "Email accepted by the provider. Check the job status for confirmation."
+        : "Retry did not report a send. Review the job status and error details.");
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -168,7 +171,7 @@ export default function AdminNotificationsPage() {
                             : "bg-amber-100 text-amber-800"
                         }`}
                       >
-                        {job.status}
+                        {job.status === "sent" ? "accepted by provider" : job.status}
                       </span>
                       {job.last_error && (
                         <p className="text-[10px] text-red-600 mt-0.5 truncate max-w-xs" title={job.last_error}>
@@ -186,7 +189,9 @@ export default function AdminNotificationsPage() {
                       })}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {job.status !== "sent" && (
+                      {job.status === "unknown" ? (
+                        <span className="text-[10px] text-red-700">Reconcile in Resend</span>
+                      ) : job.status !== "sent" && (
                         <button
                           onClick={() => handleRetry(job.id)}
                           disabled={retryingId === job.id}

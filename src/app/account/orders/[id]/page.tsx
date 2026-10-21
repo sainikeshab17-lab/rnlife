@@ -2,12 +2,14 @@ import React from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, CheckCircle2, Clock, ShieldCheck, Truck, Package } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ShieldCheck, Truck } from "lucide-react";
 import { AccountLayout } from "@/components/layout/AccountLayout";
-import { getOrderById, getOrderByNumber } from "@/lib/db/orders";
+import { getOrderById, getOrderByNumber, isOrderOwnedByCustomer } from "@/lib/db/orders";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { formatINR } from "@/lib/utils";
 import { OrderActionButtons } from "@/components/order/OrderActionButtons";
+import { createClient } from "@/lib/supabase/server";
+import type { OrderStatus } from "@/types";
 
 interface OrderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -18,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 export default async function OrderDetailPage({ params, searchParams }: OrderDetailPageProps) {
   const { id } = await params;
-  const { token, email } = await searchParams;
+  const { token } = await searchParams;
 
   // Retrieve from live database
   let dbOrder = await getOrderById(id);
@@ -29,6 +31,15 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
   if (!dbOrder) {
     notFound();
   }
+
+  const supabase = await createClient();
+  const { data: authData } = await supabase.auth.getUser();
+  const isAccountOwner = Boolean(authData.user && isOrderOwnedByCustomer(dbOrder, {
+    userId: authData.user.id,
+    email: authData.user.email,
+    emailVerified: Boolean(authData.user.email_confirmed_at),
+  }));
+  if (!isAccountOwner && (!token || token !== dbOrder.guest_token)) notFound();
 
   const isPaid = dbOrder.payment_status === "paid";
 
@@ -99,11 +110,24 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
             >
               {isPaid ? "PAYMENT PAID" : "PENDING PAYMENT"}
             </span>
-            <StatusBadge status={dbOrder.order_status as any} />
+            <StatusBadge status={dbOrder.order_status as OrderStatus} />
             <OrderActionButtons
-              order={dbOrder}
-              guestToken={token || dbOrder.guest_token}
-              customerEmail={email || dbOrder.customer_email}
+              order={{
+                id: dbOrder.id,
+                order_number: dbOrder.order_number,
+                order_status: dbOrder.order_status,
+                cancellation_requested: dbOrder.cancellation_requested,
+                items: dbOrder.items.map((item) => ({
+                  id: item.id,
+                  product_name: item.product_name,
+                  size: item.size,
+                  color: item.color,
+                  price: item.price,
+                  quantity: item.quantity,
+                })),
+              }}
+              guestToken={isAccountOwner ? undefined : token}
+              customerEmail={dbOrder.customer_email}
             />
           </div>
         </div>

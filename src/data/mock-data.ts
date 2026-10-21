@@ -135,7 +135,7 @@ export const COLLECTIONS: Collection[] = [
     description:
       "No unnecessary graphics. Pure silhouette, ribbed collar integrity, and unmatched tactile comfort in black, chalk white, and mineral tones.",
     heroImage: designGallery(4).images[0],
-    featuredProductCount: 1,
+    featuredProductCount: 3,
   },
   {
     id: "col-4",
@@ -179,7 +179,7 @@ export const PRODUCTS: Product[] = [
     isNewDrop: true,
     isBestseller: true,
     isFeatured: true,
-    collectionSlug: "new-drops",
+    collectionSlug: "essentials",
     tags: ["Regular Fit", "260 GSM", "Raglan T-Shirt", "Graphic Print"],
     sku: "RNL-DESIGN-01",
   },
@@ -243,7 +243,7 @@ export const PRODUCTS: Product[] = [
     isNewDrop: true,
     isBestseller: false,
     isFeatured: true,
-    collectionSlug: "graphic-tees",
+    collectionSlug: "essentials",
     tags: ["Regular Fit", "260 GSM", "Raglan T-Shirt", "Graphic Print"],
     sku: "RNL-DESIGN-03",
   },
@@ -403,7 +403,7 @@ export const PRODUCTS: Product[] = [
     isNewDrop: true,
     isBestseller: true,
     isFeatured: true,
-    collectionSlug: "statement-prints",
+    collectionSlug: "essentials",
     tags: ["Regular Fit", "260 GSM", "Raglan T-Shirt", "Graphic Print"],
     sku: "RNL-DESIGN-08",
   }

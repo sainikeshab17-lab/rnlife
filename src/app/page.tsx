@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { ProductGrid } from "@/components/product/ProductGrid";
-import { BRAND_INFO, PRODUCT_CATEGORIES, PRODUCTS } from "@/data/mock-data";
+import { BRAND_INFO, COLLECTIONS, PRODUCT_CATEGORIES, PRODUCTS } from "@/data/mock-data";
 
 const allProducts = PRODUCTS;
 const heroProduct = (() => {
@@ -22,6 +22,17 @@ if (heroImageIndex === -1) {
 }
 const heroImage = heroColor.images[heroImageIndex];
 const heroImageAlt = heroColor.imageAlts?.[heroImageIndex] ?? heroProduct.name;
+const essentialsCollection = COLLECTIONS.find((collection) => collection.slug === "essentials");
+if (!essentialsCollection) {
+  throw new Error("The Essential Tees collection is missing from the catalog");
+}
+const essentialsImage = essentialsCollection.heroImage;
+const essentialsImageAlt = PRODUCTS.flatMap((product) =>
+  product.colors.flatMap((color) => color.images.map((image, index) => ({
+    image,
+    alt: color.imageAlts?.[index],
+  })))
+).find((entry) => entry.image === essentialsImage)?.alt ?? essentialsCollection.name;
 const categoryCards = PRODUCT_CATEGORIES.map((category) => ({
   ...category,
   count: PRODUCTS.filter((product) => product.category === category.slug).length,
@@ -65,6 +76,45 @@ export default function HomePage() {
             View the Tee <ArrowRight className="ml-2 inline h-3.5 w-3.5" />
           </span>
         </Link>
+      </section>
+
+      {/* ── ESSENTIAL TEES EDITORIAL ── */}
+      <section className="bg-[#111111] text-white">
+        <div className="mx-auto grid max-w-7xl md:grid-cols-2">
+          <div className="flex flex-col items-start justify-center px-5 py-10 sm:px-8 sm:py-14 md:px-12 lg:px-16">
+            <p className="mb-4 text-[10px] font-mono font-semibold uppercase tracking-[.2em] text-white/55">
+              The everyday edit
+            </p>
+            <h2 className="text-4xl font-black uppercase leading-[.92] tracking-[-.05em] sm:text-5xl lg:text-6xl">
+              ESSENTIAL TEES
+            </h2>
+            <p className="mt-4 text-lg font-medium italic text-[#FFB900] sm:text-xl">
+              The everyday kind of essential.
+            </p>
+            <p className="mt-4 max-w-md text-sm leading-6 text-white/70 sm:text-base">
+              Clean style. Everyday comfort. Made to be worn on repeat.
+            </p>
+            <Link
+              href="/collections/essentials"
+              className="btn-morph btn-yellow mt-7 inline-flex min-h-12 items-center gap-4 px-5 text-xs font-bold uppercase tracking-wider"
+            >
+              EXPLORE ESSENTIALS <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+          <Link
+            href="/collections/essentials"
+            aria-label="Explore Essential Tees"
+            className="group relative order-first aspect-[4/3] overflow-hidden bg-[#F4F2EE] md:order-none md:aspect-[5/4]"
+          >
+            <Image
+              src={essentialsImage}
+              alt={essentialsImageAlt}
+              fill
+              className="img-morph object-contain p-3 sm:p-6"
+              sizes="(max-width: 768px) 100vw, 50vw"
+            />
+          </Link>
+        </div>
       </section>
 
       {/* ── CATEGORIES ── */}

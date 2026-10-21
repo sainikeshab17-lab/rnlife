@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyWebhookSignature, RAZORPAY_WEBHOOK_SECRET } from "@/lib/razorpay";
+import { verifyWebhookSignature, isVerifiedCapturedWebhookPayment, RAZORPAY_WEBHOOK_SECRET } from "@/lib/razorpay";
 import {
   getOrderByRazorpayOrderId,
   getOrderById,
   markOrderAsPaid,
-  markOrderPaymentFailed,
   logPaymentAudit,
 } from "@/lib/db/orders";
-import { sendOrderConfirmationEmail } from "@/services/notification-service";
+import { dispatchAllOrderNotifications } from "@/services/notification-service";
 import { getDb } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
@@ -40,8 +39,29 @@ export async function POST(req: NextRequest) {
       const orderEntity = payload.order?.entity;
 
       const rzpOrderId = paymentEntity?.order_id || orderEntity?.id;
-      const rzpPaymentId = paymentEntity?.id || "webhook_captured";
+      const rzpPaymentId = paymentEntity?.id;
       const notesOrderId = paymentEntity?.notes?.orderId || orderEntity?.notes?.orderId;
+
+      // Only a signed, captured payment entity can transition an order to paid.
+      // `order.paid` snapshots may not contain the payment entity, so those are
+      // acknowledged without changing local payment state.
+      if (
+        !isVerifiedCapturedWebhookPayment(paymentEntity)
+      ) {
+        await logPaymentAudit(null, `webhook_unverified_${eventType}`, {
+          rzpOrderId,
+          rzpPaymentId,
+          status: paymentEntity?.status,
+        });
+        return NextResponse.json({ status: "ignored_unverified_payment" });
+      }
+      if (orderEntity?.id && orderEntity.id !== rzpOrderId) {
+        await logPaymentAudit(null, "webhook_entities_order_id_mismatch", {
+          paymentOrderId: rzpOrderId,
+          orderEntityId: orderEntity.id,
+        });
+        return NextResponse.json({ error: "Webhook payment and order entities do not match." }, { status: 400 });
+      }
 
       let order = notesOrderId ? await getOrderById(notesOrderId) : null;
       if (!order && rzpOrderId) {
@@ -49,29 +69,51 @@ export async function POST(req: NextRequest) {
       }
 
       if (order) {
+        if (order.razorpay_order_id !== rzpOrderId) {
+          const expectedPaisa = Math.round(order.total * 100);
+          if (paymentEntity.amount === expectedPaisa) {
+            await logPaymentAudit(order.id, "stale_payment_attempt_captured", {
+              expected: order.razorpay_order_id,
+              received: rzpOrderId,
+              paymentId: rzpPaymentId,
+              requiresManualReconciliation: true,
+            });
+            return NextResponse.json({ status: "stale_payment_attempt_requires_reconciliation" });
+          }
+          await logPaymentAudit(order.id, "webhook_order_id_mismatch", {
+            expected: order.razorpay_order_id,
+            received: rzpOrderId,
+          });
+          return NextResponse.json({ error: "Payment order does not match." }, { status: 400 });
+        }
+
         await logPaymentAudit(order.id, `webhook_${eventType}`, {
           event: eventType,
           paymentId: rzpPaymentId,
         });
 
-        // Verify amount if payment entity exists
-        if (paymentEntity?.amount) {
-          const expectedPaisa = Math.round(order.total * 100);
-          if (paymentEntity.amount !== expectedPaisa) {
-            await logPaymentAudit(order.id, "webhook_amount_mismatch", {
-              expected: expectedPaisa,
-              received: paymentEntity.amount,
-            });
-            return NextResponse.json({ error: "Amount mismatch" }, { status: 400 });
-          }
+        const expectedPaisa = Math.round(order.total * 100);
+        if (paymentEntity.amount !== expectedPaisa) {
+          await logPaymentAudit(order.id, "webhook_amount_mismatch", {
+            expected: expectedPaisa,
+            received: paymentEntity.amount,
+          });
+          return NextResponse.json({ error: "Amount mismatch" }, { status: 400 });
         }
 
-        const result = await markOrderAsPaid(order.id, rzpPaymentId);
-        if (!result.alreadyPaid) {
-          const refreshed = await getOrderById(order.id);
-          if (refreshed) {
-            sendOrderConfirmationEmail(refreshed).catch(console.error);
-          }
+        const result = await markOrderAsPaid(order.id, rzpPaymentId, rzpOrderId);
+        if (!result.success) {
+          await logPaymentAudit(order.id, "captured_payment_requires_reconciliation", {
+            paymentId: rzpPaymentId,
+            alreadyPaid: result.alreadyPaid,
+          });
+          return NextResponse.json({ status: "captured_payment_requires_reconciliation" });
+        }
+        const refreshed = await getOrderById(order.id);
+        if (!refreshed) throw new Error("Paid order could not be reloaded for notification processing.");
+        const notificationJobs = await dispatchAllOrderNotifications(refreshed);
+        if (notificationJobs.failed > 0) {
+          return NextResponse.json({ error: "Payment recorded; notification jobs require retry." }, { status: 500 });
         }
       } else {
         await logPaymentAudit(null, `webhook_unmatched_${eventType}`, { rzpOrderId, notesOrderId });
@@ -87,8 +129,9 @@ export async function POST(req: NextRequest) {
       }
 
         if (order) {
-        await markOrderPaymentFailed(order.id, paymentEntity?.error_description || "Payment failed");
         await logPaymentAudit(order.id, "webhook_payment_failed", {
+          paymentId: paymentEntity?.id,
+          status: paymentEntity?.status,
           errorCode: paymentEntity?.error_code,
           description: paymentEntity?.error_description,
         });
@@ -178,7 +221,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ status: "ok" });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Error processing Razorpay webhook:", err);
     return NextResponse.json(
       { error: "Internal server error processing webhook" },

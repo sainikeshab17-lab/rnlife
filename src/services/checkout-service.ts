@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { z } from "zod";
 import { PRODUCTS } from "@/data/mock-data";
 import { TShirtSize } from "@/types";
@@ -50,10 +51,31 @@ export const CreateCheckoutOrderSchema = z.object({
   address: DeliveryAddressSchema,
   items: z.array(CheckoutItemSchema).min(1, "Your cart must contain at least one T-shirt"),
   promoCode: z.string().trim().optional(),
-  userId: z.string().optional(),
 });
 
 export type CreateCheckoutOrderInput = z.infer<typeof CreateCheckoutOrderSchema>;
+
+export const CheckoutIdempotencyKeySchema = z.string().uuid();
+
+export function createCheckoutRequestHash(params: {
+  userId: string | null;
+  customerEmail: string;
+  paymentMethod: string;
+  customerName: string;
+  customerPhone: string;
+  address: z.infer<typeof DeliveryAddressSchema>;
+  items: VerifiedCheckoutItem[];
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  total: number;
+}): string {
+  return createHash("sha256").update(JSON.stringify({
+    ...params,
+    customerEmail: params.customerEmail.toLowerCase().trim(),
+    customerPhone: params.customerPhone.trim(),
+  })).digest("hex");
+}
 
 export interface VerifiedCheckoutItem {
   productId: string;

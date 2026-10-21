@@ -1,6 +1,31 @@
 import { getDb, DbNotificationJob, OrderWithDetails } from "@/lib/db";
 import { randomUUID } from "crypto";
 
+const RESEND_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
+
+export function isProviderRetryWindowExpired(firstAttemptAt: string | null, now = Date.now()): boolean {
+  return Boolean(firstAttemptAt && now - Date.parse(firstAttemptAt) >= RESEND_RETRY_WINDOW_MS);
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
+function safeTrackingHref(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? escapeHtml(url.href) : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface EmailSendResult {
   sent: boolean;
   provider: "smtp" | "resend" | "none";
@@ -52,7 +77,7 @@ export async function queueNotificationJob(params: {
   const job = await db.prepare("SELECT * FROM notification_jobs WHERE idempotency_key = ?")
     .get<DbNotificationJob>(idempotencyKey);
   if (!job) throw new Error("Notification job could not be retrieved after enqueue.");
-  if (job.id === id) await processNotificationJob(job.id);
+  await processNotificationJob(job.id);
 
   return (await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
     .get<DbNotificationJob>(job.id)) ?? job;
@@ -61,93 +86,138 @@ export async function queueNotificationJob(params: {
 /**
  * Process a queued notification job by ID
  */
-export async function processNotificationJob(jobId: string): Promise<EmailSendResult> {
+export async function processNotificationJob(
+  jobId: string,
+  options: { manualRetry?: boolean } = {}
+): Promise<EmailSendResult> {
   const db = getDb();
-  const job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+  let job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
     .get<DbNotificationJob>(jobId);
 
   if (!job) {
     return { sent: false, provider: "none", error: "Notification job not found." };
   }
+  const now = new Date().toISOString();
 
   if (job.status === "sent") {
-    return { sent: true, provider: "none" };
+    return { sent: true, provider: "resend", messageId: job.provider_message_id ?? undefined };
+  }
+
+  // created_at is present in the original schema and immutable, so it can
+  // conservatively bound the provider idempotency window without a migration.
+  const firstProviderAttempt = job.created_at;
+  if (job.attempts > 0 && isProviderRetryWindowExpired(firstProviderAttempt)) {
+    if (job.status === "sending" && Date.now() - Date.parse(job.updated_at) < 5 * 60 * 1000) {
+      return { sent: false, provider: "resend", error: "Notification is processing; reconcile its provider outcome before retrying." };
+    }
+    const message = "Provider outcome is unknown and the provider idempotency window has expired; reconcile in Resend before retrying.";
+    const transition = await db.prepare(`
+      UPDATE notification_jobs SET status = 'unknown', last_error = ?, updated_at = ?
+      WHERE id = ? AND status = ? AND created_at = ?
+    `).run(message, now, jobId, job.status, job.created_at);
+    if (transition.rowCount !== 1) {
+      return { sent: false, provider: "none", error: "Notification state changed during retry-window reconciliation; refresh the job." };
+    }
+    return { sent: false, provider: "none", error: message };
   }
 
   const resendApiKey = process.env.RESEND_API_KEY;
-  const smtpHost = process.env.SMTP_HOST;
-  const now = new Date().toISOString();
 
-  if (!resendApiKey && !smtpHost) {
+  if (!resendApiKey) {
     // Graceful unconfigured fallback
     await db.prepare(`
       UPDATE notification_jobs
       SET status = 'skipped',
-          last_error = 'No email provider configured (RESEND_API_KEY or SMTP_HOST missing).',
+          last_error = 'No supported email provider configured (RESEND_API_KEY missing).',
           updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND status IN ('pending', 'failed', 'skipped')
     `).run(now, jobId);
 
     console.info(`[Notification] Job ${jobId} skipped: provider is unconfigured.`);
     return { sent: false, provider: "none", error: "Email provider unconfigured." };
   }
 
-  if (resendApiKey) {
-    try {
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: process.env.EMAIL_FROM || "RightNowLife Orders <orders@rightnowlife.in>",
-          to: [job.recipient_email],
-          subject: job.subject,
-          html: job.body_html,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        await db.prepare(`
-          UPDATE notification_jobs
-          SET status = 'sent',
-              attempts = attempts + 1,
-              last_error = NULL,
-              updated_at = ?
-          WHERE id = ?
-        `).run(new Date().toISOString(), jobId);
-
-        return { sent: true, provider: "resend", messageId: data.id };
-      } else {
-        const errData = await response.text();
-        await db.prepare(`
-          UPDATE notification_jobs
-          SET attempts = attempts + 1,
-              status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
-              last_error = ?,
-              updated_at = ?
-          WHERE id = ?
-        `).run(`Resend error: ${errData}`, new Date().toISOString(), jobId);
-
-        return { sent: false, provider: "resend", error: errData };
-      }
-    } catch (err: any) {
-      await db.prepare(`
-        UPDATE notification_jobs
-        SET attempts = attempts + 1,
-            status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
-            last_error = ?,
-            updated_at = ?
-        WHERE id = ?
-      `).run(err.message, new Date().toISOString(), jobId);
-
-      return { sent: false, provider: "resend", error: err.message };
-    }
+  if (options.manualRetry && job.status === "failed" && job.attempts >= job.max_attempts) {
+    await db.prepare(`
+      UPDATE notification_jobs SET status = 'pending', max_attempts = max_attempts + 3, updated_at = ?
+      WHERE id = ? AND status = 'failed' AND attempts >= max_attempts
+    `).run(now, jobId);
+    job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+      .get<DbNotificationJob>(jobId);
+    if (!job) return { sent: false, provider: "none", error: "Notification job not found." };
   }
 
-  return { sent: false, provider: "none", error: "Unsupported email provider." };
+  // Claim once across concurrent requests. Reclaim stale sends only while the
+  // Resend idempotency key is still within its documented retention window.
+  const claimed = await db.prepare(`
+    UPDATE notification_jobs
+    SET status = 'sending', provider = 'resend', attempts = attempts + 1,
+        last_error = NULL, updated_at = ?
+    WHERE id = ? AND attempts < max_attempts
+      AND (attempts = 0 OR created_at > NOW() - INTERVAL '23 hours') AND (
+      status IN ('pending', 'failed', 'skipped') OR
+      (status = 'sending' AND updated_at < NOW() - INTERVAL '5 minutes'
+        AND updated_at > NOW() - INTERVAL '23 hours')
+    )
+    RETURNING *
+  `).get<DbNotificationJob>(now, jobId);
+
+  if (!claimed) {
+    job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
+      .get<DbNotificationJob>(jobId);
+    return {
+      sent: job?.status === "sent",
+      provider: job?.provider === "resend" ? "resend" : "none",
+      messageId: job?.provider_message_id ?? undefined,
+      error: job?.status === "sending" ? "Notification is processing or requires reconciliation." :
+        job?.status === "unknown" ? job.last_error ?? "Provider outcome requires reconciliation." :
+        job?.status === "failed" ? job.last_error ?? "Notification retry limit reached." : undefined,
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": claimed.idempotency_key,
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || "RightNowLife Orders <orders@rightnowlife.in>",
+        to: [claimed.recipient_email],
+        subject: claimed.subject,
+        html: claimed.body_html,
+        ...(claimed.body_text ? { text: claimed.body_text } : {}),
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as { id?: string };
+      await db.prepare(`
+        UPDATE notification_jobs
+        SET status = 'sent', provider = 'resend', provider_message_id = ?,
+            last_error = NULL, updated_at = ?
+        WHERE id = ? AND status = 'sending'
+      `).run(data.id ?? null, new Date().toISOString(), jobId);
+      return { sent: true, provider: "resend", messageId: data.id };
+    }
+
+    const providerError = await response.text();
+    const status = claimed.attempts >= claimed.max_attempts ? "failed" : "pending";
+    await db.prepare(`UPDATE notification_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending'`)
+      .run(status, `Resend ${response.status}: ${providerError}`, new Date().toISOString(), jobId);
+    return { sent: false, provider: "resend", error: providerError };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Email provider request failed.";
+    const status = Date.now() - Date.parse(claimed.created_at) > 23 * 60 * 60 * 1000
+      ? "unknown"
+      : claimed.attempts >= claimed.max_attempts ? "failed" : "pending";
+    await db.prepare(`UPDATE notification_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending'`)
+      .run(status, `Provider outcome uncertain: ${message}`, new Date().toISOString(), jobId);
+    return { sent: false, provider: "resend", error: message };
+  }
 }
 
 /**
@@ -155,13 +225,16 @@ export async function processNotificationJob(jobId: string): Promise<EmailSendRe
  */
 export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promise<DbNotificationJob> {
   const html = generateOrderEmailHtml(order);
-  const plainText = `Order Confirmed: #${order.order_number}\nTotal: ₹${order.total}\nItems: ${order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}`).join(", ")}`;
+  const confirmationLabel = order.payment_method === "Cash on Delivery" && order.payment_status !== "paid"
+    ? "Order placed — Cash on Delivery"
+    : "Order Confirmed";
+  const plainText = `${confirmationLabel}: #${order.order_number}\nTotal: ₹${order.total}\nItems: ${order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}`).join(", ")}`;
   return queueNotificationJob({
     orderId: order.id,
     recipientEmail: order.customer_email,
     recipientName: order.customer_name,
     eventType: "order_confirmation",
-    subject: `Order Confirmed: #${order.order_number} — RightNowLife`,
+    subject: `${confirmationLabel}: #${order.order_number} — RightNowLife`,
     bodyHtml: html,
     bodyText: plainText,
     idempotencyKey: `notif_conf_${order.id}`,
@@ -172,7 +245,7 @@ export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promi
  * Trigger new order notification to admin / store owner
  */
 export async function sendAdminNewOrderNotification(order: OrderWithDetails): Promise<DbNotificationJob> {
-  const adminEmail = process.env.INITIAL_ADMIN_EMAIL || process.env.ADMIN_NOTIFICATION_EMAIL || "admin@rightnowlife.in";
+  const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || process.env.INITIAL_ADMIN_EMAIL || "admin@rightnowlife.in";
   const itemsText = order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity} = ₹${i.price * i.quantity}`).join(", ");
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
@@ -180,11 +253,11 @@ export async function sendAdminNewOrderNotification(order: OrderWithDetails): Pr
       <p style="font-size: 14px; color: #0876A8; font-weight: bold;">NEW ORDER RECEIVED — ACTION REQUIRED</p>
       <p>A new order has been placed on RightNowLife.</p>
       <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 16px 0;">
-        <p style="margin: 0 0 6px 0;"><strong>Order Number:</strong> #${order.order_number}</p>
-        <p style="margin: 0 0 6px 0;"><strong>Customer:</strong> ${order.customer_name} (${order.customer_email}, ${order.customer_phone})</p>
-        <p style="margin: 0 0 6px 0;"><strong>Payment Method:</strong> ${order.payment_method} (${order.payment_status})</p>
+        <p style="margin: 0 0 6px 0;"><strong>Order Number:</strong> #${escapeHtml(order.order_number)}</p>
+        <p style="margin: 0 0 6px 0;"><strong>Customer:</strong> ${escapeHtml(order.customer_name)} (${escapeHtml(order.customer_email)}, ${escapeHtml(order.customer_phone)})</p>
+        <p style="margin: 0 0 6px 0;"><strong>Payment Method:</strong> ${escapeHtml(order.payment_method)} (${escapeHtml(order.payment_status)})</p>
         <p style="margin: 0 0 6px 0;"><strong>Total Value:</strong> ₹${order.total.toLocaleString("en-IN")}</p>
-        <p style="margin: 0;"><strong>Delivery:</strong> ${order.address?.address_line1}, ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}</p>
+        <p style="margin: 0;"><strong>Delivery:</strong> ${escapeHtml(order.address?.address_line1)}, ${escapeHtml(order.address?.city)}, ${escapeHtml(order.address?.state)} - ${escapeHtml(order.address?.pin_code)}</p>
       </div>
       <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
         <thead>
@@ -197,8 +270,8 @@ export async function sendAdminNewOrderNotification(order: OrderWithDetails): Pr
           ${order.items.map(item => `
             <tr>
               <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5;">
-                <strong>${item.product_name}</strong><br/>
-                <small>Size: ${item.size} | Color: ${item.color} | Qty: ${item.quantity}</small>
+                <strong>${escapeHtml(item.product_name)}</strong><br/>
+                <small>Size: ${escapeHtml(item.size)} | Color: ${escapeHtml(item.color)} | Qty: ${item.quantity}</small>
               </td>
               <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
                 ₹${(item.price * item.quantity).toLocaleString("en-IN")}
@@ -226,13 +299,13 @@ export async function sendAdminNewOrderNotification(order: OrderWithDetails): Pr
  * Trigger new order notification to seller(s)
  */
 export async function sendSellerNewOrderNotification(order: OrderWithDetails): Promise<DbNotificationJob> {
-  const sellerEmail = process.env.SELLER_NOTIFICATION_EMAIL || process.env.INITIAL_ADMIN_EMAIL || "seller@rightnowlife.in";
+  const sellerEmail = process.env.SELLER_NOTIFICATION_EMAIL || process.env.ADMIN_NOTIFICATION_EMAIL || process.env.INITIAL_ADMIN_EMAIL || "seller@rightnowlife.in";
   const itemsText = order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}`).join(", ");
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE SELLER PORTAL</h1>
       <p style="font-size: 14px; color: #079447; font-weight: bold;">NEW ORDER TO FULFILL</p>
-      <p>You have new item(s) to prepare for shipment for Order <strong>#${order.order_number}</strong>.</p>
+      <p>You have new item(s) to prepare for shipment for Order <strong>#${escapeHtml(order.order_number)}</strong>.</p>
       <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
         <thead>
           <tr style="text-align: left; border-bottom: 2px solid #111111;">
@@ -244,8 +317,8 @@ export async function sendSellerNewOrderNotification(order: OrderWithDetails): P
           ${order.items.map(item => `
             <tr>
               <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5;">
-                <strong>${item.product_name}</strong><br/>
-                <small>Size: ${item.size} | Color: ${item.color}</small>
+                <strong>${escapeHtml(item.product_name)}</strong><br/>
+                <small>Size: ${escapeHtml(item.size)} | Color: ${escapeHtml(item.color)}</small>
               </td>
               <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5; text-align: right; font-weight: bold;">
                 ${item.quantity}
@@ -255,7 +328,7 @@ export async function sendSellerNewOrderNotification(order: OrderWithDetails): P
         </tbody>
       </table>
       <div style="background: #f7f7f7; padding: 12px; border-radius: 6px;">
-        <p style="margin: 0; font-size: 13px;"><strong>Ship To:</strong> ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}</p>
+        <p style="margin: 0; font-size: 13px;"><strong>Ship To:</strong> ${escapeHtml(order.address?.city)}, ${escapeHtml(order.address?.state)} - ${escapeHtml(order.address?.pin_code)}</p>
       </div>
     </div>
   `;
@@ -275,19 +348,42 @@ export async function sendSellerNewOrderNotification(order: OrderWithDetails): P
 /**
  * Dispatch all order notifications (Customer, Admin, Seller)
  */
-export async function dispatchAllOrderNotifications(order: OrderWithDetails): Promise<void> {
+export async function dispatchAllOrderNotifications(order: OrderWithDetails): Promise<{ persisted: number; failed: number }> {
   const results = await Promise.allSettled([
     sendOrderConfirmationEmail(order),
     sendAdminNewOrderNotification(order),
     sendSellerNewOrderNotification(order),
   ]);
 
+  let persisted = 0;
+  let failed = 0;
   results.forEach((result, idx) => {
     if (result.status === "rejected") {
+      failed += 1;
       const target = idx === 0 ? "Customer" : idx === 1 ? "Admin" : "Seller";
       console.error(`[Notification] Failed to queue ${target} notification for order ${order.id}:`, result.reason);
+    } else {
+      persisted += 1;
     }
   });
+  return { persisted, failed };
+}
+
+export async function persistPaymentNotificationJobs(
+  orderId: string,
+  persist: () => Promise<{ persisted: number; failed: number }>
+): Promise<boolean> {
+  try {
+    const result = await persist();
+    if (result.failed > 0) {
+      console.error(`[Notification] ${result.failed} payment notification job(s) require recovery for order ${orderId}.`);
+      return false;
+    }
+    return true;
+  } catch (error: unknown) {
+    console.error(`[Notification] Failed to persist payment notification jobs for order ${orderId}:`, error);
+    return false;
+  }
 }
 
 /**
@@ -299,18 +395,19 @@ export async function sendShippingUpdateEmail(
   trackingNumber: string,
   trackingUrl?: string | null
 ): Promise<DbNotificationJob> {
+  const trackingHref = trackingUrl ? safeTrackingHref(trackingUrl) : null;
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
       <p style="font-size: 14px; color: #0876A8; font-weight: bold;">YOUR ORDER IS ON THE WAY</p>
-      <p>Hey ${order.customer_name},</p>
-      <p>Great news! Your Order <strong>#${order.order_number}</strong> has been handed over to <strong>${courierName}</strong>.</p>
+      <p>Hey ${escapeHtml(order.customer_name)},</p>
+      <p>Great news! Your Order <strong>#${escapeHtml(order.order_number)}</strong> has been handed over to <strong>${escapeHtml(courierName)}</strong>.</p>
       <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
-        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Courier Partner:</strong> ${courierName}</p>
-        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Tracking Number (AWB):</strong> ${trackingNumber}</p>
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Courier Partner:</strong> ${escapeHtml(courierName)}</p>
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Tracking Number (AWB):</strong> ${escapeHtml(trackingNumber)}</p>
         ${
-          trackingUrl
-            ? `<p style="margin: 0; font-size: 13px;"><a href="${trackingUrl}" style="display: inline-block; background: #111111; color: #ffffff; text-decoration: none; padding: 8px 16px; font-weight: bold; border-radius: 4px;" target="_blank" rel="noopener noreferrer">Track Consignment &rarr;</a></p>`
+          trackingHref
+            ? `<p style="margin: 0; font-size: 13px;"><a href="${trackingHref}" style="display: inline-block; background: #111111; color: #ffffff; text-decoration: none; padding: 8px 16px; font-weight: bold; border-radius: 4px;" target="_blank" rel="noopener noreferrer">Track Consignment &rarr;</a></p>`
             : ""
         }
       </div>
@@ -342,9 +439,9 @@ export async function sendReturnStatusEmail(
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
       <p style="font-size: 14px; color: #111111; font-weight: bold;">${returnType.toUpperCase()} STATUS UPDATE</p>
-      <p>Hey ${order.customer_name},</p>
-      <p>Your request for a ${returnType} on Order <strong>#${order.order_number}</strong> has been updated to: <strong>${status.toUpperCase()}</strong>.</p>
-      ${adminNote ? `<p style="background: #f7f7f7; padding: 12px; border-left: 3px solid #111111; font-size: 13px;">${adminNote}</p>` : ""}
+      <p>Hey ${escapeHtml(order.customer_name)},</p>
+      <p>Your request for a ${escapeHtml(returnType)} on Order <strong>#${escapeHtml(order.order_number)}</strong> has been updated to: <strong>${escapeHtml(status.toUpperCase())}</strong>.</p>
+      ${adminNote ? `<p style="background: #f7f7f7; padding: 12px; border-left: 3px solid #111111; font-size: 13px;">${escapeHtml(adminNote)}</p>` : ""}
       <p style="font-size: 12px; color: #858585;">You can view the full progress in your customer order dashboard.</p>
     </div>
   `;
@@ -372,10 +469,10 @@ export async function sendRefundConfirmationEmail(
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
       <p style="font-size: 14px; color: #079447; font-weight: bold;">REFUND PROCESSED SUCCESSFULLY</p>
-      <p>Hey ${order.customer_name},</p>
-      <p>A refund of <strong>₹${amount.toLocaleString("en-IN")}</strong> for Order <strong>#${order.order_number}</strong> has been successfully initiated to your original payment method.</p>
+      <p>Hey ${escapeHtml(order.customer_name)},</p>
+      <p>A refund of <strong>₹${amount.toLocaleString("en-IN")}</strong> for Order <strong>#${escapeHtml(order.order_number)}</strong> has been successfully initiated to your original payment method.</p>
       <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
-        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Refund Reference ID:</strong> ${refundId}</p>
+        <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Refund Reference ID:</strong> ${escapeHtml(refundId)}</p>
         <p style="margin: 0; font-size: 13px;"><strong>Amount:</strong> ₹${amount.toLocaleString("en-IN")}</p>
       </div>
       <p style="font-size: 12px; color: #858585;">Bank / UPI processing times typically take 3–7 business days to reflect on your statement.</p>
@@ -399,8 +496,8 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
       (item) => `
       <tr>
         <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5;">
-          <strong>${item.product_name}</strong><br/>
-          <small>Size: ${item.size} | Color: ${item.color} | Qty: ${item.quantity}</small>
+          <strong>${escapeHtml(item.product_name)}</strong><br/>
+          <small>Size: ${escapeHtml(item.size)} | Color: ${escapeHtml(item.color)} | Qty: ${item.quantity}</small>
         </td>
         <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
           ₹${(item.price * item.quantity).toLocaleString("en-IN")}
@@ -413,9 +510,11 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
-      <p style="font-size: 14px; color: #079447; font-weight: bold;">PAYMENT VERIFIED & ORDER CONFIRMED</p>
-      <p>Hey ${order.customer_name},</p>
-      <p>Thank you for choosing RightNowLife. Your payment for Order <strong>#${order.order_number}</strong> has been received and your garments are entering preparation.</p>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">${order.payment_method === "Cash on Delivery" && order.payment_status !== "paid" ? "ORDER PLACED — CASH ON DELIVERY" : "PAYMENT VERIFIED & ORDER CONFIRMED"}</p>
+      <p>Hey ${escapeHtml(order.customer_name)},</p>
+      <p>${order.payment_method === "Cash on Delivery" && order.payment_status !== "paid"
+        ? `Thank you for choosing RightNowLife. Your Cash on Delivery order <strong>#${escapeHtml(order.order_number)}</strong> has been placed and is entering preparation.`
+        : `Thank you for choosing RightNowLife. Your payment for Order <strong>#${escapeHtml(order.order_number)}</strong> has been received and your garments are entering preparation.`}</p>
       
       <table style="width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 13px;">
         <thead>
@@ -437,14 +536,14 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
             <td style="padding-top: 6px; text-align: right;">${order.shipping === 0 ? "FREE" : "₹" + order.shipping}</td>
           </tr>
           <tr style="font-size: 16px; font-weight: 900;">
-            <td style="padding-top: 10px; border-top: 1px solid #111111;">Total Paid</td>
+            <td style="padding-top: 10px; border-top: 1px solid #111111;">${order.payment_method === "Cash on Delivery" && order.payment_status !== "paid" ? "Total Due on Delivery" : "Total Paid"}</td>
             <td style="padding-top: 10px; border-top: 1px solid #111111; text-align: right;">₹${order.total.toLocaleString("en-IN")}</td>
           </tr>
         </tfoot>
       </table>
 
       <p style="font-size: 12px; color: #858585;">
-        Delivery Address: ${order.address?.address_line1}, ${order.address?.city}, ${order.address?.state} - ${order.address?.pin_code}<br/>
+        Delivery Address: ${escapeHtml(order.address?.address_line1)}, ${escapeHtml(order.address?.city)}, ${escapeHtml(order.address?.state)} - ${escapeHtml(order.address?.pin_code)}<br/>
         Air courier tracking details will be dispatched via SMS once picked up by our logistics partner.
       </p>
     </div>

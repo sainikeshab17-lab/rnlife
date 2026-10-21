@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrderById, getOrderByNumber } from "@/lib/db/orders";
+import { getOrderById, getOrderByNumber, isOrderOwnedByCustomer, stripGuestToken } from "@/lib/db/orders";
+import { createClient } from "@/lib/supabase/server";
+import { requireAdminAuth } from "@/lib/auth/admin-auth";
 
 export async function GET(
   req: NextRequest,
@@ -9,7 +11,6 @@ export async function GET(
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const token = searchParams.get("token");
-    const email = searchParams.get("email");
 
     // Lookup by internal ID or Order Number
     let order = await getOrderById(id);
@@ -21,11 +22,15 @@ export async function GET(
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    // Authorization check: Must provide either matching guest_token, matching customer_email, or be an admin
-    const isAuthorized =
-      (token && order.guest_token === token) ||
-      (email && order.customer_email.toLowerCase() === email.toLowerCase()) ||
-      searchParams.get("role") === "admin";
+    const supabase = await createClient();
+    const { data } = await supabase.auth.getUser();
+    const isAccountOwner = Boolean(data.user && isOrderOwnedByCustomer(order, {
+      userId: data.user.id,
+      email: data.user.email,
+      emailVerified: Boolean(data.user.email_confirmed_at),
+    }));
+    const isAdmin = Boolean(await requireAdminAuth(req));
+    const isAuthorized = Boolean((token && order.guest_token === token) || isAccountOwner || isAdmin);
 
     if (!isAuthorized) {
       return NextResponse.json(
@@ -34,8 +39,8 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ order });
-  } catch (err: any) {
+    return NextResponse.json({ order: stripGuestToken(order) });
+  } catch (err: unknown) {
     console.error("Error in GET /api/orders/[id]:", err);
     return NextResponse.json({ error: "Failed to fetch order details" }, { status: 500 });
   }

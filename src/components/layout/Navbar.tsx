@@ -112,7 +112,7 @@ export function Navbar() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div
   className={`flex items-center justify-between transition-all duration-500 ease-in-out ${
-    isScrolled ? "h-14 md:h-16" : "h-16 md:h-20"
+  isScrolled ? "h-16 md:h-20" : "h-[4.5rem] md:h-[5.5rem]"
   }`}
 >
             {/* Mobile Menu Trigger */}
@@ -129,7 +129,7 @@ export function Navbar() {
 
             {/* Brand Logo with official RIGHTNOWLIFE emblem */}
             <div className="flex-1 lg:flex-none flex items-center justify-center lg:justify-start">
-              <BrandLogo size="lg" showWordmark={false} iconClassName="h-14 w-14 sm:h-16 sm:w-16" />
+              <BrandLogo size="lg" showWordmark={false} iconClassName="h-16 w-16 sm:h-20 sm:w-20" />
             </div>
 
             {/* Desktop Navigation Links */}

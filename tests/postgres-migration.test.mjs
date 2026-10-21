@@ -7,6 +7,18 @@ const migration = await readFile(
   new URL("../supabase/migrations/20261017000000_supabase_init.sql", import.meta.url),
   "utf8"
 );
+const checkoutMigration = await readFile(
+  new URL("../supabase/migrations/20261021000000_checkout_idempotency.sql", import.meta.url),
+  "utf8"
+);
+const razorpayRecoveryMigration = await readFile(
+  new URL("../supabase/migrations/20261021120000_razorpay_order_recovery.sql", import.meta.url),
+  "utf8"
+);
+const razorpayPaymentAttemptsMigration = await readFile(
+  new URL("../supabase/migrations/20261021130000_razorpay_payment_attempts.sql", import.meta.url),
+  "utf8"
+);
 const importer = await readFile(
   new URL("../scripts/import-sqlite-to-postgres.mjs", import.meta.url),
   "utf8"
@@ -19,6 +31,10 @@ const runtimeTypes = await readFile(
   new URL("../src/lib/db/index.ts", import.meta.url),
   "utf8"
 );
+const orderRuntime = await readFile(new URL("../src/lib/db/orders.ts", import.meta.url), "utf8");
+const notificationRuntime = await readFile(new URL("../src/services/notification-service.ts", import.meta.url), "utf8");
+const customerOrdersPage = await readFile(new URL("../src/app/account/orders/page.tsx", import.meta.url), "utf8");
+const customerOrdersApi = await readFile(new URL("../src/app/api/orders/route.ts", import.meta.url), "utf8");
 
 test("the importer manifest covers all 16 target tables and their columns", () => {
   assert.equal(TABLES.length, 16);
@@ -69,6 +85,47 @@ test("migration preserves foreign-key coverage and denies Supabase client roles"
     assert.match(migration, new RegExp(`ALTER TABLE ${name} ENABLE ROW LEVEL SECURITY`));
   }
   assert.match(migration, /FROM anon, authenticated/);
+});
+
+test("checkout idempotency migration is additive and leaves existing rows intact", () => {
+  assert.match(checkoutMigration, /ALTER TABLE orders\s+ADD COLUMN IF NOT EXISTS checkout_idempotency_key TEXT/i);
+  assert.match(checkoutMigration, /ADD COLUMN IF NOT EXISTS checkout_request_hash TEXT/i);
+  assert.match(checkoutMigration, /CREATE UNIQUE INDEX IF NOT EXISTS .*checkout_idempotency_key/i);
+  assert.match(checkoutMigration, /ALTER TABLE notification_jobs\s+ADD COLUMN IF NOT EXISTS provider_first_attempt_at TIMESTAMPTZ/i);
+  assert.doesNotMatch(checkoutMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN)\b/i);
+  assert.doesNotMatch(prismaSchema, /checkoutIdempotencyKey|providerFirstAttemptAt/);
+  assert.doesNotMatch(runtimeTypes, /checkout_idempotency_key|provider_first_attempt_at/);
+  assert.match(orderRuntime, /checkout_idempotency:/);
+  assert.doesNotMatch(orderRuntime, /checkout_idempotency_key|checkout_request_hash/);
+  assert.doesNotMatch(notificationRuntime, /provider_first_attempt_at/);
+});
+
+test("Razorpay order recovery migration is additive and supports legacy orders", () => {
+  assert.match(razorpayRecoveryMigration, /ADD COLUMN IF NOT EXISTS razorpay_order_state TEXT/i);
+  assert.match(razorpayRecoveryMigration, /ADD COLUMN IF NOT EXISTS razorpay_order_attempted_at TIMESTAMPTZ/i);
+  assert.match(razorpayRecoveryMigration, /razorpay_order_state IS NULL OR razorpay_order_state IN/i);
+  assert.match(razorpayRecoveryMigration, /CREATE INDEX IF NOT EXISTS idx_orders_razorpay_order_recovery/i);
+  assert.doesNotMatch(razorpayRecoveryMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN|UPDATE orders)\b/i);
+  assert.doesNotMatch(prismaSchema, /razorpayOrderState|razorpayOrderAttemptedAt/);
+  assert.doesNotMatch(runtimeTypes, /razorpay_order_state|razorpay_order_attempted_at/);
+  assert.match(orderRuntime, /razorpay_order_creation:creating/);
+});
+
+test("payment attempt migration is additive and retains existing Razorpay identities", () => {
+  assert.match(razorpayPaymentAttemptsMigration, /CREATE TABLE IF NOT EXISTS razorpay_payment_attempts/i);
+  assert.match(razorpayPaymentAttemptsMigration, /UNIQUE \(order_id, attempt_number\)/i);
+  assert.match(razorpayPaymentAttemptsMigration, /UNIQUE \(order_id, attempt_key\)/i);
+  assert.match(razorpayPaymentAttemptsMigration, /current_payment_attempt_id/i);
+  assert.match(razorpayPaymentAttemptsMigration, /WHERE o\.razorpay_order_id IS NOT NULL/i);
+  assert.doesNotMatch(prismaSchema, /model RazorpayPaymentAttempt|currentPaymentAttemptId/);
+  assert.doesNotMatch(runtimeTypes, /current_payment_attempt_id|DbRazorpayPaymentAttempt/);
+  assert.doesNotMatch(orderRuntime, /razorpay_payment_attempts|current_payment_attempt_id/);
+  assert.doesNotMatch(razorpayPaymentAttemptsMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN)\b/i);
+});
+
+test("authenticated order-list UI and API do not expose or link guest tokens", () => {
+  assert.doesNotMatch(customerOrdersPage, /guest_token|\?token=/);
+  assert.doesNotMatch(customerOrdersApi, /guest_token/);
 });
 
 test("SQLite-nullable fields remain nullable with their defaults", () => {

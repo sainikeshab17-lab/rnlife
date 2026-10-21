@@ -20,7 +20,7 @@ import {
   checkAndReserveInventory,
 } from "../src/lib/db/orders.ts";
 import { generateOrderNumber } from "../src/services/checkout-service.ts";
-import { PRODUCTS } from "../src/data/mock-data.ts";
+import { COLLECTIONS, PRODUCTS } from "../src/data/mock-data.ts";
 
 describe("Phase 3: Secure Admin Authentication & Password Hashing", () => {
   test("PBKDF2-SHA512 password hash verifies correctly and rejects wrong passwords", () => {
@@ -249,6 +249,19 @@ describe("Phase 3: Immutable Audit Logging & Pricing Lockdown", () => {
     for (const product of PRODUCTS) {
       assert.strictEqual(product.price, 999, `Product ${product.name} must be ₹999`);
     }
+  });
+
+  test("Essential Tees contains the three selected existing products with working product slugs", () => {
+    const essentials = COLLECTIONS.find((collection) => collection.slug === "essentials");
+    assert.ok(essentials);
+    const products = PRODUCTS.filter((product) => product.collectionSlug === essentials.slug);
+    assert.deepStrictEqual(products.map((product) => product.id).sort(), [
+      "rnl-design-01",
+      "rnl-design-03",
+      "rnl-design-08",
+    ]);
+    assert.strictEqual(essentials.featuredProductCount, 3);
+    assert.ok(products.every((product) => product.slug && product.price === 999));
   });
 
   databaseTest("Dashboard calculation logic computes gross vs net sales accurately", async () => {

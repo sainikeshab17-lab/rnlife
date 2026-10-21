@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getOrderById, markOrderAsPaid, markOrderPaymentFailed, logPaymentAudit } from "@/lib/db/orders";
+import { getOrderById, markOrderAsPaid, logPaymentAudit, recordPaymentAttemptFailure } from "@/lib/db/orders";
 import {
   verifyPaymentSignature,
   getRazorpayClient,
   RAZORPAY_KEY_ID,
   RAZORPAY_KEY_SECRET,
+  isPaymentCaptured,
+  isVerifiedCapturedPaymentDetails,
+  isVerifiedPaymentDetails,
 } from "@/lib/razorpay";
-import { dispatchAllOrderNotifications } from "@/services/notification-service";
+import { dispatchAllOrderNotifications, persistPaymentNotificationJobs } from "@/services/notification-service";
 
 const VerifyPaymentSchema = z.object({
   orderId: z.string().min(1, "Order ID is required"),
@@ -36,29 +39,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    // Check matching Razorpay order ID
-    if (!order.razorpay_order_id || order.razorpay_order_id !== razorpayOrderId) {
-      await logPaymentAudit(order.id, "payment_mismatch_order_id", {
-        expected: order.razorpay_order_id,
-        received: razorpayOrderId,
-      });
-      return NextResponse.json(
-        { error: "Payment does not correspond to the requested order" },
-        { status: 400 }
-      );
-    }
-
-    // 2. If order is already paid, return success (Idempotent)
-    if (order.payment_status === "paid") {
-      return NextResponse.json({
-        success: true,
-        alreadyProcessed: true,
-        orderId: order.id,
-        orderNumber: order.order_number,
-        guestToken: order.guest_token,
-      });
-    }
-
     if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
       console.error("Razorpay server credentials are missing.");
       return NextResponse.json(
@@ -75,16 +55,32 @@ export async function POST(req: NextRequest) {
     });
 
     if (!isSignatureValid) {
-      await markOrderPaymentFailed(order.id, "Invalid payment signature");
       await logPaymentAudit(order.id, "invalid_signature", {
         razorpayOrderId,
         razorpayPaymentId,
-        razorpaySignature,
       });
       return NextResponse.json(
         { error: "Payment verification failed: Invalid cryptographic signature" },
         { status: 400 }
       );
+    }
+
+    if (!order.razorpay_order_id || order.razorpay_order_id !== razorpayOrderId) {
+      try {
+        const stalePayment = await getRazorpayClient().payments.fetch(razorpayPaymentId);
+        if (isVerifiedCapturedPaymentDetails(stalePayment, razorpayOrderId, Math.round(order.total * 100)) &&
+            isPaymentCaptured(stalePayment.status) && stalePayment.captured === true) {
+          await logPaymentAudit(order.id, "stale_payment_attempt_captured", { razorpayOrderId, razorpayPaymentId });
+          return NextResponse.json({ error: "A prior payment attempt was captured and needs reconciliation." }, { status: 409 });
+        }
+      } catch (error: unknown) {
+        console.error(`[Payment] Could not reconcile stale attempt for order ${order.id}.`, error);
+      }
+      await logPaymentAudit(order.id, "payment_mismatch_order_id", {
+        expected: order.razorpay_order_id,
+        received: razorpayOrderId,
+      });
+      return NextResponse.json({ error: "Payment does not correspond to the current order attempt." }, { status: 400 });
     }
 
     // Confirm payment details with Razorpay before updating the local order.
@@ -93,11 +89,7 @@ export async function POST(req: NextRequest) {
       const payment = await rzp.payments.fetch(razorpayPaymentId);
       const expectedPaisa = Math.round(order.total * 100);
 
-      if (
-        payment.order_id !== razorpayOrderId ||
-        payment.amount !== expectedPaisa ||
-        payment.currency !== "INR"
-      ) {
+      if (!isVerifiedPaymentDetails(payment, razorpayOrderId, expectedPaisa)) {
         await logPaymentAudit(order.id, "payment_details_mismatch", {
           razorpayOrderId,
           paymentOrderId: payment.order_id,
@@ -105,18 +97,27 @@ export async function POST(req: NextRequest) {
           receivedAmount: payment.amount,
           receivedCurrency: payment.currency,
         });
-        await markOrderPaymentFailed(order.id, "Payment details do not match order");
         return NextResponse.json(
           { error: "Payment details do not match the order." },
           { status: 400 }
         );
       }
 
-      if (payment.status !== "captured" && payment.status !== "authorized") {
-        await markOrderPaymentFailed(order.id, `Payment status is ${payment.status}`);
+      if (!isPaymentCaptured(payment.status) || payment.captured !== true) {
+        if (payment.status === "authorized") {
+          await logPaymentAudit(order.id, "payment_authorized_pending_capture", {
+            razorpayOrderId,
+            razorpayPaymentId,
+          });
+          return NextResponse.json(
+            { error: "Payment is authorized but not captured yet. Do not retry; check your order status shortly." },
+            { status: 409 }
+          );
+        }
+        await recordPaymentAttemptFailure(order.id, razorpayPaymentId, payment.status);
         return NextResponse.json(
-          { error: `Payment is not successful (status: ${payment.status})` },
-          { status: 400 }
+          { error: `Payment is not captured (status: ${payment.status}). The order remains pending; reopen checkout to retry the same order.` },
+          { status: 409 }
         );
       }
     } catch (error: unknown) {
@@ -128,27 +129,40 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Update database: Mark order as paid and commit inventory deduction
-    const updateResult = await markOrderAsPaid(order.id, razorpayPaymentId, razorpaySignature);
+    const updateResult = await markOrderAsPaid(order.id, razorpayPaymentId, razorpayOrderId, razorpaySignature);
+    if (!updateResult.success) {
+      await logPaymentAudit(order.id, "captured_payment_requires_reconciliation", {
+        razorpayPaymentId,
+        alreadyPaid: updateResult.alreadyPaid,
+      });
+      return NextResponse.json({ error: "Unable to record the verified payment." }, { status: 409 });
+    }
 
-    await logPaymentAudit(order.id, "payment_verified_and_paid", {
-      razorpayPaymentId,
-      amount: order.total,
-    });
+    try {
+      await logPaymentAudit(order.id, "payment_verified_and_paid", {
+        razorpayPaymentId,
+        amount: order.total,
+      });
+    } catch (error: unknown) {
+      console.error(`[Payment] Captured order ${order.id} was committed, but its audit event could not be persisted:`, error);
+    }
 
     // 6. Send transactional confirmation email asynchronously (Customer, Admin, Seller)
-    const refreshedOrder = await getOrderById(order.id) || order;
-    dispatchAllOrderNotifications(refreshedOrder).catch((err) => {
-      console.error("Order notification dispatch error:", err);
+    const notificationJobsPersisted = await persistPaymentNotificationJobs(order.id, async () => {
+      const refreshedOrder = await getOrderById(order.id);
+      if (!refreshedOrder) throw new Error("Paid order could not be reloaded for notification processing.");
+      return dispatchAllOrderNotifications(refreshedOrder);
     });
 
     return NextResponse.json({
       success: true,
       orderId: order.id,
       orderNumber: order.order_number,
-      guestToken: order.guest_token,
+      ...(order.user_id === null ? { guestToken: order.guest_token } : {}),
       alreadyPaid: updateResult.alreadyPaid,
+      notificationStatus: notificationJobsPersisted ? "persisted" : "reconciliation_required",
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Error in /api/checkout/verify-payment:", err);
     return NextResponse.json(
       { error: "Internal server error occurred while verifying payment" },

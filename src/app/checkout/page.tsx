@@ -49,9 +49,7 @@ import { useAuth } from "@/context/auth-context";
 import { formatINR } from "@/lib/utils";
 
 import { Address } from "@/types";
-
-
-
+import { clearCheckoutIdempotencyKey, getCheckoutIdempotencyKey } from "@/services/checkout-idempotency";
 
 
 interface ConfirmedOrderDetails {
@@ -148,6 +146,21 @@ export default function CheckoutPage() {
 
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrderDetails | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"razorpay" | "cod">("razorpay");
+
+  const checkoutKeyFor = (method: "cod" | "razorpay") => getCheckoutIdempotencyKey({
+    userId: isAuthenticated ? user?.id ?? null : null,
+    customerEmail: isAuthenticated && user?.email ? user.email : customerEmail,
+    paymentMethod: method === "cod" ? "Cash on Delivery" : "Razorpay (UPI / Cards / NetBanking)",
+    customerName: addressForm.fullName,
+    customerPhone: addressForm.phone,
+    address: { ...addressForm, country: "India" },
+    items: items.map((item) => ({
+      productId: item.productId,
+      size: item.size,
+      quantity: item.quantity,
+      color: item.color || "As pictured",
+    })),
+  });
 
 
 
@@ -279,6 +292,8 @@ export default function CheckoutPage() {
 
           customerPhone: addressForm.phone,
 
+          idempotencyKey: await checkoutKeyFor("razorpay"),
+
           address: {
 
             ...addressForm,
@@ -301,7 +316,6 @@ export default function CheckoutPage() {
 
           promoCode: appliedPromo || promoInput || undefined,
 
-          userId: user?.id,
 
         }),
 
@@ -442,6 +456,7 @@ export default function CheckoutPage() {
           customerName: addressForm.fullName,
           customerEmail,
           customerPhone: addressForm.phone,
+          idempotencyKey: await checkoutKeyFor("cod"),
           address: { ...addressForm, country: "India" },
           items: items.map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity, color: item.color })),
           promoCode: appliedPromo || promoInput || undefined,
@@ -454,6 +469,7 @@ export default function CheckoutPage() {
         return;
       }
       clearBag();
+      clearCheckoutIdempotencyKey();
       setConfirmedOrder({
         id: data.orderId, orderNumber: data.orderNumber, guestToken: data.guestToken || "",
         total: data.pricing.total, subtotal: data.pricing.subtotal, shipping: data.pricing.shipping, discount: data.pricing.discount,
@@ -524,6 +540,7 @@ export default function CheckoutPage() {
         // Confirmation confirmed on server: Clear bag and show success screen
 
         clearBag();
+        clearCheckoutIdempotencyKey();
 
         setConfirmedOrder({
 
@@ -895,7 +912,7 @@ export default function CheckoutPage() {
 
                 <Link
 
-                  href={`/account/orders?email=${encodeURIComponent(customerEmail)}`}
+                  href="/account/orders"
 
                   className="btn-morph btn-dark px-6 py-3.5 text-xs uppercase tracking-widest font-black inline-flex items-center justify-center gap-2"
 
