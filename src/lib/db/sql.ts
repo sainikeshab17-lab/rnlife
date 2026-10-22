@@ -55,3 +55,23 @@ export function toPostgresPlaceholders(sql: string): string {
 
   return output;
 }
+
+export function safePostgresDiagnostic(sql: string, error: unknown): {
+  code: string;
+  missingRelation: string | null;
+  statement: string;
+} {
+  const record = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : {};
+  const message = typeof record.message === "string" ? record.message : "";
+  const relation = message.match(/relation\s+["']([^"']+)["']\s+does not exist/i)?.[1] ?? null;
+  const statement = sql
+    .replace(/'(?:''|[^'])*'/g, "'[redacted]'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1000);
+  return {
+    code: typeof record.code === "string" ? record.code : "unknown",
+    missingRelation: relation,
+    statement,
+  };
+}

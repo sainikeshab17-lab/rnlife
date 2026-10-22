@@ -26,7 +26,7 @@ import {
   STATUS_LABELS,
   STATUS_COLORS,
   getValidNextStatuses,
-  requiresRefund,
+  requiresRefundForOrder,
 } from "@/lib/order-status-machine";
 import { OrderWithDetails } from "@/lib/db/index";
 
@@ -77,11 +77,11 @@ export default function AdminOrderDetailPage() {
     e.preventDefault();
     if (!selectedNextStatus) return;
 
-    const willNeedRefund = order ? requiresRefund(order.order_status, selectedNextStatus) : false;
+    const willNeedRefund = order ? requiresRefundForOrder(order.order_status, selectedNextStatus, order.payment_method, order.payment_status) : false;
     if (
       willNeedRefund &&
       !window.confirm(
-        `CAUTION: Cancelling this order requires a refund of ₹${order?.total}. Are you sure you want to proceed?`
+        `CAUTION: Cancelling this order requires a refund of the amount actually collected. Are you sure you want to proceed?`
       )
     ) {
       return;
@@ -196,7 +196,7 @@ export default function AdminOrderDetailPage() {
               <div className="pt-1">
                 <span
                   className={`inline-block px-3 py-1 text-xs uppercase font-bold ${
-                    order.payment_status === "paid"
+                    order.payment_status === "paid" || order.payment_status === "partially_paid"
                       ? "bg-emerald-100 text-emerald-800"
                       : "bg-amber-100 text-amber-800"
                   }`}
@@ -207,6 +207,9 @@ export default function AdminOrderDetailPage() {
               <p className="text-[11px] text-neutral-500 pt-1">
                 Method: {order.payment_method}
               </p>
+              {order.payment_status === "partially_paid" && <p className="text-[11px] text-emerald-700 pt-1 font-semibold">
+                Advance received: {formatINR((order.payment_attempts?.find((attempt) => attempt.purpose === "cod_advance" && attempt.payment_state === "captured")?.amount_paisa ?? 0) / 100)} · Balance due on delivery: {formatINR(order.total - ((order.payment_attempts?.find((attempt) => attempt.purpose === "cod_advance" && attempt.payment_state === "captured")?.amount_paisa ?? 0) / 100))}
+              </p>}
             </div>
 
             <div className="bg-white border border-neutral-200 p-4 shadow-sm space-y-1">
@@ -223,7 +226,7 @@ export default function AdminOrderDetailPage() {
           </div>
 
           {/* Refund Banner if Refund Pending */}
-          {order.refund_status === "refund_pending" && (
+          {order.refund_status === "refund_pending" && order.payment_method !== "COD Advance" && (
             <div className="bg-orange-50 border border-orange-200 p-4 shadow-sm flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
               <div className="text-xs text-orange-900 space-y-1">
@@ -273,6 +276,10 @@ export default function AdminOrderDetailPage() {
                         <span className="text-[10px] text-emerald-700 font-mono font-bold block">
                           Locked Unit Price: {formatINR(item.price)}
                         </span>
+                        {item.customization && <div className="mt-1 text-[11px] text-sky-800 space-y-0.5">
+                          <p>Custom quote: “{item.customization.quote}” · Mood: {item.customization.mood} · Style: {item.customization.quoteStyle}</p>
+                          <p>Font: {item.customization.font} · Print: {item.customization.printColor} · Placement: {item.customization.placement} · {item.fulfillment_type === "made_to_order" ? "Made to order (no stock reservation)" : ""}</p>
+                        </div>}
                       </div>
                       <div className="text-right">
                         <span className="font-mono font-bold text-xs text-black block">
@@ -550,22 +557,31 @@ export default function AdminOrderDetailPage() {
               )}
 
               {/* Online Razorpay Refund Trigger Box */}
-              {order.payment_status === "paid" && order.order_status !== "refunded" && (
+              {order.payment_method === "COD Advance" && order.payment_status === "partially_paid" && order.order_status !== "refunded" && (
+                <div className="bg-amber-50 border border-amber-200 p-4 text-xs text-amber-900">
+                  <p className="font-bold uppercase tracking-wider">COD Advance is non-refundable</p>
+                  <p className="mt-1">The ₹200 advance must not be refunded. Cancellation does not refund this payment.</p>
+                </div>
+              )}
+              {(order.payment_status === "paid" || (order.payment_status === "partially_paid" && order.payment_method !== "COD Advance")) && order.order_status !== "refunded" && (
                 <div className="bg-white border border-neutral-200 p-5 shadow-sm space-y-3">
+                  {(() => {
+                    const capturedAdvance = order.total;
+                    return <>
                   <h3 className="text-xs font-bold uppercase tracking-wider text-black pb-2 border-b border-neutral-200 flex items-center gap-1.5">
                     <DollarSign className="w-3.5 h-3.5 text-neutral-500" />
                     <span>Issue Online Refund (Razorpay)</span>
                   </h3>
                   <p className="text-xs text-neutral-500">
-                    Order Total: <strong>₹{order.total}</strong> • Remaining balance can be refunded directly to customer&apos;s bank/UPI.
+                    Collected: <strong>{formatINR(capturedAdvance)}</strong> • Refunds are limited to captured payments.
                   </p>
                   <button
                     type="button"
                     onClick={async () => {
-                      const amountStr = prompt(`Enter refund amount in ₹ (Max: ${order.total}):`, String(order.total));
+                      const amountStr = prompt(`Enter refund amount in ₹ (Max: ${capturedAdvance}):`, String(capturedAdvance));
                       if (!amountStr) return;
                       const amount = Number(amountStr);
-                      if (isNaN(amount) || amount <= 0 || amount > order.total) {
+                      if (!Number.isFinite(amount) || amount <= 0 || amount > capturedAdvance) {
                         alert("Invalid refund amount.");
                         return;
                       }
@@ -590,6 +606,8 @@ export default function AdminOrderDetailPage() {
                   >
                     Initiate Online Refund
                   </button>
+                    </>;
+                  })()}
                 </div>
               )}
 

@@ -48,7 +48,7 @@ import { useAuth } from "@/context/auth-context";
 
 import { formatINR } from "@/lib/utils";
 
-import { Address } from "@/types";
+import { Address, CartItem } from "@/types";
 import { clearCheckoutIdempotencyKey, getCheckoutIdempotencyKey } from "@/services/checkout-idempotency";
 
 
@@ -68,14 +68,41 @@ interface ConfirmedOrderDetails {
 
   discount: number;
 
-  items: any[];
+  items: CartItem[];
 
-  address: any;
+  address: Omit<Address, "id">;
 
   paymentId: string;
 
-  paymentMethod: "razorpay" | "cod";
+  paymentMethod: "razorpay" | "cod_advance";
+  advancePaid?: number;
+  balanceDue?: number;
 
+}
+
+type RazorpaySuccessResponse = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayFailureResponse = { error?: { description?: string } };
+
+type CheckoutOrderResponse = {
+  success?: boolean;
+  error?: string;
+  orderId: string;
+  orderNumber: string;
+  razorpayOrderId: string;
+  amount: number;
+  currency: string;
+  keyId: string;
+  guestToken?: string;
+  pricing: { subtotal: number; shipping: number; discount: number; total: number };
+};
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 
@@ -145,12 +172,12 @@ export default function CheckoutPage() {
 
 
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrderDetails | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<"razorpay" | "cod">("razorpay");
+  const [paymentMethod, setPaymentMethod] = useState<"razorpay" | "cod_advance">("razorpay");
 
-  const checkoutKeyFor = (method: "cod" | "razorpay") => getCheckoutIdempotencyKey({
+  const checkoutKeyFor = (method: "cod_advance" | "razorpay") => getCheckoutIdempotencyKey({
     userId: isAuthenticated ? user?.id ?? null : null,
     customerEmail: isAuthenticated && user?.email ? user.email : customerEmail,
-    paymentMethod: method === "cod" ? "Cash on Delivery" : "Razorpay (UPI / Cards / NetBanking)",
+    paymentMethod: method === "cod_advance" ? "COD Advance" : "Razorpay (UPI / Cards / NetBanking)",
     customerName: addressForm.fullName,
     customerPhone: addressForm.phone,
     address: { ...addressForm, country: "India" },
@@ -159,6 +186,7 @@ export default function CheckoutPage() {
       size: item.size,
       quantity: item.quantity,
       color: item.color || "As pictured",
+      customization: item.customization,
     })),
   });
 
@@ -268,9 +296,6 @@ export default function CheckoutPage() {
     if (isProcessing || isVerifying) return;
     setIsProcessing(true);
     setPaymentError(null);
-
-
-
     try {
       if (!window.Razorpay) {
         throw new Error("Razorpay checkout is unavailable. Please refresh and try again.");
@@ -312,6 +337,8 @@ export default function CheckoutPage() {
 
             color: i.color,
 
+            customization: i.customization,
+
           })),
 
           promoCode: appliedPromo || promoInput || undefined,
@@ -323,7 +350,7 @@ export default function CheckoutPage() {
 
 
 
-      const data = await res.json();
+      const data = await res.json() as CheckoutOrderResponse;
 
 
 
@@ -351,7 +378,7 @@ export default function CheckoutPage() {
 
           name: "RIGHTNOWLIFE",
 
-          description: `Streetwear Order #${data.orderNumber}`,
+          description: "RIGHTNOWLIFE order payment",
 
           image: "/brand/rightnowlife-logo.jpg",
 
@@ -385,7 +412,7 @@ export default function CheckoutPage() {
 
           },
 
-          handler: async (response: any) => {
+          handler: async (response: RazorpaySuccessResponse) => {
 
             await handleVerifyPayment(
 
@@ -409,7 +436,7 @@ export default function CheckoutPage() {
 
         const rzp = new window.Razorpay(options);
 
-        rzp.on("payment.failed", (response: any) => {
+        rzp.on("payment.failed", (response: RazorpayFailureResponse) => {
 
           setIsProcessing(false);
 
@@ -425,13 +452,13 @@ export default function CheckoutPage() {
 
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
 
       console.error("Checkout submission failed:", err);
 
       setIsProcessing(false);
 
-      setPaymentError(err.message || "Network error connecting to payment gateway.");
+      setPaymentError(errorMessage(err, "Network error connecting to payment gateway."));
 
     }
 
@@ -439,15 +466,20 @@ export default function CheckoutPage() {
 
 
 
-  // Place a Cash on Delivery order through the server-validated COD endpoint.
+  // Start the compulsory advance payment; confirmation waits for server verification.
   const handlePlaceCodOrder = async () => {
     if (isProcessing || isVerifying) return;
     if (!isAuthenticated || !user) {
-      setPaymentError("Please sign in before placing a Cash on Delivery order.");
+      setPaymentError("Please sign in before choosing COD Advance.");
+      return;
+    }
+    if (!window.Razorpay) {
+      setPaymentError("Razorpay checkout is unavailable. Please refresh and try again.");
       return;
     }
     setIsProcessing(true);
     setPaymentError(null);
+    let modalOpened = false;
     try {
       const res = await fetch("/api/checkout/cod", {
         method: "POST",
@@ -456,32 +488,61 @@ export default function CheckoutPage() {
           customerName: addressForm.fullName,
           customerEmail,
           customerPhone: addressForm.phone,
-          idempotencyKey: await checkoutKeyFor("cod"),
+          idempotencyKey: await checkoutKeyFor("cod_advance"),
           address: { ...addressForm, country: "India" },
-          items: items.map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity, color: item.color })),
+          items: items.map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity, color: item.color, customization: item.customization })),
           promoCode: appliedPromo || promoInput || undefined,
-          userId: user.id,
         }),
       });
-      const data = await res.json();
+      const data = await res.json() as CheckoutOrderResponse & { paymentAttemptId: string };
       if (!res.ok || !data.success) {
-        setPaymentError(data.error || "Unable to place your Cash on Delivery order.");
+        setPaymentError(data.error || "Unable to initialize COD Advance.");
         return;
       }
-      clearBag();
-      clearCheckoutIdempotencyKey();
-      setConfirmedOrder({
-        id: data.orderId, orderNumber: data.orderNumber, guestToken: data.guestToken || "",
-        total: data.pricing.total, subtotal: data.pricing.subtotal, shipping: data.pricing.shipping, discount: data.pricing.discount,
-        items: [...items], address: { ...addressForm }, paymentId: "", paymentMethod: "cod",
+      const rzp = new window.Razorpay({
+        key: data.keyId, amount: data.amount, currency: data.currency, name: "RIGHTNOWLIFE",
+        description: `COD Advance for Order #${data.orderNumber}`,
+        order_id: data.razorpayOrderId,
+        theme: { color: "#FFB900" },
+        modal: { ondismiss: () => { setIsProcessing(false); setPaymentError("Payment window closed. The order remains unconfirmed; retry the same checkout after checking payment status."); } },
+        handler: async (response: RazorpaySuccessResponse) => {
+          setIsVerifying(true);
+          try {
+            const verified = await fetch("/api/checkout/verify-cod-advance", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ orderId: data.orderId, paymentAttemptId: data.paymentAttemptId,
+                razorpayOrderId: response.razorpay_order_id, razorpayPaymentId: response.razorpay_payment_id,
+                razorpaySignature: response.razorpay_signature }),
+            });
+            const result = await verified.json();
+            if (!verified.ok || !result.success) {
+              setPaymentError(result.error || "Advance payment is not verified yet. Do not pay again while status is checked.");
+              return;
+            }
+            clearBag();
+            clearCheckoutIdempotencyKey();
+            setConfirmedOrder({ id: data.orderId, orderNumber: data.orderNumber, guestToken: "",
+              total: result.total, subtotal: data.pricing.subtotal, shipping: data.pricing.shipping, discount: data.pricing.discount, items: [...items], address: { ...addressForm },
+              paymentId: response.razorpay_payment_id, paymentMethod: "cod_advance",
+              advancePaid: result.advancePaid, balanceDue: result.balanceDue });
+            setStep(4);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          } catch {
+            setPaymentError("Payment was submitted, but its status could not be confirmed. Do not pay again; check your order shortly.");
+          } finally { setIsVerifying(false); setIsProcessing(false); }
+        },
       });
-      setStep(4);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (err) {
-      console.error("COD checkout submission failed:", err);
-      setPaymentError("Network error while placing your order. Please try again.");
+      rzp.on("payment.failed", (response: RazorpayFailureResponse) => {
+        setIsProcessing(false);
+        setPaymentError(`Advance payment failed: ${response.error?.description || "Please retry the same checkout."}`);
+      });
+      modalOpened = true;
+      rzp.open();
+    } catch (err: unknown) {
+      console.error("COD Advance checkout initialization failed:", err);
+      setPaymentError(errorMessage(err, "Network error while initializing COD Advance."));
     } finally {
-      setIsProcessing(false);
+      if (!modalOpened) setIsProcessing(false);
     }
   };
 
@@ -497,7 +558,7 @@ export default function CheckoutPage() {
 
     razorpaySignature: string,
 
-    serverOrder: any
+    serverOrder: CheckoutOrderResponse
 
   ) => {
 
@@ -524,6 +585,8 @@ export default function CheckoutPage() {
           razorpayPaymentId,
 
           razorpaySignature,
+
+          guestToken: serverOrder.guestToken || undefined,
 
         }),
 
@@ -578,7 +641,7 @@ export default function CheckoutPage() {
 
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
 
       console.error("Payment verification call failed:", err);
 
@@ -760,7 +823,7 @@ export default function CheckoutPage() {
 
               <span className="text-[10px] font-mono uppercase tracking-widest text-[#079447] font-bold">
 
-                {confirmedOrder.paymentMethod === "cod" ? "CASH ON DELIVERY ORDER CONFIRMED" : "PAYMENT VERIFIED & RECORDED"}
+                {confirmedOrder.paymentMethod === "cod_advance" ? "COD ADVANCE VERIFIED & ORDER CONFIRMED" : "PAYMENT VERIFIED & RECORDED"}
 
               </span>
 
@@ -782,7 +845,7 @@ export default function CheckoutPage() {
 
               <div className="p-3 bg-[#F5F4F0] border border-[#E5E5E5] text-xs font-mono text-[#111111] inline-block">
 
-                {confirmedOrder.paymentMethod === "cod" ? (<>Payment Method: <strong>Cash on Delivery</strong></>) : (<>Razorpay Payment ID: <strong>{confirmedOrder.paymentId}</strong></>)}
+                {confirmedOrder.paymentMethod === "cod_advance" ? (<>COD Advance paid: <strong>{formatINR(confirmedOrder.advancePaid || 0)}</strong></>) : (<>Razorpay Payment ID: <strong>{confirmedOrder.paymentId}</strong></>)}
 
               </div>
 
@@ -818,7 +881,7 @@ export default function CheckoutPage() {
 
                           <p className="text-[11px] text-[#858585]">
 
-                            Size: {item.size} • Qty: {item.quantity} • ₹999 each
+                            Size: {item.size} • Qty: {item.quantity} • {formatINR(item.customization ? 1999 : 999)} each
 
                           </p>
 
@@ -828,7 +891,7 @@ export default function CheckoutPage() {
 
                       <span className="font-bold text-[#111111] shrink-0">
 
-                        {formatINR(999 * item.quantity)}
+                        {formatINR((item.customization ? 1999 : 999) * item.quantity)}
 
                       </span>
 
@@ -874,11 +937,22 @@ export default function CheckoutPage() {
 
                   </div>
 
+                  {confirmedOrder.paymentMethod === "cod_advance" && <>
+                    <div className="flex justify-between font-semibold text-[#111111]">
+                      <span>Order total</span>
+                      <span>{formatINR(confirmedOrder.total)}</span>
+                    </div>
+                    <div className="flex justify-between text-[#079447]">
+                      <span>COD Advance verified</span>
+                      <span>-{formatINR(confirmedOrder.advancePaid || 0)}</span>
+                    </div>
+                  </>}
+
                   <div className="flex justify-between text-base font-black text-[#111111] pt-2 border-t border-[#E5E5E5]">
 
-                    <span>{confirmedOrder.paymentMethod === "cod" ? "Total Due on Delivery" : "Total Paid"}</span>
+                    <span>{confirmedOrder.paymentMethod === "cod_advance" ? "Remaining Due on Delivery" : "Total Paid"}</span>
 
-                    <span>{formatINR(confirmedOrder.total)}</span>
+                    <span>{formatINR(confirmedOrder.paymentMethod === "cod_advance" ? (confirmedOrder.balanceDue ?? confirmedOrder.total) : confirmedOrder.total)}</span>
 
                   </div>
 
@@ -1514,13 +1588,14 @@ export default function CheckoutPage() {
 
                             </p>
 
-                            <span className="text-[10px] font-mono text-[#0876A8]">Fixed Price: ₹999 per unit</span>
+                            <span className="text-[10px] font-mono text-[#0876A8]">{item.customization ? "Custom quote price: ₹1,999" : "Fixed Price: ₹999 per unit"}</span>
+                            {item.customization && <span className="block text-[10px] text-neutral-600">“{item.customization.quote}” · {item.customization.font} · {item.customization.printColor} · {item.customization.placement}</span>}
 
                           </div>
 
                           <div className="text-right shrink-0">
 
-                            <p className="text-xs font-black text-[#111111]">{formatINR(999 * item.quantity)}</p>
+                            <p className="text-xs font-black text-[#111111]">{formatINR((item.customization ? 1999 : 999) * item.quantity)}</p>
 
                           </div>
 
@@ -1634,9 +1709,10 @@ export default function CheckoutPage() {
                       {/* Cash on Delivery (COD) Option */}
                       <button
                         type="button"
-                        onClick={() => setPaymentMethod("cod")}
+                        disabled={total <= 200}
+                        onClick={() => setPaymentMethod("cod_advance")}
                         className={`w-full text-left p-4 border-2 ${
-                          paymentMethod === "cod"
+                          paymentMethod === "cod_advance"
                             ? "border-[#111111] bg-[#F5F4F0]"
                             : "border-[#E5E5E5] bg-white hover:border-neutral-400"
                         } flex items-start gap-3 transition-colors`}
@@ -1644,16 +1720,18 @@ export default function CheckoutPage() {
                         <input
                           type="radio"
                           name="paymentMethod"
-                          checked={paymentMethod === "cod"}
-                          onChange={() => setPaymentMethod("cod")}
+                          checked={paymentMethod === "cod_advance"}
+                          onChange={() => setPaymentMethod("cod_advance")}
                           className="mt-1 w-4 h-4 accent-[#111111]"
                         />
                         <div className="space-y-1">
                           <p className="text-xs font-black text-[#111111] uppercase tracking-wide">
-                            Cash on Delivery (COD)
+                            COD Advance — Pay ₹200 now
                           </p>
                           <p className="text-[11px] text-[#858585] leading-relaxed">
-                            Pay when the order is delivered. Signed-in account is required for security verification.
+                            {total > 200
+                              ? <>₹200 compulsory online advance per order. Estimated balance due on delivery: {formatINR(total - 200)}. Your order is confirmed only after server-side payment verification.</>
+                              : "Unavailable when the final order total is ₹200 or less."}
                           </p>
                         </div>
                       </button>
@@ -1677,9 +1755,9 @@ export default function CheckoutPage() {
 
                       <button
 
-                        onClick={paymentMethod === "cod" ? handlePlaceCodOrder : handleInitiateRazorpay}
+                        onClick={paymentMethod === "cod_advance" ? handlePlaceCodOrder : handleInitiateRazorpay}
 
-                        disabled={isProcessing || isVerifying}
+                        disabled={isProcessing || isVerifying || (paymentMethod === "cod_advance" && total <= 200)}
 
                         className="btn-morph btn-yellow px-8 py-4 text-xs uppercase tracking-widest font-black flex items-center gap-2 shadow-md disabled:opacity-50"
 
@@ -1690,13 +1768,13 @@ export default function CheckoutPage() {
                         <span>
 
                           {isVerifying
-  ? "Verifying Signature..."
+  ? "Verifying Payment..."
   : isProcessing
-  ? paymentMethod === "cod"
+  ? paymentMethod === "cod_advance"
     ? "Placing Order..."
     : "Opening Razorpay..."
-  : paymentMethod === "cod"
-  ? `Place COD Order · ${formatINR(total)}`
+  : paymentMethod === "cod_advance"
+  ? total > 200 ? `Pay ₹200 Advance · ${formatINR(total - 200)} due on delivery` : "COD Advance unavailable"
   : `Authorize & Pay ${formatINR(total)}`} 
 
                         </span>
@@ -1743,7 +1821,7 @@ export default function CheckoutPage() {
 
                         <p className="text-[11px] text-[#858585]">
 
-                          Size: {item.size} • Qty: {item.quantity} (₹999 each)
+                          Size: {item.size} • Qty: {item.quantity} ({formatINR(item.customization ? 1999 : 999)} each)
 
                         </p>
 
@@ -1751,7 +1829,7 @@ export default function CheckoutPage() {
 
                       <span className="font-semibold text-[#111111] shrink-0">
 
-                        {formatINR(999 * item.quantity)}
+                        {formatINR((item.customization ? 1999 : 999) * item.quantity)}
 
                       </span>
 

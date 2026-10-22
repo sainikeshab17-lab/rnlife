@@ -65,6 +65,17 @@ export interface CartItem {
   quantity: number;
   fit: TShirtFit;
   sku: string;
+  customization?: CustomTShirtCustomization;
+}
+
+export interface CustomTShirtCustomization {
+  type: "quote_tshirt";
+  mood: string;
+  quote: string;
+  quoteStyle: string;
+  font: string;
+  printColor: string;
+  placement: string;
 }
 
 export interface WishlistItem {
@@ -92,6 +103,7 @@ export interface Address {
 
 export type OrderStatus =
   | "placed"
+  | "advance_paid"
   | "confirmed"
   | "processing"
   | "shipped"
@@ -116,8 +128,8 @@ export interface Order {
   discount: number;
   total: number;
   deliveryAddress: Address;
-  paymentMethod: "Razorpay (UPI / Cards / NetBanking)" | "Cash on Delivery";
-  paymentStatus: "Completed" | "Pending" | "Demo Authorized";
+  paymentMethod: "Razorpay (UPI / Cards / NetBanking)" | "Cash on Delivery" | "COD Advance";
+  paymentStatus: "Completed" | "Partially Paid" | "Pending" | "Demo Authorized";
   orderStatus: OrderStatus;
   trackingNumber: string;
   timeline: OrderTimelineItem[];

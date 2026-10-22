@@ -19,8 +19,10 @@ import {
   requestReturnOrExchange,
   inspectReturnItem,
   recordRefund,
+  reserveRefund,
 } from "../src/lib/db/orders.ts";
 import { generateOrderNumber } from "../src/services/checkout-service.ts";
+import { getRefundWebhookIdempotencyKey } from "../src/lib/order-status-machine.ts";
 import {
   createRazorpayRefund,
   RAZORPAY_KEY_SECRET,
@@ -437,15 +439,62 @@ describe("Phase 4: Refund Safety & Record Tracking", () => {
       reason: "Partial goodwill refund",
       initiatedBy: "admin@rightnowlife.in",
       razorpayRefundId: "rfnd_test_1",
+      idempotencyKey: getRefundWebhookIdempotencyKey("rfnd_test_1"),
+    });
+
+    const duplicateRefund = await recordRefund({
+      orderId: order.id,
+      amount: 500,
+      status: "pending",
+      reason: "Webhook retry",
+      initiatedBy: "razorpay_webhook",
+      razorpayRefundId: "rfnd_test_1",
+      idempotencyKey: getRefundWebhookIdempotencyKey("rfnd_test_1"),
     });
 
     assert.strictEqual(refundRec1.amount, 500);
     assert.strictEqual(refundRec1.status, "processed");
+    assert.strictEqual(duplicateRefund.id, refundRec1.id);
+    assert.strictEqual(duplicateRefund.status, "processed");
 
     const fetched = await getOrderById(order.id);
     assert.ok(fetched?.refunds);
     assert.strictEqual(fetched.refunds.length, 1);
     assert.strictEqual(fetched.refunds[0].amount, 500);
+  });
+
+  databaseTest("Serializes concurrent refund reservations and blocks duplicate provider attempts", async () => {
+    const { order } = await createPendingOrder({
+      orderNumber: generateOrderNumber(), customerName: "Refund Reservation Test",
+      customerEmail: "refund_reservation_test@rightnowlife.in", customerPhone: "9876543207",
+      subtotal: 999, shipping: 0, discount: 0, total: 999, paymentMethod: "Razorpay",
+      razorpayOrderId: "order_refund_reservation_test",
+      items: [{ productId: "rnl-design-07", productSlug: "rightnowlife-design-07", productName: "Test Tee", color: "Black", size: "M", price: 999, quantity: 1, image: "/products/design_07_front.png", sku: "RNL-TEST-M", fit: "Regular" }],
+      address: { fullName: "Refund Reservation Test", phone: "9876543207", addressLine1: "Test Road", city: "Bengaluru", state: "Karnataka", pinCode: "560001" },
+    });
+    await markOrderAsPaid(order.id, "pay_refund_reservation_test", "order_refund_reservation_test");
+    const input = { orderId: order.id, paymentId: "pay_refund_reservation_test", amount: 700, reason: "Test", initiatedBy: "admin-test" };
+    const results = await Promise.all([reserveRefund(input), reserveRefund(input)]);
+    assert.equal(results.filter((result) => result.reservation).length, 1);
+    assert.equal(results.filter((result) => result.reason === "pending").length, 1);
+    const blocked = await reserveRefund({ ...input, amount: 100 });
+    assert.equal(blocked.reservation, null);
+    assert.equal(blocked.reason, "pending");
+    const rows = await getDb().prepare("SELECT status, amount_paisa FROM refund_records WHERE order_id = ?").all(order.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, "pending");
+    assert.equal(rows[0].amount_paisa, 70000);
+
+    const reservation = results.find((result) => result.reservation)?.reservation;
+    assert.ok(reservation);
+    await recordRefund({
+      orderId: order.id, amount: 700, status: "processed", reason: "Provider confirmed",
+      initiatedBy: "test-reconciliation", razorpayRefundId: "rfnd_reservation_test",
+      razorpayPaymentId: input.paymentId, idempotencyKey: reservation.idempotency_key,
+    });
+    const overBalance = await reserveRefund({ ...input, amount: 400 });
+    assert.equal(overBalance.reservation, null);
+    assert.equal(overBalance.reason, "exceeds_balance");
   });
 
   test("Simulated server-side Razorpay refund works in test/dev mode", {

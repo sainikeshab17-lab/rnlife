@@ -19,6 +19,10 @@ const razorpayPaymentAttemptsMigration = await readFile(
   new URL("../supabase/migrations/20261021130000_razorpay_payment_attempts.sql", import.meta.url),
   "utf8"
 );
+const customOrdersAndCodAdvanceMigration = await readFile(
+  new URL("../supabase/migrations/20261022120000_custom_orders_and_cod_advance.sql", import.meta.url),
+  "utf8"
+);
 const importer = await readFile(
   new URL("../scripts/import-sqlite-to-postgres.mjs", import.meta.url),
   "utf8"
@@ -117,10 +121,22 @@ test("payment attempt migration is additive and retains existing Razorpay identi
   assert.match(razorpayPaymentAttemptsMigration, /UNIQUE \(order_id, attempt_key\)/i);
   assert.match(razorpayPaymentAttemptsMigration, /current_payment_attempt_id/i);
   assert.match(razorpayPaymentAttemptsMigration, /WHERE o\.razorpay_order_id IS NOT NULL/i);
-  assert.doesNotMatch(prismaSchema, /model RazorpayPaymentAttempt|currentPaymentAttemptId/);
-  assert.doesNotMatch(runtimeTypes, /current_payment_attempt_id|DbRazorpayPaymentAttempt/);
-  assert.doesNotMatch(orderRuntime, /razorpay_payment_attempts|current_payment_attempt_id/);
+  assert.match(prismaSchema, /model RazorpayPaymentAttempt/);
+  assert.match(runtimeTypes, /current_payment_attempt_id|DbRazorpayPaymentAttempt/);
+  assert.match(orderRuntime, /razorpay_payment_attempts|current_payment_attempt_id/);
   assert.doesNotMatch(razorpayPaymentAttemptsMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN)\b/i);
+});
+
+test("consolidated custom-order and COD Advance migration is additive and preserves historical rows", () => {
+  assert.match(customOrdersAndCodAdvanceMigration, /ADD COLUMN IF NOT EXISTS customization JSONB/i);
+  assert.match(customOrdersAndCodAdvanceMigration, /fulfillment_type TEXT NOT NULL DEFAULT 'stock'/i);
+  assert.match(customOrdersAndCodAdvanceMigration, /CREATE TABLE IF NOT EXISTS razorpay_payment_attempts/i);
+  assert.match(customOrdersAndCodAdvanceMigration, /UNIQUE \(order_id, attempt_key\)/i);
+  assert.match(customOrdersAndCodAdvanceMigration, /purpose IN \('full_payment', 'cod_advance'\)/i);
+  assert.match(customOrdersAndCodAdvanceMigration, /ON DELETE RESTRICT/i);
+  assert.doesNotMatch(customOrdersAndCodAdvanceMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN|UPDATE orders|UPDATE order_items)\b/i);
+  assert.match(prismaSchema, /customization Json\? @db\.JsonB/);
+  assert.match(prismaSchema, /fulfillmentType String @default\("stock"\)/);
 });
 
 test("authenticated order-list UI and API do not expose or link guest tokens", () => {

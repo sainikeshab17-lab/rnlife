@@ -41,7 +41,7 @@ export default function CartPage() {
               YOUR BAG ({itemCount})
             </h1>
             <p className="text-xs text-neutral-500 mt-1">
-              Every tee priced at ₹999. Complimentary express air shipping on all orders.
+              Graphic tees are ₹999; custom quote tees are ₹1,999. Complimentary express air shipping on all orders.
             </p>
           </div>
 
@@ -120,8 +120,9 @@ export default function CartPage() {
                           <span>Color: <strong>{item.color}</strong></span>
                         </div>
                         <p className="text-xs font-mono font-bold text-neutral-700 pt-1">
-                          ₹999 per item
+                          ₹{item.customization ? "1,999" : "999"} per item
                         </p>
+                        {item.customization && <p className="mt-1 text-xs text-neutral-600">“{item.customization.quote}” · {item.customization.font} · {item.customization.printColor} · {item.customization.placement}</p>}
                       </div>
                     </div>
 
@@ -148,7 +149,7 @@ export default function CartPage() {
 
                       <div className="flex items-center gap-4">
                         <span className="text-sm font-black font-editorial">
-                          {formatINR(999 * item.quantity)}
+                          {formatINR((item.customization ? 1999 : 999) * item.quantity)}
                         </span>
                         <button
                           onClick={() => removeFromBag(item.id)}

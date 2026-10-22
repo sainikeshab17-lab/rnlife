@@ -9,10 +9,13 @@ import {
   DbReturn,
   DbReturnItem,
   DbRefundRecord,
+  DbRazorpayPaymentAttempt,
   DbConnection,
   OrderWithDetails,
   withTransaction,
 } from "./index";
+import type { CustomTShirtCustomization } from "@/types";
+import { getCancellationResultStatus, shouldMarkOrderRefunded } from "@/lib/order-status-machine";
 
 export function orderInventoryVariants<T extends { productId: string; size: string }>(items: T[]): T[] {
   return [...items].sort((a, b) =>
@@ -171,6 +174,8 @@ export interface CreateOrderParams {
     image: string;
     sku: string;
     fit: string;
+    fulfillmentType?: "stock" | "made_to_order";
+    customization?: CustomTShirtCustomization;
   }>;
   address: {
     fullName: string;
@@ -221,8 +226,8 @@ export async function createPendingOrder(params: CreateOrderParams, connection?:
   const insertItem = db.prepare(`
     INSERT INTO order_items (
       id, order_id, product_id, product_slug, product_name,
-      color, size, price, quantity, image, sku, fit
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      color, size, price, quantity, image, sku, fit, fulfillment_type, customization
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
   `);
 
   for (const item of params.items) {
@@ -239,7 +244,9 @@ export async function createPendingOrder(params: CreateOrderParams, connection?:
       item.quantity,
       item.image,
       item.sku,
-      item.fit
+      item.fit,
+      item.fulfillmentType ?? "stock",
+      item.customization ? JSON.stringify(item.customization) : null
     );
   }
 
@@ -417,6 +424,164 @@ export async function withCheckoutIdempotency(params: {
   });
 }
 
+export async function createCodAdvanceAttempt(
+  orderId: string,
+  attemptKey: string,
+  connection: DbConnection
+): Promise<DbRazorpayPaymentAttempt> {
+  const existing = await connection.prepare(`
+    SELECT * FROM razorpay_payment_attempts WHERE order_id = ? AND attempt_key = ?
+  `).get<DbRazorpayPaymentAttempt>(orderId, attemptKey);
+  if (existing) return existing;
+  const latest = await connection.prepare(`
+    SELECT COALESCE(MAX(attempt_number), 0) AS value FROM razorpay_payment_attempts WHERE order_id = ?
+  `).get<{ value: number }>(orderId);
+  const attemptNumber = Number(latest?.value ?? 0) + 1;
+  const id = `rpa_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+  const now = new Date().toISOString();
+  await connection.prepare(`
+    INSERT INTO razorpay_payment_attempts (
+      id, order_id, attempt_number, attempt_key, purpose, receipt, creation_state,
+      payment_state, amount_paisa, currency, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'cod_advance', ?, 'pending', 'not_attempted', 20000, 'INR', ?, ?)
+  `).run(id, orderId, attemptNumber, attemptKey, id, now, now);
+  await connection.prepare(`
+    UPDATE orders SET current_payment_attempt_id = ?, updated_at = ? WHERE id = ?
+  `).run(id, now, orderId);
+  const created = await connection.prepare("SELECT * FROM razorpay_payment_attempts WHERE id = ?")
+    .get<DbRazorpayPaymentAttempt>(id);
+  if (!created) throw new Error("COD Advance payment attempt could not be retrieved.");
+  return created;
+}
+
+export async function getPaymentAttemptById(attemptId: string): Promise<DbRazorpayPaymentAttempt | null> {
+  return (await getDb().prepare("SELECT * FROM razorpay_payment_attempts WHERE id = ?")
+    .get<DbRazorpayPaymentAttempt>(attemptId)) ?? null;
+}
+
+export async function getPaymentAttemptByRazorpayOrderId(razorpayOrderId: string): Promise<DbRazorpayPaymentAttempt | null> {
+  return (await getDb().prepare("SELECT * FROM razorpay_payment_attempts WHERE razorpay_order_id = ?")
+    .get<DbRazorpayPaymentAttempt>(razorpayOrderId)) ?? null;
+}
+
+export async function claimCodAdvanceOrderCreation(attemptId: string): Promise<"claimed" | "ready" | "wait" | "reconcile"> {
+  return withTransaction(async (db) => {
+    const attempt = await db.prepare("SELECT * FROM razorpay_payment_attempts WHERE id = ? FOR UPDATE")
+      .get<DbRazorpayPaymentAttempt>(attemptId);
+    if (!attempt || attempt.purpose !== "cod_advance") return "reconcile";
+    if (attempt.razorpay_order_id && attempt.creation_state === "ready") return "ready";
+    if (attempt.creation_state === "creating") {
+      if (Date.now() - Date.parse(attempt.updated_at) > 120_000) {
+        await db.prepare(`UPDATE razorpay_payment_attempts SET creation_state = 'unknown',
+          payment_state = 'unknown', reconciliation_note = 'stale_order_creation', updated_at = ? WHERE id = ?`)
+          .run(new Date().toISOString(), attemptId);
+        return "reconcile";
+      }
+      return "wait";
+    }
+    if (attempt.creation_state !== "pending" && attempt.creation_state !== "retryable") return "reconcile";
+    await db.prepare(`UPDATE razorpay_payment_attempts SET creation_state = 'creating', updated_at = ? WHERE id = ?`)
+      .run(new Date().toISOString(), attemptId);
+    return "claimed";
+  });
+}
+
+export async function attachCodAdvanceRazorpayOrder(attemptId: string, razorpayOrderId: string): Promise<boolean> {
+  return withTransaction(async (db) => {
+    const attempt = await db.prepare("SELECT * FROM razorpay_payment_attempts WHERE id = ? FOR UPDATE")
+      .get<DbRazorpayPaymentAttempt>(attemptId);
+    if (!attempt || attempt.purpose !== "cod_advance") return false;
+    if (attempt.razorpay_order_id) return attempt.razorpay_order_id === razorpayOrderId;
+    if (attempt.creation_state !== "creating" && attempt.creation_state !== "unknown") return false;
+    const now = new Date().toISOString();
+    const updated = await db.prepare(`UPDATE razorpay_payment_attempts
+      SET razorpay_order_id = ?, creation_state = 'ready', payment_state = 'not_attempted', updated_at = ?
+      WHERE id = ? AND creation_state IN ('creating', 'unknown')`).run(razorpayOrderId, now, attemptId);
+    if (updated.rowCount !== 1) return false;
+    const orderUpdated = await db.prepare(`UPDATE orders SET razorpay_order_id = ?, updated_at = ?
+      WHERE id = ? AND current_payment_attempt_id = ? AND payment_method = 'COD Advance'`)
+      .run(razorpayOrderId, now, attempt.order_id, attemptId);
+    if (orderUpdated.rowCount !== 1) throw new Error("COD Advance Razorpay order could not be linked to its internal order.");
+    await logPaymentAudit(attempt.order_id, "cod_advance_razorpay_order_created", {
+      attemptId, razorpayOrderId, amountPaisa: attempt.amount_paisa,
+    }, db);
+    return true;
+  });
+}
+
+export async function setCodAdvanceCreationFailure(attemptId: string, state: "retryable" | "unknown", note: string): Promise<void> {
+  await getDb().prepare(`UPDATE razorpay_payment_attempts SET creation_state = ?,
+    payment_state = ?, reconciliation_note = ?, updated_at = ?
+    WHERE id = ? AND purpose = 'cod_advance' AND creation_state = 'creating'`)
+    .run(state, state === "unknown" ? "unknown" : "not_attempted", note.slice(0, 300), new Date().toISOString(), attemptId);
+}
+
+export async function updateCodAdvancePaymentState(
+  attemptId: string,
+  paymentId: string | null,
+  state: "failed" | "authorized" | "cancelled" | "unknown",
+  note?: string
+): Promise<void> {
+  await getDb().prepare(`UPDATE razorpay_payment_attempts
+    SET payment_state = ?, razorpay_payment_id = COALESCE(?, razorpay_payment_id),
+        reconciliation_note = ?, updated_at = ?
+    WHERE id = ? AND purpose = 'cod_advance' AND payment_state != 'captured'`)
+    .run(state, paymentId, note?.slice(0, 300) ?? null, new Date().toISOString(), attemptId);
+}
+
+export async function markCodAdvanceAsVerified(params: {
+  attemptId: string; paymentId: string; razorpayOrderId: string; signature?: string;
+}): Promise<{ success: boolean; alreadyVerified: boolean }> {
+  return withTransaction(async (db) => {
+    const attempt = await db.prepare("SELECT * FROM razorpay_payment_attempts WHERE id = ? FOR UPDATE")
+      .get<DbRazorpayPaymentAttempt>(params.attemptId);
+    if (!attempt || attempt.purpose !== "cod_advance" || attempt.amount_paisa !== 20000 || attempt.currency !== "INR" ||
+      attempt.razorpay_order_id !== params.razorpayOrderId) return { success: false, alreadyVerified: false };
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(attempt.order_id);
+    if (!order || order.payment_method !== "COD Advance" || order.current_payment_attempt_id !== attempt.id ||
+      order.razorpay_order_id !== params.razorpayOrderId || Number(order.total) <= 200) {
+      return { success: false, alreadyVerified: false };
+    }
+    if (attempt.payment_state === "captured") {
+      return attempt.razorpay_payment_id === params.paymentId && order.payment_status === "partially_paid"
+        ? { success: true, alreadyVerified: true }
+        : { success: false, alreadyVerified: false };
+    }
+    if (order.payment_status !== "pending_advance" || order.order_status !== "pending_payment") {
+      return { success: false, alreadyVerified: false };
+    }
+
+    const stockItems = await db.prepare(`SELECT product_id, size, quantity FROM order_items
+      WHERE order_id = ? AND fulfillment_type = 'stock'
+      ORDER BY product_id COLLATE "C", size COLLATE "C"`)
+      .all<{ product_id: string; size: string; quantity: number }>(order.id);
+    await lockInventoryVariants(db, stockItems.map(({ product_id, size }) => ({ productId: product_id, size })));
+    for (const item of stockItems) {
+      const deducted = await db.prepare(`UPDATE inventory SET stock = stock - ?, reserved = reserved - ?
+        WHERE product_id = ? AND size = ? AND stock >= ? AND reserved >= ?`)
+        .run(item.quantity, item.quantity, item.product_id, item.size, item.quantity, item.quantity);
+      if (deducted.rowCount !== 1) throw new Error(`Inventory reservation missing for COD Advance order ${order.id}.`);
+    }
+    const now = new Date().toISOString();
+    const captured = await db.prepare(`UPDATE razorpay_payment_attempts
+      SET payment_state = 'captured', razorpay_payment_id = ?, reconciliation_note = NULL, updated_at = ?
+      WHERE id = ? AND purpose = 'cod_advance' AND payment_state != 'captured'`)
+      .run(params.paymentId, now, params.attemptId);
+    if (captured.rowCount !== 1) throw new Error("Advance payment state changed during capture.");
+    const transition = await db.prepare(`UPDATE orders SET payment_status = 'partially_paid',
+      order_status = 'advance_paid', razorpay_payment_id = ?, razorpay_signature = COALESCE(?, razorpay_signature),
+      updated_at = ? WHERE id = ? AND payment_status = 'pending_advance' AND order_status = 'pending_payment'`)
+      .run(params.paymentId, params.signature ?? null, now, order.id);
+    if (transition.rowCount !== 1) throw new Error(`COD Advance order state changed during capture for ${order.id}.`);
+    await recordOrderStatusHistory(order.id, "pending_payment", "advance_paid", "razorpay", "₹200 COD Advance verified", db);
+    await logPaymentAudit(order.id, "cod_advance_verified", {
+      attemptId: params.attemptId, paymentId: params.paymentId,
+      advanceAmount: 200, balanceDue: Number(order.total) - 200,
+    }, db);
+    return { success: true, alreadyVerified: false };
+  });
+}
+
 async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails> {
   const db = getDb();
   const items = await db
@@ -434,6 +599,9 @@ async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails>
   const refunds = await db
     .prepare("SELECT * FROM refund_records WHERE order_id = ? ORDER BY created_at DESC")
     .all<DbRefundRecord>(order.id);
+  const payment_attempts = await db
+    .prepare("SELECT * FROM razorpay_payment_attempts WHERE order_id = ? ORDER BY attempt_number ASC")
+    .all<DbRazorpayPaymentAttempt>(order.id);
 
   const returnRows = await db
     .prepare("SELECT * FROM returns WHERE order_id = ? ORDER BY created_at DESC")
@@ -453,6 +621,7 @@ async function populateOrderRelations(order: DbOrder): Promise<OrderWithDetails>
     shipping_events,
     returns,
     refunds,
+    payment_attempts,
   };
 }
 
@@ -524,6 +693,7 @@ export async function markOrderAsPaid(
   return withTransaction(async (db) => {
   const current = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
   if (!current) return { success: false, alreadyPaid: false };
+  if (current.payment_method === "COD Advance") return { success: false, alreadyPaid: false };
   if (current.razorpay_order_id !== expectedRazorpayOrderId) return { success: false, alreadyPaid: false };
   if (current.payment_status === "paid") {
     return current.razorpay_payment_id === razorpayPaymentId
@@ -536,7 +706,7 @@ export async function markOrderAsPaid(
 
   // Deduct inventory
   const items = await db
-    .prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id COLLATE "C", size COLLATE "C"')
+    .prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? AND fulfillment_type = \'stock\' ORDER BY product_id COLLATE "C", size COLLATE "C"')
     .all<{ product_id: string; size: string; quantity: number }>(orderId);
     await lockInventoryVariants(db, items.map(({ product_id, size }) => ({ productId: product_id, size })));
 
@@ -691,7 +861,8 @@ export async function requestOrderCancellation(orderId: string, reason: string):
  * Admin decides on cancellation request (approve or reject).
  * If approved:
  * - If unpaid: order marked cancelled, reserved inventory released.
- * - If paid: order marked cancelled, order_status becomes refund_pending, inventory returned to stock.
+ * - If prepaid: order marked refund_pending and inventory returned to stock.
+ * - If COD Advance was captured: order is cancelled without refund and inventory is returned to stock.
  */
 export async function decideOrderCancellation(
   orderId: string,
@@ -722,8 +893,8 @@ export async function decideOrderCancellation(
       return { success: true, newStatus: order.order_status };
     }
 
-    const isPaid = order.payment_status === "paid";
-    const newStatus = isPaid ? "refund_pending" : "cancelled";
+    const isPaid = order.payment_status === "paid" || order.payment_status === "partially_paid";
+    const newStatus = getCancellationResultStatus(order.payment_method, order.payment_status);
     await db.prepare(`
       UPDATE orders
       SET order_status = ?,
@@ -734,7 +905,7 @@ export async function decideOrderCancellation(
     `).run(newStatus, order.cancellation_reason || adminNote || "Approved cancellation", now, orderId);
 
     const items = await db
-    .prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id COLLATE "C", size COLLATE "C"')
+    .prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? AND fulfillment_type = \'stock\' ORDER BY product_id COLLATE "C", size COLLATE "C"')
       .all<{ product_id: string; size: string; quantity: number }>(orderId);
     await lockInventoryVariants(db, items.map(({ product_id, size }) => ({ productId: product_id, size })));
 
@@ -897,7 +1068,7 @@ export async function inspectReturnItem(params: {
     if (!item) return { success: false, error: "Return item not found." };
 
     let restocked = item.restocked;
-    if (params.condition === "resalable" && !item.restocked) {
+    if (params.condition === "resalable" && !item.restocked && item.product_id !== "rnl-custom-quote-tee") {
       await db.prepare(`
         INSERT INTO inventory (product_id, size, stock, reserved)
         VALUES (?, ?, ?, 0)
@@ -927,21 +1098,35 @@ export async function recordRefund(params: {
   reason: string;
   initiatedBy: string;
   failureReason?: string | null;
+  idempotencyKey?: string;
+  connection?: DbConnection;
 }): Promise<DbRefundRecord> {
-  const db = getDb();
+  const db = params.connection ?? getDb();
   const id = `ref_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   const now = new Date().toISOString();
   const amountPaisa = Math.round(params.amount * 100);
   const paymentId = params.razorpayPaymentId || "manual_unpaid_reversal";
-  const idempotencyKey = `idemp_${id}`;
+  const idempotencyKey = params.idempotencyKey || `idemp_${id}`;
 
-  await db.prepare(`
+  const saved = await db.prepare(`
     INSERT INTO refund_records (
       id, order_id, return_id, razorpay_refund_id, razorpay_payment_id,
       amount, amount_paisa, currency, status, reason, idempotency_key, initiated_by, failure_reason,
       created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+    ON CONFLICT (idempotency_key) DO UPDATE SET
+      return_id = COALESCE(EXCLUDED.return_id, refund_records.return_id),
+      razorpay_refund_id = COALESCE(EXCLUDED.razorpay_refund_id, refund_records.razorpay_refund_id),
+      status = CASE WHEN refund_records.status IN ('processed', 'failed') THEN refund_records.status ELSE EXCLUDED.status END,
+      reason = COALESCE(refund_records.reason, EXCLUDED.reason),
+      initiated_by = COALESCE(EXCLUDED.initiated_by, refund_records.initiated_by),
+      failure_reason = COALESCE(EXCLUDED.failure_reason, refund_records.failure_reason),
+      updated_at = EXCLUDED.updated_at
+    WHERE refund_records.order_id = EXCLUDED.order_id
+      AND refund_records.razorpay_payment_id = EXCLUDED.razorpay_payment_id
+      AND refund_records.amount_paisa = EXCLUDED.amount_paisa
+    RETURNING *
+  `).get<DbRefundRecord>(
     id,
     params.orderId,
     params.returnId || null,
@@ -958,22 +1143,102 @@ export async function recordRefund(params: {
     now
   );
 
-  return {
-    id,
-    order_id: params.orderId,
-    return_id: params.returnId || null,
-    razorpay_refund_id: params.razorpayRefundId || null,
-    razorpay_payment_id: paymentId,
-    amount: params.amount,
-    amount_paisa: amountPaisa,
-    currency: "INR",
-    status: params.status,
-    reason: params.reason,
-    idempotency_key: idempotencyKey,
-    raw_response: null,
-    initiated_by: params.initiatedBy,
-    failure_reason: params.failureReason || null,
-    created_at: now,
-    updated_at: now,
-  };
+  if (!saved) throw new Error("Refund idempotency key conflicts with different refund details.");
+  return saved;
+}
+
+/** Reserve refundable balance under an order row lock before calling Razorpay. */
+export async function reserveRefund(params: {
+  orderId: string;
+  returnId?: string | null;
+  paymentId: string;
+  amount: number;
+  reason: string;
+  initiatedBy: string;
+}): Promise<{ reservation: DbRefundRecord | null; reason?: "pending" | "exceeds_balance" | "order_changed" }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT id, payment_status, payment_method, razorpay_payment_id, total FROM orders WHERE id = ? FOR UPDATE")
+      .get<{ id: string; payment_status: string; payment_method: string; razorpay_payment_id: string | null; total: number }>(params.orderId);
+    if (!order || order.payment_status !== "paid" || order.payment_method === "COD Advance" || order.razorpay_payment_id !== params.paymentId) {
+      return { reservation: null, reason: "order_changed" };
+    }
+    const existing = await db.prepare("SELECT id FROM refund_records WHERE order_id = ? AND status = 'pending' LIMIT 1")
+      .get<{ id: string }>(params.orderId);
+    if (existing) return { reservation: null, reason: "pending" };
+
+    const totals = await db.prepare(`SELECT COALESCE(SUM(amount_paisa), 0) AS total FROM refund_records
+      WHERE order_id = ? AND status IN ('pending', 'processed')`).get<{ total: string | number }>(params.orderId);
+    const available = Math.round(Number(order.total) * 100) - Number(totals?.total ?? 0);
+    const amountPaisa = Math.round(params.amount * 100);
+    if (amountPaisa > available) return { reservation: null, reason: "exceeds_balance" };
+
+    const idempotencyKey = `admin_refund_${randomUUID()}`;
+    const reservation = await recordRefund({
+      orderId: params.orderId, returnId: params.returnId, razorpayPaymentId: params.paymentId,
+      amount: params.amount, status: "pending", reason: params.reason, initiatedBy: params.initiatedBy,
+      idempotencyKey, connection: db,
+    });
+    await db.prepare("UPDATE orders SET refund_status = CASE WHEN refund_status IN ('partially_refunded', 'refunded') THEN refund_status ELSE 'pending' END, updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), params.orderId);
+    return { reservation };
+  });
+}
+
+export async function applyRefundReconciliation(params: {
+  orderId: string;
+  refundRecordId: string;
+  providerRefundId: string;
+  providerStatus: "processed" | "failed" | "pending";
+  failureReason?: string;
+}): Promise<{ outcome: "applied" | "unchanged" | "conflict" | "not_found"; refund?: DbRefundRecord }> {
+  return withTransaction(async (db) => {
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(params.orderId);
+    if (!order) return { outcome: "not_found" };
+    const refund = await db.prepare("SELECT * FROM refund_records WHERE id = ? AND order_id = ? FOR UPDATE")
+      .get<DbRefundRecord>(params.refundRecordId, params.orderId);
+    if (!refund) return { outcome: "not_found" };
+
+    if (refund.status !== "pending") {
+      if (refund.status === params.providerStatus && refund.razorpay_refund_id === params.providerRefundId) {
+        return { outcome: "unchanged", refund };
+      }
+      return { outcome: "conflict", refund };
+    }
+    if (refund.razorpay_refund_id && refund.razorpay_refund_id !== params.providerRefundId) {
+      return { outcome: "conflict", refund };
+    }
+
+    const updated = await db.prepare(`UPDATE refund_records SET
+      razorpay_refund_id = ?, status = ?, failure_reason = ?, updated_at = ?
+      WHERE id = ? AND order_id = ? AND status = 'pending'
+      RETURNING *`).get<DbRefundRecord>(
+      params.providerRefundId, params.providerStatus,
+      params.providerStatus === "failed" ? params.failureReason || "Razorpay confirmed refund failure." : null,
+      new Date().toISOString(), params.refundRecordId, params.orderId
+    );
+    if (!updated) return { outcome: "conflict", refund };
+
+    const totals = await db.prepare(`SELECT COALESCE(SUM(amount_paisa), 0) AS total FROM refund_records
+      WHERE order_id = ? AND status = 'processed'`).get<{ total: string | number }>(order.id);
+    const processedTotal = Number(totals?.total ?? 0) / 100;
+    const complete = shouldMarkOrderRefunded(order.payment_method, order.payment_status, processedTotal, order.total);
+    const refundStatus = complete ? "refunded" : processedTotal > 0 ? "partially_refunded" : null;
+
+    if (params.providerStatus === "processed") {
+      await db.prepare(`UPDATE orders SET order_status = ?, refund_status = ?, refund_id = ?, updated_at = ? WHERE id = ?`)
+        .run(complete ? "refunded" : order.order_status, refundStatus, params.providerRefundId, new Date().toISOString(), order.id);
+      if (updated.return_id) {
+        await db.prepare("UPDATE returns SET status = 'completed', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), updated.return_id);
+      }
+    } else if (params.providerStatus === "failed") {
+      await db.prepare(`UPDATE orders SET refund_status = ?, refund_id = ?, updated_at = ?
+        WHERE id = ? AND refund_status = 'pending'`).run(
+        refundStatus, complete ? order.refund_id : processedTotal > 0 ? order.refund_id : null,
+        new Date().toISOString(), order.id
+      );
+    }
+
+    return { outcome: "applied", refund: updated };
+  });
 }

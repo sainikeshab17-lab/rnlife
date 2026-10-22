@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { CartItem, TShirtSize, TShirtFit } from "@/types";
+import { CartItem, CustomTShirtCustomization, TShirtSize, TShirtFit } from "@/types";
 import { useToast } from "./toast-context";
 
 interface CartContextType {
@@ -25,6 +25,7 @@ interface CartContextType {
     price: number;
     image: string;
     fit: TShirtFit;
+    customization?: CustomTShirtCustomization;
     quantity?: number;
   }) => void;
   updateQuantity: (itemId: string, quantity: number) => void;
@@ -50,8 +51,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Ensure all items strictly have price = 999
-          setItems(parsed.map((item: CartItem) => ({ ...item, price: 999 })));
+          setItems(parsed.map((item: CartItem) => ({
+            ...item,
+            price: item.customization?.type === "quote_tshirt" ? 1999 : 999,
+          })));
         }
       }
     } catch {
@@ -81,15 +84,20 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       price: number;
       image: string;
       fit: TShirtFit;
+      customization?: CustomTShirtCustomization;
       quantity?: number;
     }) => {
       const qty = product.quantity || 1;
-      const sku = `${product.productId}-${product.color.toUpperCase().replace(/\s+/g, "")}-${product.size}`;
-      const authoritativePrice = 999; // Every T-shirt is strictly ₹999
+      const sku = product.customization
+        ? `${product.productId}-${product.customization.font}-${product.size}`
+        : `${product.productId}-${product.color.toUpperCase().replace(/\s+/g, "")}-${product.size}`;
+      const authoritativePrice = product.customization ? 1999 : 999;
+      const designKey = JSON.stringify(product.customization ?? null);
 
       setItems((prev) => {
         const existingIdx = prev.findIndex(
-          (i) => i.productId === product.productId && i.color === product.color && i.size === product.size
+          (i) => i.productId === product.productId && i.color === product.color && i.size === product.size &&
+            JSON.stringify(i.customization ?? null) === designKey
         );
 
         if (existingIdx > -1) {
@@ -111,6 +119,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           fit: product.fit,
           quantity: qty,
           sku,
+          ...(product.customization ? { customization: product.customization } : {}),
         };
         return [...prev, newItem];
       });
@@ -118,7 +127,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       toast({
         type: "success",
         title: "Added to Bag",
-        message: `${product.productName} (${product.size} / ${product.color}) · ₹999`,
+        message: `${product.productName} (${product.size} / ${product.color}) · ₹${authoritativePrice.toLocaleString("en-IN")}`,
       });
 
       setIsDrawerOpen(true);
@@ -131,7 +140,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setItems((prev) => prev.filter((i) => i.id !== itemId));
     } else {
       setItems((prev) =>
-        prev.map((i) => (i.id === itemId ? { ...i, quantity: Math.min(qty, 10), price: 999 } : i))
+        prev.map((i) => (i.id === itemId ? { ...i, quantity: Math.min(qty, 10), price: i.customization ? 1999 : 999 } : i))
       );
     }
   }, []);
@@ -165,7 +174,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
-  const subtotal = items.reduce((sum, item) => sum + 999 * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.customization ? 1999 : 999) * item.quantity, 0);
 
   // Section 7 pricing rules:
   // Discount: ₹0 (Promo codes removed)

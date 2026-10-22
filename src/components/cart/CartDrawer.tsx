@@ -167,7 +167,7 @@ export function CartDrawer() {
                   <div>
                     <div className="flex justify-between items-start gap-2">
                       <Link
-                        href={`/products/${item.productSlug}`}
+                        href={item.customization ? "/wear-your-mood" : `/products/${item.productSlug}`}
                         onClick={closeDrawer}
                         className="text-xs font-bold text-neutral-900 hover:underline uppercase truncate block"
                       >
@@ -185,8 +185,9 @@ export function CartDrawer() {
                     <p className="text-[11px] text-neutral-500 mt-0.5">
                       {item.size} / {item.color}
                     </p>
+                    {item.customization && <p className="mt-1 text-[11px] text-neutral-600">“{item.customization.quote}” · {item.customization.font} · {item.customization.printColor} · {item.customization.placement}</p>}
                     <p className="text-[11px] font-mono text-neutral-400">
-                      ₹999 each
+                      ₹{item.customization ? "1,999" : "999"} each
                     </p>
                   </div>
 
@@ -212,7 +213,7 @@ export function CartDrawer() {
                     </div>
 
                     <p className="text-xs font-bold text-neutral-900">
-                      {formatINR(999 * item.quantity)}
+                      {formatINR((item.customization ? 1999 : 999) * item.quantity)}
                     </p>
                   </div>
                 </div>

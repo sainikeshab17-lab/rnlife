@@ -1,5 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
 import { databaseTest } from "./postgres-test-support.mjs";
 import { getDb } from "../src/lib/db/index.ts";
 import {
@@ -13,6 +15,12 @@ import {
 import {
   isValidAdminTransition,
   requiresRefund,
+  canInitiateRefund,
+  getCancellationResultStatus,
+  classifyRefundWebhook,
+  shouldMarkOrderRefunded,
+  getRefundWebhookIdempotencyKey,
+  isProcessedRefundEvent,
 } from "../src/lib/order-status-machine.ts";
 import { writeAuditLog, getAuditLogs } from "../src/lib/db/audit.ts";
 import {
@@ -21,6 +29,61 @@ import {
 } from "../src/lib/db/orders.ts";
 import { generateOrderNumber } from "../src/services/checkout-service.ts";
 import { COLLECTIONS, PRODUCTS } from "../src/data/mock-data.ts";
+
+describe("COD Advance refund policy", () => {
+  test("admin refund policy rejects COD Advance before provider initiation", () => {
+    assert.equal(canInitiateRefund("COD Advance"), false);
+    assert.equal(canInitiateRefund("Razorpay"), true);
+    const route = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/refunds/route.ts"), "utf8");
+    assert.ok(route.indexOf("if (!canInitiateRefund(order.payment_method))") < route.indexOf("createRazorpayRefund({"));
+  });
+
+  test("cancelling a partially paid COD Advance order does not enter refund pending", () => {
+    assert.equal(getCancellationResultStatus("COD Advance", "partially_paid"), "cancelled");
+    assert.equal(getCancellationResultStatus("Razorpay", "paid"), "refund_pending");
+  });
+
+  test("refund webhook payment mismatch is quarantined without refund processing", () => {
+    assert.equal(classifyRefundWebhook({ payment_method: "Razorpay", payment_status: "paid", razorpay_payment_id: "pay_expected" }, "pay_other"), "quarantine");
+  });
+
+  test("unexpected COD Advance provider refund is recorded for investigation without refunding the order", () => {
+    const order = { payment_method: "COD Advance", payment_status: "partially_paid", razorpay_payment_id: "pay_advance" };
+    assert.equal(classifyRefundWebhook(order, "pay_advance"), "record_non_refundable");
+    assert.equal(shouldMarkOrderRefunded(order.payment_method, order.payment_status, 200, 2000), false);
+  });
+
+  test("prepaid refund threshold and webhook idempotency key remain stable", () => {
+    assert.equal(classifyRefundWebhook({ payment_method: "Razorpay", payment_status: "paid", razorpay_payment_id: "pay_full" }, "pay_full"), "process");
+    assert.equal(shouldMarkOrderRefunded("Razorpay", "paid", 2000, 2000), true);
+    assert.equal(getRefundWebhookIdempotencyKey("rfnd_same"), getRefundWebhookIdempotencyKey("rfnd_same"));
+    const webhook = fs.readFileSync(path.join(process.cwd(), "src/app/api/webhooks/razorpay/route.ts"), "utf8");
+    assert.match(webhook, /SELECT \* FROM refund_records WHERE razorpay_refund_id = \? AND order_id = \?/);
+    assert.match(webhook, /ON CONFLICT \(idempotency_key\) DO UPDATE/);
+  });
+
+  test("refund completion waits for the processed event and a refund record is shared by route and webhook", () => {
+    assert.equal(isProcessedRefundEvent("refund.speed_changed", "processed"), false);
+    assert.equal(isProcessedRefundEvent("refund.processed", "pending"), false);
+    assert.equal(isProcessedRefundEvent("refund.processed", "processed"), true);
+    const route = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/refunds/route.ts"), "utf8");
+    const webhook = fs.readFileSync(path.join(process.cwd(), "src/app/api/webhooks/razorpay/route.ts"), "utf8");
+    assert.match(route, /reserveRefund\(/);
+    assert.match(route, /idempotencyKey: reservation\.idempotency_key/);
+    assert.match(route, /refund outcome is uncertain/i);
+    assert.match(webhook, /pendingReservation\?\.idempotency_key/);
+    assert.match(route, /if \(refundRec\.status === "processed"\)/);
+    assert.match(webhook, /isProcessedRefundEvent\(eventType, refundEntity\?\.status\)/);
+    assert.match(webhook, /existingRef\.idempotency_key/);
+    assert.match(webhook, /reconciledRefund\.status !== "processed"/);
+    assert.match(webhook, /refund_processed_event_state_conflict/);
+    assert.match(webhook, /failedTransition\.rowCount === 1/);
+    assert.match(route, /rzpResult\.status === "failed" \? "failed"/);
+    assert.match(route, /Razorpay confirmed that the refund failed/);
+    const notifications = fs.readFileSync(path.join(process.cwd(), "src/services/notification-service.ts"), "utf8");
+    assert.match(notifications, /idempotencyKey: `notif_rfnd_\$\{refundId\}`/);
+  });
+});
 
 describe("Phase 3: Secure Admin Authentication & Password Hashing", () => {
   test("PBKDF2-SHA512 password hash verifies correctly and rejects wrong passwords", () => {
@@ -86,6 +149,8 @@ describe("Phase 3: Order Status State Machine & Refund Safety", () => {
     assert.strictEqual(isValidAdminTransition("shipped", "delivered"), true);
     assert.strictEqual(isValidAdminTransition("pending_payment", "cancelled"), true);
     assert.strictEqual(isValidAdminTransition("paid", "cancelled"), true);
+    assert.strictEqual(isValidAdminTransition("advance_paid", "processing"), true);
+    assert.strictEqual(isValidAdminTransition("advance_paid", "cancelled"), true);
     assert.strictEqual(isValidAdminTransition("processing", "cancelled"), true);
 
     // FORBIDDEN transitions
@@ -98,6 +163,7 @@ describe("Phase 3: Order Status State Machine & Refund Safety", () => {
   test("Requires refund flag accurately when cancelling paid vs unpaid orders", () => {
     // Paid order cancellation requires refund
     assert.strictEqual(requiresRefund("paid", "cancelled"), true);
+    assert.strictEqual(requiresRefund("advance_paid", "cancelled"), true);
     assert.strictEqual(requiresRefund("processing", "cancelled"), true);
 
     // Unpaid pending order cancellation requires NO refund

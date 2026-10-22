@@ -58,14 +58,22 @@ export function classifyRazorpayOrderPayments(
   if (collection.items.length === 0) return "none";
 
   let sawAuthorized = false;
+  let sawCaptured = false;
+  let capturedCount = 0;
   for (const value of collection.items) {
     if (!value || typeof value !== "object") return "ambiguous";
     const payment = value as Record<string, unknown>;
     if (payment.order_id !== expected.orderId || payment.amount !== expected.amount || payment.currency !== "INR") return "ambiguous";
-    if (payment.status === "captured" || payment.captured === true) return "captured";
+    if (payment.status === "captured" || payment.captured === true) {
+      if (payment.status !== "captured" || payment.captured !== true) return "ambiguous";
+      sawCaptured = true;
+      capturedCount += 1;
+    }
     if (payment.status === "authorized") sawAuthorized = true;
-    else if (payment.status !== "failed") return "ambiguous";
+    else if (payment.status !== "failed" && payment.status !== "cancelled" && payment.status !== "captured") return "ambiguous";
   }
+  if (capturedCount > 1 || (sawCaptured && sawAuthorized)) return "ambiguous";
+  if (sawCaptured) return "captured";
   if (sawAuthorized) return "authorized";
   return "failed";
 }

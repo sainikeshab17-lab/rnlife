@@ -8,7 +8,6 @@ import { Product, TShirtSize } from "@/types";
 import { formatINR } from "@/lib/utils";
 import { useWishlist } from "@/context/wishlist-context";
 import { useCart } from "@/context/cart-context";
-import { useToast } from "@/context/toast-context";
 
 interface ProductCardProps {
   product: Product;
@@ -23,7 +22,6 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
 
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { addToBag } = useCart();
-  const { toast } = useToast();
 
   const isFavorited = isInWishlist(product.id);
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
@@ -57,11 +55,6 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
     });
     setShowQuickSizes(false);
     setJustAdded(true);
-    toast({
-      type: "success",
-      title: "Added to Bag",
-      message: `${product.name} (${size}) added.`,
-    });
     setTimeout(() => setJustAdded(false), 1800);
   };
 

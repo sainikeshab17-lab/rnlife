@@ -184,10 +184,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Online payments are temporarily unavailable." }, { status: 500 });
     }
 
-    const reservedItems = items.map((item) => ({
-      productId: item.productId,
-      size: item.size,
-      quantity: item.quantity,
+    const reservedItems = pricing.items.filter((item) => item.fulfillmentType === "stock").map((item) => ({
+      productId: item.productId, size: item.size, quantity: item.quantity,
     }));
     const idempotencyKey = scopeCheckoutIdempotencyKey(userId ?? customerEmail, requestKey);
     const paymentMethod = "Razorpay (UPI / Cards / NetBanking)";
@@ -234,7 +232,7 @@ export async function POST(req: NextRequest) {
     if (checkout.status === "conflict") {
       return NextResponse.json({ error: "This checkout key was already used with different order details. Start a new checkout." }, { status: 409 });
     }
-    let { order, guestToken } = checkout;
+    const { order, guestToken } = checkout;
 
     if (checkout.status === "replayed" &&
         (order.payment_status !== "pending_payment" || order.order_status !== "pending_payment")) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getOrderById, markOrderAsPaid, logPaymentAudit, recordPaymentAttemptFailure } from "@/lib/db/orders";
+import { getOrderById, markOrderAsPaid, logPaymentAudit, recordPaymentAttemptFailure, isOrderOwnedByCustomer } from "@/lib/db/orders";
 import {
   verifyPaymentSignature,
   getRazorpayClient,
@@ -11,12 +11,14 @@ import {
   isVerifiedPaymentDetails,
 } from "@/lib/razorpay";
 import { dispatchAllOrderNotifications, persistPaymentNotificationJobs } from "@/services/notification-service";
+import { createClient } from "@/lib/supabase/server";
 
 const VerifyPaymentSchema = z.object({
   orderId: z.string().min(1, "Order ID is required"),
   razorpayOrderId: z.string().min(1, "Razorpay Order ID is required"),
   razorpayPaymentId: z.string().min(1, "Razorpay Payment ID is required"),
   razorpaySignature: z.string().min(1, "Razorpay Signature is required"),
+  guestToken: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -31,12 +33,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = validation.data;
+    const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature, guestToken } = validation.data;
 
     // 1. Fetch order from database
     const order = await getOrderById(orderId);
     if (!order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+
+    if (order.user_id) {
+      const supabase = await createClient();
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user || !isOrderOwnedByCustomer(order, {
+        userId: authData.user.id,
+        email: authData.user.email,
+        emailVerified: Boolean(authData.user.email_confirmed_at),
+      })) return NextResponse.json({ error: "Order not found." }, { status: 404 });
+    } else if (!guestToken || guestToken !== order.guest_token) {
+      return NextResponse.json({ error: "Order not found." }, { status: 404 });
     }
 
     if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
@@ -89,7 +103,7 @@ export async function POST(req: NextRequest) {
       const payment = await rzp.payments.fetch(razorpayPaymentId);
       const expectedPaisa = Math.round(order.total * 100);
 
-      if (!isVerifiedPaymentDetails(payment, razorpayOrderId, expectedPaisa)) {
+      if (!isVerifiedPaymentDetails(payment, razorpayOrderId, expectedPaisa, razorpayPaymentId)) {
         await logPaymentAudit(order.id, "payment_details_mismatch", {
           razorpayOrderId,
           paymentOrderId: payment.order_id,
@@ -116,7 +130,9 @@ export async function POST(req: NextRequest) {
         }
         await recordPaymentAttemptFailure(order.id, razorpayPaymentId, payment.status);
         return NextResponse.json(
-          { error: `Payment is not captured (status: ${payment.status}). The order remains pending; reopen checkout to retry the same order.` },
+          { error: String(payment.status) === "failed" || String(payment.status) === "cancelled"
+            ? "Payment failed or was cancelled. The order remains pending; you can retry payment for this same order."
+            : `Payment is not captured (status: ${payment.status}). The order remains pending; check its status before retrying.` },
           { status: 409 }
         );
       }

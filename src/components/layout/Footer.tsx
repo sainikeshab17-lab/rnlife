@@ -9,17 +9,36 @@ import { BrandLogo } from "@/components/common/BrandLogo";
 export function Footer() {
   const [email, setEmail] = useState("");
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const handleNewsletterSubmit = (event: React.FormEvent) => {
+  const handleNewsletterSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!email || !email.includes("@")) {
       setError("Please enter a valid email address.");
       return;
     }
     setError("");
-    setIsSubscribed(true);
-    setEmail("");
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const website = String(new FormData(event.currentTarget).get("website") ?? "");
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "drop_notes", email, website }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.success !== true || result?.status !== "accepted") {
+        throw new Error(typeof result?.error === "string" ? result.error : "Your request couldn't be sent. Please try again.");
+      }
+      setIsSubscribed(true);
+      setEmail("");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Your request couldn't be sent. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -32,22 +51,28 @@ export function Footer() {
           </div>
           {isSubscribed ? (
             <p className="flex items-center gap-2 text-xs text-white" role="status">
-              <CheckCircle2 className="h-4 w-4 text-[#079447]" /> You&apos;re on the list.
+              <CheckCircle2 className="h-4 w-4 text-[#079447]" /> Your drop update request has been sent.
             </p>
           ) : (
             <form onSubmit={handleNewsletterSubmit} className="w-full md:max-w-md">
+              <div className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+                <label htmlFor="footer-website">Website</label>
+                <input id="footer-website" name="website" type="text" tabIndex={-1} autoComplete="off" />
+              </div>
               <div className="flex border-b border-white/50">
                 <label className="sr-only" htmlFor="footer-email">Email address</label>
                 <input
                   id="footer-email"
                   type="email"
+                  required
+                  maxLength={254}
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder="Email address"
                   className="min-w-0 flex-1 bg-transparent py-2 text-xs text-white placeholder:text-neutral-400 focus:outline-none"
                 />
-                <button type="submit" className="text-[#FFB900]" aria-label="Subscribe to drop updates">
-                  <ArrowRight className="h-4 w-4" />
+                <button type="submit" disabled={isSubmitting} className="text-[#FFB900] disabled:opacity-50" aria-label={isSubmitting ? "Sending drop update request" : "Subscribe to drop updates"}>
+                  {isSubmitting ? <span className="text-xs">Sending…</span> : <ArrowRight className="h-4 w-4" />}
                 </button>
               </div>
               {error && <p className="mt-1 text-xs text-[#F5141C]" role="alert">{error}</p>}
@@ -92,7 +117,7 @@ export function Footer() {
         <div className="flex gap-4">
           <Link href="/account" className="hover:text-white">Account</Link>
           <Link href="/seller" className="hover:text-white">Staff portal</Link>
-          <Link href="/admin" className="hover:text-white">Admin demo</Link>
+          <Link href="/admin" className="hover:text-white">Admin Portal</Link>
         </div>
       </div>
     </footer>

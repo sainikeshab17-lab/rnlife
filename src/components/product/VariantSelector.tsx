@@ -70,11 +70,6 @@ export function VariantSelector({
       quantity,
     });
 
-    toast({
-      type: "success",
-      title: "Added to Bag",
-      message: `${product.name} (${selectedSize}, ${currentColor.name}) added.`,
-    });
   };
 
   const handleBuyNow = () => {

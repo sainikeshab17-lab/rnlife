@@ -146,16 +146,18 @@ export function isVerifiedCapturedPaymentDetails(
 export function isVerifiedPaymentDetails(
   payment: unknown,
   expectedOrderId: string,
-  expectedAmountPaisa: number
+  expectedAmountPaisa: number,
+  expectedPaymentId?: string
 ): payment is { id: string; order_id: string; amount: number; currency: "INR"; status: string; captured: boolean } {
   if (!payment || typeof payment !== "object") return false;
   const candidate = payment as Record<string, unknown>;
   return typeof candidate.id === "string" && candidate.id.length > 0 &&
+    (!expectedPaymentId || candidate.id === expectedPaymentId) &&
     candidate.order_id === expectedOrderId &&
     candidate.amount === expectedAmountPaisa &&
     candidate.currency === "INR" &&
     Number.isSafeInteger(candidate.amount) &&
-    ["created", "authorized", "captured", "refunded", "failed"].includes(String(candidate.status)) &&
+    ["created", "authorized", "captured", "refunded", "failed", "cancelled"].includes(String(candidate.status)) &&
     typeof candidate.captured === "boolean";
 }
 

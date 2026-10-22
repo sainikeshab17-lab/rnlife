@@ -78,25 +78,52 @@ export default function HomePage() {
         </Link>
       </section>
 
+      <section aria-labelledby="wear-your-mood-title" className="bg-[#111111] text-white">
+        <div className="mx-auto grid max-w-7xl md:grid-cols-2">
+          <div className="flex flex-col items-start justify-center px-5 py-8 sm:px-8 sm:py-10 md:px-12 md:py-12 lg:px-16">
+            <p className="mb-3 text-[10px] font-mono font-semibold uppercase tracking-[.2em] text-white/55">RIGHTNOWLIFE / CUSTOM STUDIO</p>
+            <h2 id="wear-your-mood-title" className="text-4xl font-black uppercase leading-[.9] tracking-[-.055em] sm:text-5xl lg:text-6xl">
+              WEAR<br /><span className="text-[#FFB900]">YOUR MOOD</span>
+            </h2>
+            <p className="mt-4 text-base font-medium italic text-[#FFB900] sm:text-lg">Your vibe. Your statement. Your rules.</p>
+            <p className="mt-3 max-w-md text-sm leading-6 text-white/70 sm:text-base">
+              Choose a mood, find your words, and preview a custom tee design.
+            </p>
+            <Link href="/wear-your-mood" className="btn-morph btn-yellow mt-6 inline-flex min-h-12 items-center gap-4 px-5 text-xs font-bold uppercase tracking-wider">
+              EXPLORE YOUR VIBE <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </Link>
+          </div>
+          <Link href="/wear-your-mood" aria-label="Create your custom Wear Your Mood tee" className="group relative order-first aspect-[4/3] overflow-hidden bg-[#F4F2EE] md:order-none md:aspect-[5/4]">
+            <Image
+              src="/products/wear-your-mood-hero.png"
+              alt="RIGHTNOWLIFE custom tee preview"
+              fill
+              className="img-morph object-contain p-5 sm:p-8"
+              sizes="(max-width: 768px) 100vw, 50vw"
+            />
+          </Link>
+        </div>
+      </section>
+
       {/* ── ESSENTIAL TEES EDITORIAL ── */}
       <section className="bg-[#111111] text-white">
-        <div className="mx-auto grid max-w-7xl md:grid-cols-2">
-          <div className="flex flex-col items-start justify-center px-5 py-10 sm:px-8 sm:py-14 md:px-12 lg:px-16">
-            <p className="mb-4 text-[10px] font-mono font-semibold uppercase tracking-[.2em] text-white/55">
+        <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6 sm:grid-cols-[1fr_220px] sm:items-center sm:px-8 sm:py-7 md:px-12 lg:px-16">
+          <div className="flex flex-col items-start">
+            <p className="mb-2 text-[10px] font-mono font-semibold uppercase tracking-[.2em] text-white/55">
               The everyday edit
             </p>
-            <h2 className="text-4xl font-black uppercase leading-[.92] tracking-[-.05em] sm:text-5xl lg:text-6xl">
+            <h2 className="text-3xl font-black uppercase leading-[.92] tracking-[-.05em] sm:text-4xl">
               ESSENTIAL TEES
             </h2>
-            <p className="mt-4 text-lg font-medium italic text-[#FFB900] sm:text-xl">
+            <p className="mt-2 text-base font-medium italic text-[#FFB900] sm:text-lg">
               The everyday kind of essential.
             </p>
-            <p className="mt-4 max-w-md text-sm leading-6 text-white/70 sm:text-base">
+            <p className="mt-2 max-w-md text-sm leading-5 text-white/70">
               Clean style. Everyday comfort. Made to be worn on repeat.
             </p>
             <Link
               href="/collections/essentials"
-              className="btn-morph btn-yellow mt-7 inline-flex min-h-12 items-center gap-4 px-5 text-xs font-bold uppercase tracking-wider"
+              className="btn-morph btn-yellow mt-4 inline-flex min-h-11 items-center gap-4 px-5 text-xs font-bold uppercase tracking-wider"
             >
               EXPLORE ESSENTIALS <ArrowRight className="h-4 w-4" />
             </Link>
@@ -104,14 +131,14 @@ export default function HomePage() {
           <Link
             href="/collections/essentials"
             aria-label="Explore Essential Tees"
-            className="group relative order-first aspect-[4/3] overflow-hidden bg-[#F4F2EE] md:order-none md:aspect-[5/4]"
+            className="group relative order-first aspect-[2/1] max-h-36 overflow-hidden bg-[#F4F2EE] sm:order-none sm:aspect-[4/3] sm:max-h-none"
           >
             <Image
               src={essentialsImage}
               alt={essentialsImageAlt}
               fill
-              className="img-morph object-contain p-3 sm:p-6"
-              sizes="(max-width: 768px) 100vw, 50vw"
+              className="img-morph object-contain p-2 sm:p-4"
+              sizes="(max-width: 640px) 100vw, 220px"
             />
           </Link>
         </div>

@@ -225,10 +225,14 @@ export async function processNotificationJob(
  */
 export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promise<DbNotificationJob> {
   const html = generateOrderEmailHtml(order);
-  const confirmationLabel = order.payment_method === "Cash on Delivery" && order.payment_status !== "paid"
-    ? "Order placed — Cash on Delivery"
-    : "Order Confirmed";
-  const plainText = `${confirmationLabel}: #${order.order_number}\nTotal: ₹${order.total}\nItems: ${order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}`).join(", ")}`;
+  const confirmationLabel = order.payment_method === "COD Advance"
+    ? "COD Advance verified — order confirmed"
+    : order.payment_method === "Cash on Delivery" && order.payment_status !== "paid"
+      ? "Order placed — Cash on Delivery" : "Order Confirmed";
+  const advance = getVerifiedCodAdvance(order);
+  const paymentLine = order.payment_method === "COD Advance"
+    ? `Advance verified: ₹${advance} | Balance due on delivery: ₹${Math.max(0, order.total - advance)}` : "";
+  const plainText = `${confirmationLabel}: #${order.order_number}\nTotal: ₹${order.total}\n${paymentLine}\nItems: ${order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity}${i.customization ? ` — “${i.customization.quote}”` : ""}`).join(", ")}`;
   return queueNotificationJob({
     orderId: order.id,
     recipientEmail: order.customer_email,
@@ -246,7 +250,7 @@ export async function sendOrderConfirmationEmail(order: OrderWithDetails): Promi
  */
 export async function sendAdminNewOrderNotification(order: OrderWithDetails): Promise<DbNotificationJob> {
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || process.env.INITIAL_ADMIN_EMAIL || "admin@rightnowlife.in";
-  const itemsText = order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity} = ₹${i.price * i.quantity}`).join(", ");
+  const itemsText = order.items.map(i => `${i.product_name} (${i.size}) x${i.quantity} = ₹${i.price * i.quantity}${i.customization ? ` — “${i.customization.quote}” (${i.customization.font}/${i.customization.printColor}/${i.customization.placement})` : ""}`).join(", ");
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
@@ -257,6 +261,7 @@ export async function sendAdminNewOrderNotification(order: OrderWithDetails): Pr
         <p style="margin: 0 0 6px 0;"><strong>Customer:</strong> ${escapeHtml(order.customer_name)} (${escapeHtml(order.customer_email)}, ${escapeHtml(order.customer_phone)})</p>
         <p style="margin: 0 0 6px 0;"><strong>Payment Method:</strong> ${escapeHtml(order.payment_method)} (${escapeHtml(order.payment_status)})</p>
         <p style="margin: 0 0 6px 0;"><strong>Total Value:</strong> ₹${order.total.toLocaleString("en-IN")}</p>
+        ${order.payment_method === "COD Advance" ? `<p style="margin: 0 0 6px 0;"><strong>Verified COD Advance:</strong> ₹${getVerifiedCodAdvance(order).toLocaleString("en-IN")}</p><p style="margin: 0 0 6px 0;"><strong>Balance due on delivery:</strong> ₹${Math.max(0, order.total - getVerifiedCodAdvance(order)).toLocaleString("en-IN")}</p>` : ""}
         <p style="margin: 0;"><strong>Delivery:</strong> ${escapeHtml(order.address?.address_line1)}, ${escapeHtml(order.address?.city)}, ${escapeHtml(order.address?.state)} - ${escapeHtml(order.address?.pin_code)}</p>
       </div>
       <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
@@ -272,6 +277,7 @@ export async function sendAdminNewOrderNotification(order: OrderWithDetails): Pr
               <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5;">
                 <strong>${escapeHtml(item.product_name)}</strong><br/>
                 <small>Size: ${escapeHtml(item.size)} | Color: ${escapeHtml(item.color)} | Qty: ${item.quantity}</small>
+                ${item.customization ? `<br/><small>Custom quote: “${escapeHtml(item.customization.quote)}” | Font: ${escapeHtml(item.customization.font)} | Print: ${escapeHtml(item.customization.printColor)} | Placement: ${escapeHtml(item.customization.placement)} | Mood: ${escapeHtml(item.customization.mood)}</small>` : ""}
               </td>
               <td style="padding: 8px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
                 ₹${(item.price * item.quantity).toLocaleString("en-IN")}
@@ -470,7 +476,7 @@ export async function sendRefundConfirmationEmail(
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
       <p style="font-size: 14px; color: #079447; font-weight: bold;">REFUND PROCESSED SUCCESSFULLY</p>
       <p>Hey ${escapeHtml(order.customer_name)},</p>
-      <p>A refund of <strong>₹${amount.toLocaleString("en-IN")}</strong> for Order <strong>#${escapeHtml(order.order_number)}</strong> has been successfully initiated to your original payment method.</p>
+      <p>A refund of <strong>₹${amount.toLocaleString("en-IN")}</strong> for Order <strong>#${escapeHtml(order.order_number)}</strong> has been processed to your original payment method. Your bank or UPI provider may take 3–7 business days to reflect it.</p>
       <div style="background: #f7f7f7; padding: 16px; border-radius: 6px; margin: 20px 0;">
         <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Refund Reference ID:</strong> ${escapeHtml(refundId)}</p>
         <p style="margin: 0; font-size: 13px;"><strong>Amount:</strong> ₹${amount.toLocaleString("en-IN")}</p>
@@ -498,6 +504,7 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
         <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5;">
           <strong>${escapeHtml(item.product_name)}</strong><br/>
           <small>Size: ${escapeHtml(item.size)} | Color: ${escapeHtml(item.color)} | Qty: ${item.quantity}</small>
+          ${item.customization ? `<br/><small>Custom quote: “${escapeHtml(item.customization.quote)}” | Mood: ${escapeHtml(item.customization.mood)} | Style: ${escapeHtml(item.customization.quoteStyle)} | Font: ${escapeHtml(item.customization.font)} | Print: ${escapeHtml(item.customization.printColor)} | Placement: ${escapeHtml(item.customization.placement)}</small>` : ""}
         </td>
         <td style="padding: 10px 0; border-bottom: 1px solid #e5e5e5; text-align: right;">
           ₹${(item.price * item.quantity).toLocaleString("en-IN")}
@@ -510,9 +517,11 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #111111;">
       <h1 style="text-transform: uppercase; letter-spacing: -0.02em;">RIGHTNOWLIFE</h1>
-      <p style="font-size: 14px; color: #079447; font-weight: bold;">${order.payment_method === "Cash on Delivery" && order.payment_status !== "paid" ? "ORDER PLACED — CASH ON DELIVERY" : "PAYMENT VERIFIED & ORDER CONFIRMED"}</p>
+      <p style="font-size: 14px; color: #079447; font-weight: bold;">${order.payment_method === "COD Advance" ? "₹200 COD ADVANCE VERIFIED — ORDER CONFIRMED" : order.payment_method === "Cash on Delivery" && order.payment_status !== "paid" ? "ORDER PLACED — CASH ON DELIVERY" : "PAYMENT VERIFIED & ORDER CONFIRMED"}</p>
       <p>Hey ${escapeHtml(order.customer_name)},</p>
-      <p>${order.payment_method === "Cash on Delivery" && order.payment_status !== "paid"
+      <p>${order.payment_method === "COD Advance"
+        ? `Your ₹200 COD Advance for Order <strong>#${escapeHtml(order.order_number)}</strong> was verified. The remaining ₹${Math.max(0, order.total - getVerifiedCodAdvance(order)).toLocaleString("en-IN")} is due on delivery.`
+        : order.payment_method === "Cash on Delivery" && order.payment_status !== "paid"
         ? `Thank you for choosing RightNowLife. Your Cash on Delivery order <strong>#${escapeHtml(order.order_number)}</strong> has been placed and is entering preparation.`
         : `Thank you for choosing RightNowLife. Your payment for Order <strong>#${escapeHtml(order.order_number)}</strong> has been received and your garments are entering preparation.`}</p>
       
@@ -536,9 +545,10 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
             <td style="padding-top: 6px; text-align: right;">${order.shipping === 0 ? "FREE" : "₹" + order.shipping}</td>
           </tr>
           <tr style="font-size: 16px; font-weight: 900;">
-            <td style="padding-top: 10px; border-top: 1px solid #111111;">${order.payment_method === "Cash on Delivery" && order.payment_status !== "paid" ? "Total Due on Delivery" : "Total Paid"}</td>
+            <td style="padding-top: 10px; border-top: 1px solid #111111;">${order.payment_method === "COD Advance" ? "Order Total" : order.payment_method === "Cash on Delivery" && order.payment_status !== "paid" ? "Total Due on Delivery" : "Total Paid"}</td>
             <td style="padding-top: 10px; border-top: 1px solid #111111; text-align: right;">₹${order.total.toLocaleString("en-IN")}</td>
           </tr>
+          ${order.payment_method === "COD Advance" ? `<tr><td>Advance received</td><td style="text-align:right;">₹${getVerifiedCodAdvance(order).toLocaleString("en-IN")}</td></tr><tr><td>Balance due on delivery</td><td style="text-align:right;">₹${Math.max(0, order.total - getVerifiedCodAdvance(order)).toLocaleString("en-IN")}</td></tr>` : ""}
         </tfoot>
       </table>
 
@@ -548,4 +558,9 @@ function generateOrderEmailHtml(order: OrderWithDetails): string {
       </p>
     </div>
   `;
+}
+
+function getVerifiedCodAdvance(order: OrderWithDetails): number {
+  const attempt = order.payment_attempts?.find((payment) => payment.purpose === "cod_advance" && payment.payment_state === "captured");
+  return attempt ? attempt.amount_paisa / 100 : 0;
 }

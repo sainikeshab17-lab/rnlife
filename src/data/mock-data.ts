@@ -1,4 +1,5 @@
 import { Product, Collection, SizeMeasurement, Order, StaffMember, User } from "@/types";
+import { SUPPORT_EMAIL } from "@/lib/support-contact";
 export { PRODUCT_CATEGORIES } from "@/data/product-categories";
 
 const designGalleryAssets: Record<
@@ -99,7 +100,7 @@ export const BRAND_INFO = {
     "FIND YOUR DESIGN. MAKE IT YOURS.",
     "EXPLORE ALL 8 RIGHTNOWLIFE DESIGNS",
   ],
-  supportEmail: "contact@rightnowlife.com",
+  supportEmail: SUPPORT_EMAIL,
   supportResponseTime: "We typically respond within 24 hours during business days.",
 };
 

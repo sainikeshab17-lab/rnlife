@@ -10,6 +10,8 @@ import { formatINR } from "@/lib/utils";
 import { OrderActionButtons } from "@/components/order/OrderActionButtons";
 import { createClient } from "@/lib/supabase/server";
 import type { OrderStatus } from "@/types";
+import { hasRequiredOrderPayment } from "@/services/order-payment-state";
+import { RetryPendingPayment } from "@/components/checkout/RetryPendingPayment";
 
 interface OrderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -41,24 +43,27 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
   }));
   if (!isAccountOwner && (!token || token !== dbOrder.guest_token)) notFound();
 
-  const isPaid = dbOrder.payment_status === "paid";
+  const verifiedAdvance = dbOrder.payment_attempts?.find((attempt) => attempt.purpose === "cod_advance" && attempt.payment_state === "captured")?.amount_paisa ?? 0;
+  const isPaid = hasRequiredOrderPayment(dbOrder.payment_method, dbOrder.payment_status, verifiedAdvance > 0);
+  const advanceAmount = verifiedAdvance / 100;
 
   // Build real-time timeline steps
   const timelineSteps = [
     {
-      title: "Order Placed & Recorded",
-      description: "Order received in database and assigned unique tracking identifier.",
+      title: isPaid ? "Order Confirmed" : "Checkout Started",
+      description: isPaid ? "Required payment was verified and the order is ready for fulfillment." : "Your checkout is saved. The order will be confirmed after payment is verified.",
       timestamp: new Date(dbOrder.created_at).toLocaleTimeString("en-IN", {
         hour: "2-digit",
         minute: "2-digit",
       }),
-      completed: true,
-      current: false,
+      completed: isPaid,
+      current: !isPaid,
     },
     {
-      title: isPaid ? "Payment Verified via Razorpay" : "Pending Gateway Payment",
-      description: isPaid
-        ? `Payment verified with reference ID ${dbOrder.razorpay_payment_id || "captured"}.`
+      title: dbOrder.payment_status === "partially_paid" ? "COD Advance Verified" : isPaid ? "Payment Verified via Razorpay" : "Pending Gateway Payment",
+      description: dbOrder.payment_status === "partially_paid"
+        ? `₹${advanceAmount} advance verified. ₹${Math.max(0, dbOrder.total - advanceAmount)} remains due on delivery.`
+        : isPaid ? `Payment verified with reference ID ${dbOrder.razorpay_payment_id || "captured"}.`
         : "Awaiting customer payment confirmation from payment provider.",
       timestamp: isPaid
         ? new Date(dbOrder.updated_at).toLocaleTimeString("en-IN", {
@@ -73,22 +78,22 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
       title: "Warehouse Fulfillment & Quality Inspection",
       description: "Garments picked from inventory and checked for stitch and print integrity.",
       timestamp: isPaid ? "In Queue" : "Awaiting Payment",
-      completed: dbOrder.order_status === "processing" || dbOrder.order_status === "shipped" || dbOrder.order_status === "delivered",
-      current: dbOrder.order_status === "processing" || (isPaid && dbOrder.order_status === "paid"),
+      completed: isPaid && (dbOrder.order_status === "processing" || dbOrder.order_status === "shipped" || dbOrder.order_status === "delivered"),
+      current: isPaid && (dbOrder.order_status === "processing" || dbOrder.order_status === "paid"),
     },
     {
       title: "Handed to Express Air Courier",
       description: "Delhivery / BlueDart air courier dispatch with live tracking number.",
       timestamp: dbOrder.order_status === "shipped" || dbOrder.order_status === "delivered" ? "In Transit" : "Estimated 24h",
-      completed: dbOrder.order_status === "shipped" || dbOrder.order_status === "delivered",
-      current: dbOrder.order_status === "shipped",
+      completed: isPaid && (dbOrder.order_status === "shipped" || dbOrder.order_status === "delivered"),
+      current: isPaid && dbOrder.order_status === "shipped",
     },
   ];
 
   return (
     <AccountLayout
-      title={`Order #${dbOrder.order_number}`}
-      subtitle={`Placed on ${new Date(dbOrder.created_at).toLocaleDateString("en-IN", {
+      title={`${isPaid ? "Order" : "Checkout"} #${dbOrder.order_number}`}
+      subtitle={`${isPaid ? "Order placed" : "Checkout started"} on ${new Date(dbOrder.created_at).toLocaleDateString("en-IN", {
         dateStyle: "full",
       })}`}
     >
@@ -108,9 +113,9 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                   : "bg-amber-100 text-amber-800 border border-amber-200"
               }`}
             >
-              {isPaid ? "PAYMENT PAID" : "PENDING PAYMENT"}
+              {dbOrder.payment_status === "partially_paid" ? "₹200 ADVANCE VERIFIED" : isPaid ? "PAYMENT PAID" : "PENDING PAYMENT"}
             </span>
-            <StatusBadge status={dbOrder.order_status as OrderStatus} />
+              <StatusBadge status={(isPaid ? dbOrder.order_status : "pending_payment") as OrderStatus} />
             <OrderActionButtons
               order={{
                 id: dbOrder.id,
@@ -144,7 +149,7 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                   Courier: {dbOrder.courier_name}
                 </span>
               )}
-              {dbOrder.tracking_number ? (
+              {isPaid && dbOrder.tracking_number ? (
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[#858585]">
                     AWB: <strong>{dbOrder.tracking_number}</strong>
@@ -162,7 +167,7 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                 </div>
               ) : (
                 <span className="text-xs font-mono text-[#858585]">
-                  AWB: {dbOrder.razorpay_order_id ? `RNL-AIR-${dbOrder.order_number.slice(-4)}` : "ASSIGNING"}
+                  AWB: {isPaid ? (dbOrder.razorpay_order_id ? `RNL-AIR-${dbOrder.order_number.slice(-4)}` : "ASSIGNING") : "Assigned after payment confirmation"}
                 </span>
               )}
             </div>
@@ -225,11 +230,12 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                   </div>
                   <div className="min-w-0 flex-1">
                     <Link
-                      href={`/products/${item.product_slug}`}
+                      href={item.customization ? "/wear-your-mood" : `/products/${item.product_slug}`}
                       className="text-xs font-bold uppercase tracking-tight text-[#111111] hover:underline truncate block"
                     >
                       {item.product_name}
                     </Link>
+                    {item.customization && <p className="mt-1 text-[11px] text-[#555]">Quote: “{item.customization.quote}” · Mood: {item.customization.mood} · Style: {item.customization.quoteStyle} · Font: {item.customization.font} · Print: {item.customization.printColor} · Placement: {item.customization.placement}</p>}
                     <div className="flex items-center gap-2 mt-1 text-[11px] text-[#858585]">
                       <span>Size: <strong>{item.size}</strong></span>
                       <span>•</span>
@@ -264,9 +270,13 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                 </span>
               </div>
               <div className="flex justify-between text-sm font-black text-[#111111] pt-2 border-t border-[#E5E5E5]">
-                <span>Total Amount</span>
+                <span>{dbOrder.payment_status === "partially_paid" ? "Order Total" : "Total Amount"}</span>
                 <span>{formatINR(dbOrder.total)}</span>
               </div>
+              {dbOrder.payment_status === "partially_paid" && <>
+                <div className="flex justify-between"><span>Verified COD Advance</span><span>{formatINR(advanceAmount)}</span></div>
+                <div className="flex justify-between font-bold text-[#111111]"><span>Balance Due on Delivery</span><span>{formatINR(Math.max(0, dbOrder.total - advanceAmount))}</span></div>
+              </>}
             </div>
           </div>
 
@@ -303,7 +313,7 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                 <p className="font-medium">
                   Payment Status:{" "}
                   <strong className={isPaid ? "text-[#079447]" : "text-amber-800"}>
-                    {isPaid ? "Paid & Verified" : "Pending Payment"}
+                    {dbOrder.payment_status === "partially_paid" ? "₹200 Advance Verified" : isPaid ? "Paid & Verified" : dbOrder.payment_status === "pending_advance" ? "Advance payment pending" : "Pending Payment"}
                   </strong>
                 </p>
                 {dbOrder.razorpay_payment_id && (
@@ -322,6 +332,9 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                 </div>
               </div>
             </div>
+            {(isAccountOwner || (dbOrder.user_id === null && token === dbOrder.guest_token)) && !isPaid && ["pending_payment", "pending_advance"].includes(dbOrder.payment_status) && (
+              <RetryPendingPayment orderId={dbOrder.id} isAdvance={dbOrder.payment_method === "COD Advance"} guestToken={isAccountOwner ? undefined : token} />
+            )}
           </div>
         </div>
       </div>

@@ -4,11 +4,49 @@ import crypto from "node:crypto";
 import { databaseTest } from "./postgres-test-support.mjs";
 import {
   calculateTrustedOrderPricing,
+  calculateCodAdvanceAmounts,
   CheckoutItemSchema,
   CreateCheckoutOrderSchema,
   createCheckoutRequestHash,
   generateOrderNumber,
 } from "../src/services/checkout-service.ts";
+
+describe("Wear Your Mood and COD Advance pricing contracts", () => {
+  const customDetails = {
+    type: "quote_tshirt", mood: "confident", quote: "I choose my own way", quoteStyle: "deep",
+    font: "serif", printColor: "ocean", placement: "center",
+  };
+
+  test("custom quote tees use the server price and made-to-order fulfillment", () => {
+    const result = calculateTrustedOrderPricing([{ productId: "rnl-custom-quote-tee", size: "M", quantity: 2, customization: customDetails }]);
+    assert.equal(result.success, true);
+    assert.equal(result.pricing.items[0].price, 1999);
+    assert.equal(result.pricing.items[0].fulfillmentType, "made_to_order");
+    assert.equal(result.pricing.items[0].customization.quote, customDetails.quote);
+    assert.equal(result.pricing.subtotal, 3998);
+    assert.equal(result.pricing.items[0].productId, "rnl-custom-quote-tee");
+  });
+
+  test("custom price input is rejected and customization is required and bounded", () => {
+    assert.equal(CheckoutItemSchema.safeParse({ productId: "rnl-custom-quote-tee", size: "M", quantity: 1, price: 1, customization: customDetails }).success, false);
+    assert.equal(calculateTrustedOrderPricing([{ productId: "rnl-custom-quote-tee", size: "M", quantity: 1 }]).success, false);
+    assert.equal(CheckoutItemSchema.safeParse({ productId: "rnl-custom-quote-tee", size: "M", quantity: 1, customization: { ...customDetails, quote: "x".repeat(81) } }).success, false);
+    assert.equal(CheckoutItemSchema.safeParse({ productId: "rnl-custom-quote-tee", size: "M", quantity: 1, customization: { ...customDetails, font: "comic" } }).success, false);
+  });
+
+  test("catalog tees remain ₹999 stock items and COD Advance is ₹200 once per order", () => {
+    for (let n = 1; n <= 8; n += 1) {
+      const id = `rnl-design-${String(n).padStart(2, "0")}`;
+      const result = calculateTrustedOrderPricing([{ productId: id, size: "M", quantity: 1, color: "As pictured" }]);
+      assert.equal(result.success, true, id);
+      assert.equal(result.pricing.items[0].price, 999, id);
+      assert.equal(result.pricing.items[0].fulfillmentType, "stock", id);
+    }
+    assert.deepEqual(calculateCodAdvanceAmounts(1999), { success: true, advance: 200, balanceDue: 1799 });
+    assert.deepEqual(calculateCodAdvanceAmounts(999), { success: true, advance: 200, balanceDue: 799 });
+    assert.deepEqual(calculateCodAdvanceAmounts(200), { success: false, error: "COD Advance is available only when the final order total is greater than ₹200." });
+  });
+});
 import {
   verifyPaymentSignature,
   verifyWebhookSignature,
@@ -29,9 +67,14 @@ import {
   getOrdersByEmail,
   getOrdersByCustomer,
   isOrderOwnedByCustomer,
+  createCodAdvanceAttempt,
+  claimCodAdvanceOrderCreation,
+  attachCodAdvanceRazorpayOrder,
+  markCodAdvanceAsVerified,
 } from "../src/lib/db/orders.ts";
 import { getDb } from "../src/lib/db/index.ts";
 import { getCheckoutIdempotencyKey } from "../src/services/checkout-idempotency.ts";
+import { hasRequiredOrderPayment } from "../src/services/order-payment-state.ts";
 import {
   classifyRazorpayOrderCreateFailure,
   getRazorpayOrderRecoveryAction,
@@ -173,13 +216,26 @@ describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
     const failure = { order_id: expected.orderId, amount: expected.amount, currency: "INR", status: "failed", captured: false };
     const authorized = { ...failure, status: "authorized", captured: false };
     const captured = { ...failure, status: "captured", captured: true };
+    const cancelled = { ...failure, status: "cancelled" };
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 0, items: [] }, expected), "none");
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 1, items: [failure] }, expected), "failed");
+    assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 1, items: [cancelled] }, expected), "failed");
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 1, items: [authorized] }, expected), "authorized");
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 1, items: [captured] }, expected), "captured");
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 1, items: [{ ...failure, order_id: "order_old" }] }, expected), "ambiguous");
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 2, items: [failure] }, expected), "ambiguous");
     assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 1, items: [{ ...failure, status: "created" }] }, expected), "ambiguous");
+    assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 2, items: [captured, captured] }, expected), "ambiguous");
+    assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 2, items: [captured, authorized] }, expected), "ambiguous");
+    assert.equal(classifyRazorpayOrderPayments({ entity: "collection", count: 2, items: [captured, { ...failure, amount: 100 }] }, expected), "ambiguous");
+  });
+
+  test("order history only marks the required payment state as confirmed", () => {
+    assert.equal(hasRequiredOrderPayment("Razorpay (UPI / Cards / NetBanking)", "paid"), true);
+    assert.equal(hasRequiredOrderPayment("Razorpay (UPI / Cards / NetBanking)", "pending_payment"), false);
+    assert.equal(hasRequiredOrderPayment("COD Advance", "pending_advance"), false);
+    assert.equal(hasRequiredOrderPayment("COD Advance", "partially_paid"), false);
+    assert.equal(hasRequiredOrderPayment("COD Advance", "partially_paid", true), true);
   });
 
   test("Razorpay create and receipt lookup require exact local order details", () => {
@@ -457,12 +513,77 @@ describe("Phase 2: Cryptographic Razorpay Signature Verification", () => {
     const authorized = { ...captured, status: "authorized", captured: false };
     assert.strictEqual(isVerifiedPaymentDetails(failed, "order_test_123", 99900), true);
     assert.strictEqual(isVerifiedPaymentDetails(authorized, "order_test_123", 99900), true);
+    assert.strictEqual(isVerifiedPaymentDetails(captured, "order_test_123", 99900, "pay_test_123"), true);
+    assert.strictEqual(isVerifiedPaymentDetails(captured, "order_test_123", 99900, "pay_other"), false);
+    assert.strictEqual(isVerifiedPaymentDetails({ ...captured, status: "cancelled", captured: false }, "order_test_123", 99900, "pay_test_123"), true);
     assert.strictEqual(isVerifiedPaymentDetails({ ...failed, amount: 100 }, "order_test_123", 99900), false);
     assert.strictEqual(isVerifiedPaymentDetails({ ...failed, order_id: "order_other" }, "order_test_123", 99900), false);
+  });
+
+  test("COD Advance verification requires exact ₹200 INR and matching Razorpay references", () => {
+    const advance = { id: "pay_advance_1", order_id: "order_advance_1", status: "captured", captured: true, currency: "INR", amount: 20000 };
+    assert.equal(isVerifiedCapturedPaymentDetails(advance, "order_advance_1", 20000), true);
+    assert.equal(isVerifiedCapturedPaymentDetails({ ...advance, amount: 19900 }, "order_advance_1", 20000), false);
+    assert.equal(isVerifiedCapturedPaymentDetails({ ...advance, currency: "USD" }, "order_advance_1", 20000), false);
+    assert.equal(isVerifiedCapturedPaymentDetails({ ...advance, order_id: "order_other" }, "order_advance_1", 20000), false);
+    assert.equal(isVerifiedCapturedPaymentDetails({ ...advance, status: "authorized", captured: false }, "order_advance_1", 20000), false);
   });
 });
 
 describe("Phase 2: Database Order Management & Idempotency", () => {
+  databaseTest("COD Advance capture is idempotent and records a partial, not full, payment", async () => {
+    const id = crypto.randomUUID();
+    const { order } = await createPendingOrder({
+      orderNumber: generateOrderNumber(), customerName: "Advance Test", customerEmail: `advance-${id}@example.test`,
+      customerPhone: "9876543210", subtotal: 999, shipping: 0, discount: 0, total: 999,
+      paymentMethod: "COD Advance", userId: "test-customer-account",
+      items: [{ productId: "rnl-design-01", productSlug: "rightnowlife-design-01", productName: "Design 01",
+        color: "As pictured", size: "M", price: 999, quantity: 1, image: "/products/design_01_front.png", sku: `ADV-${id}`, fit: "Regular" }],
+      address: { fullName: "Advance Test", phone: "9876543210", addressLine1: "Test Street", city: "Pune", state: "Maharashtra", pinCode: "411001" },
+    });
+    await getDb().prepare("UPDATE orders SET payment_status = 'pending_advance' WHERE id = ?").run(order.id);
+    const attempt = await createCodAdvanceAttempt(order.id, `advance-${id}`, getDb());
+    assert.equal(await claimCodAdvanceOrderCreation(attempt.id), "claimed");
+    assert.equal(await attachCodAdvanceRazorpayOrder(attempt.id, `order_test_advance_${id}`), true);
+    const first = await markCodAdvanceAsVerified({ attemptId: attempt.id, paymentId: `pay_test_advance_${id}`, razorpayOrderId: `order_test_advance_${id}` });
+    const replay = await markCodAdvanceAsVerified({ attemptId: attempt.id, paymentId: `pay_test_advance_${id}`, razorpayOrderId: `order_test_advance_${id}` });
+    const stored = await getOrderById(order.id);
+    assert.deepEqual(first, { success: true, alreadyVerified: false });
+    assert.deepEqual(replay, { success: true, alreadyVerified: true });
+    assert.equal(stored?.payment_status, "partially_paid");
+    assert.equal(stored?.order_status, "advance_paid");
+    assert.equal(stored?.total, 999);
+    assert.equal(stored?.total - 200, 799);
+  });
+
+  databaseTest("Custom order customization persists and made-to-order items do not create inventory", async () => {
+    const id = crypto.randomUUID();
+    const customProductId = "rnl-custom-quote-tee";
+    const before = await getDb().prepare("SELECT COUNT(*) AS count FROM inventory WHERE product_id = ?")
+      .get(customProductId);
+    const { order } = await createPendingOrder({
+      orderNumber: generateOrderNumber(), customerName: "Custom Test", customerEmail: `custom-${id}@example.test`,
+      customerPhone: "9876543210", subtotal: 1999, shipping: 0, discount: 0, total: 1999,
+      paymentMethod: "Razorpay (UPI / Cards / NetBanking)", userId: "test-customer-account", razorpayOrderId: `order_test_custom_${id}`,
+      items: [{
+        productId: "rnl-custom-quote-tee", productSlug: "wear-your-mood", productName: "Wear Your Mood Custom Quote Tee",
+        color: "Natural", size: "M", price: 1999, quantity: 1, image: "/products/custom-tee-preview.svg",
+        sku: `RNL-CUSTOM-QUOTE-M-${id}`, fit: "Regular", fulfillmentType: "made_to_order",
+        customization: { type: "quote_tshirt", mood: "confident", quote: "I choose my own way", quoteStyle: "deep", font: "serif", printColor: "ocean", placement: "center" },
+      }],
+      address: { fullName: "Custom Test", phone: "9876543210", addressLine1: "Test Street", city: "Pune", state: "Maharashtra", pinCode: "411001" },
+    });
+    const captured = await markOrderAsPaid(order.id, `pay_test_custom_${id}`, `order_test_custom_${id}`);
+    assert.equal(captured.success, true);
+    const fetched = await getOrderById(order.id);
+    assert.equal(fetched?.items[0].customization?.quote, "I choose my own way");
+    assert.equal(fetched?.items[0].fulfillment_type, "made_to_order");
+    assert.equal(fetched?.payment_status, "paid");
+    const after = await getDb().prepare("SELECT COUNT(*) AS count FROM inventory WHERE product_id = ?")
+      .get(customProductId);
+    assert.equal(Number(after?.count), Number(before?.count));
+  });
+
   databaseTest("Creates pending order in relational database and verifies relations", async () => {
     const orderNumber = generateOrderNumber();
     const { order, guestToken } = await createPendingOrder({

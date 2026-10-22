@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Mail } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
+import { BRAND_INFO } from "@/data/mock-data";
 
 export default function ReturnsPage() {
   return (
@@ -36,10 +37,10 @@ export default function ReturnsPage() {
               (other than the carrier) receives the Goods. To exercise this
               right, send a clear statement of your decision to{" "}
               <a
-                href="mailto:contact@rightnowlife.com"
+                href={`mailto:${BRAND_INFO.supportEmail}`}
                 className="font-bold text-black underline"
               >
-                contact@rightnowlife.com
+                {BRAND_INFO.supportEmail}
               </a>
               .
             </p>
@@ -106,10 +107,10 @@ export default function ReturnsPage() {
             <p>
               For questions about this Return and Refund Policy, email{" "}
               <a
-                href="mailto:contact@rightnowlife.com"
+                href={`mailto:${BRAND_INFO.supportEmail}`}
                 className="font-bold text-black underline"
               >
-                contact@rightnowlife.com
+                {BRAND_INFO.supportEmail}
               </a>
               .
             </p>

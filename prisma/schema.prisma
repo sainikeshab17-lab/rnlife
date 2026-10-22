@@ -40,8 +40,11 @@ model Order {
   cancellationReason      String?   @map("cancellation_reason")
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  currentPaymentAttemptId String?   @map("current_payment_attempt_id")
 
   items          OrderItem[]
+  paymentAttempts RazorpayPaymentAttempt[] @relation("OrderPaymentAttempts")
+  currentPaymentAttempt RazorpayPaymentAttempt? @relation("CurrentPaymentAttempt", fields: [currentPaymentAttemptId], references: [id], onDelete: SetNull)
   addresses      OrderAddress[]
   statusHistory  OrderStatusHistory[]
   shippingEvents ShippingEvent[]
@@ -70,12 +73,41 @@ model OrderItem {
   image       String
   sku         String
   fit         String
+  fulfillmentType String @default("stock") @map("fulfillment_type")
+  customization Json? @db.JsonB
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([productId])
   @@map("order_items")
+}
+
+model RazorpayPaymentAttempt {
+  id                 String   @id
+  orderId            String   @map("order_id")
+  attemptNumber      Int      @map("attempt_number")
+  attemptKey         String   @map("attempt_key")
+  purpose            String   @default("full_payment")
+  receipt            String   @unique
+  razorpayOrderId    String?  @unique @map("razorpay_order_id")
+  razorpayPaymentId  String?  @unique @map("razorpay_payment_id")
+  creationState      String   @map("creation_state")
+  paymentState       String   @default("not_attempted") @map("payment_state")
+  amountPaisa        Int      @map("amount_paisa")
+  currency           String   @default("INR")
+  reconciliationNote String?  @map("reconciliation_note")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  order Order @relation("OrderPaymentAttempts", fields: [orderId], references: [id], onDelete: Restrict)
+  currentForOrders Order[] @relation("CurrentPaymentAttempt")
+
+  @@unique([orderId, attemptNumber])
+  @@unique([orderId, attemptKey])
+  @@index([orderId, createdAt(sort: Desc)])
+  @@index([orderId, purpose, paymentState])
+  @@map("razorpay_payment_attempts")
 }
 
 model OrderAddress {

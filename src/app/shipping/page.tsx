@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Truck, Clock, ShieldCheck, MapPin } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
+import { BRAND_INFO } from "@/data/mock-data";
 
 export default function ShippingPage() {
   return (
@@ -62,7 +63,7 @@ export default function ShippingPage() {
 
           <div className="p-5 bg-neutral-100 border border-neutral-200 text-neutral-600">
             <p>
-              For live order updates, visit your <Link href="/account/orders" className="font-bold text-black underline">Account Orders Dashboard</Link> or contact the team via <a href="mailto:contact@rightnowlife.com" className="font-bold text-black underline">contact@rightnowlife.com</a>.
+              For live order updates, visit your <Link href="/account/orders" className="font-bold text-black underline">Account Orders Dashboard</Link> or contact the team via <a href={`mailto:${BRAND_INFO.supportEmail}`} className="font-bold text-black underline">{BRAND_INFO.supportEmail}</a>.
             </p>
           </div>
         </div>

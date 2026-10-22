@@ -9,11 +9,30 @@ import { BRAND_INFO } from "@/data/mock-data";
 export default function ContactPage() {
   const [form, setForm] = useState({ name: "", email: "", subject: "", message: "" });
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (form.name && form.email && form.message) {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError("");
+    try {
+      const website = String(new FormData(e.currentTarget).get("website") ?? "");
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "contact", ...form, website }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.success !== true || result?.status !== "accepted") {
+        throw new Error(typeof result?.error === "string" ? result.error : "We couldn't send your message. Please try again.");
+      }
       setIsSubmitted(true);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "We couldn't send your message. Please try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -77,9 +96,6 @@ export default function ContactPage() {
               </div>
             </div>
 
-            <div className="p-4 bg-neutral-100 border border-neutral-200 text-[11px] text-neutral-500 font-mono">
-              [Phase 1 Prototype: Messages submitted via this form are recorded in demo fixtures]
-            </div>
           </div>
 
           {/* Contact Form (7 cols) */}
@@ -100,13 +116,19 @@ export default function ContactPage() {
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+                    <label htmlFor="contact-website">Website</label>
+                    <input id="contact-website" name="website" type="text" tabIndex={-1} autoComplete="off" />
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-[11px] uppercase font-bold text-neutral-800">
+                      <label htmlFor="contact-name" className="text-[11px] uppercase font-bold text-neutral-800">
                         Your Name *
                       </label>
                       <input
                         type="text"
+                        id="contact-name"
+                        maxLength={100}
                         required
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -115,11 +137,13 @@ export default function ContactPage() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[11px] uppercase font-bold text-neutral-800">
+                      <label htmlFor="contact-email" className="text-[11px] uppercase font-bold text-neutral-800">
                         Email Address *
                       </label>
                       <input
                         type="email"
+                        id="contact-email"
+                        maxLength={254}
                         required
                         value={form.email}
                         onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -130,11 +154,13 @@ export default function ContactPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] uppercase font-bold text-neutral-800">
+                    <label htmlFor="contact-subject" className="text-[11px] uppercase font-bold text-neutral-800">
                       Subject
                     </label>
                     <input
                       type="text"
+                      id="contact-subject"
+                      maxLength={120}
                       value={form.subject}
                       onChange={(e) => setForm({ ...form, subject: e.target.value })}
                       className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
@@ -143,12 +169,14 @@ export default function ContactPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] uppercase font-bold text-neutral-800">
+                    <label htmlFor="contact-message" className="text-[11px] uppercase font-bold text-neutral-800">
                       Message *
                     </label>
                     <textarea
                       required
+                      id="contact-message"
                       rows={5}
+                      maxLength={5000}
                       value={form.message}
                       onChange={(e) => setForm({ ...form, message: e.target.value })}
                       className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
@@ -156,11 +184,13 @@ export default function ContactPage() {
                     />
                   </div>
 
+                  {error && <p className="text-xs text-red-700" role="alert">{error}</p>}
                   <button
                     type="submit"
+                    disabled={isSubmitting}
                     className="px-8 py-3.5 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors inline-flex items-center gap-2"
                   >
-                    <span>Send Inquiry</span>
+                    <span>{isSubmitting ? "Sending…" : "Send Inquiry"}</span>
                     <Send className="w-3.5 h-3.5" />
                   </button>
                 </form>

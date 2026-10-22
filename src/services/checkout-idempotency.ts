@@ -1,7 +1,7 @@
 export interface CheckoutKeyDetails {
   userId: string | null;
   customerEmail: string;
-  paymentMethod: "Cash on Delivery" | "Razorpay (UPI / Cards / NetBanking)";
+  paymentMethod: "Cash on Delivery" | "COD Advance" | "Razorpay (UPI / Cards / NetBanking)";
   customerName: string;
   customerPhone: string;
   address: {

@@ -9,6 +9,7 @@ import { useAuth } from "@/context/auth-context";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { formatINR } from "@/lib/utils";
 import type { OrderStatus } from "@/types";
+import { hasRequiredOrderPayment } from "@/services/order-payment-state";
 
 interface OrderItem {
   id: string;
@@ -19,6 +20,8 @@ interface OrderItem {
   quantity: number;
   price: number;
   image: string;
+  fulfillment_type?: "stock" | "made_to_order";
+  customization?: { quote: string; mood: string; quoteStyle: string; font: string; printColor: string; placement: string } | null;
 }
 
 interface OrderRecord {
@@ -28,6 +31,8 @@ interface OrderRecord {
   order_status: string;
   payment_status: string;
   total: number;
+  payment_method?: string;
+  payment_attempts?: { purpose: string; payment_state: string; amount_paisa: number }[];
   items: OrderItem[];
 }
 
@@ -110,6 +115,7 @@ function OrdersContent() {
           {[
             { label: "All Orders", value: "all" },
             { label: "Paid", value: "paid" },
+            { label: "Advance Paid", value: "partially_paid" },
             { label: "Pending", value: "pending_payment" },
             { label: "Shipped", value: "shipped" },
             { label: "Delivered", value: "delivered" },
@@ -162,7 +168,8 @@ function OrdersContent() {
         ) : (
           <div className="space-y-4">
             {filteredOrders.map((order) => {
-              const isPaid = order.payment_status === "paid";
+              const verifiedAdvance = order.payment_attempts?.find((attempt) => attempt.purpose === "cod_advance" && attempt.payment_state === "captured");
+              const isPaid = hasRequiredOrderPayment(order.payment_method || "", order.payment_status, Boolean(verifiedAdvance));
               return (
                 <div
                   key={order.id}
@@ -172,10 +179,10 @@ function OrdersContent() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#E5E5E5] gap-2">
                     <div className="space-y-0.5">
                       <span className="text-[10px] uppercase font-mono tracking-widest text-[#858585] font-bold">
-                        Order #{order.order_number}
+                        {isPaid ? `Order #${order.order_number}` : `Checkout #${order.order_number}`}
                       </span>
                       <p className="text-xs text-[#858585] font-medium">
-                        Placed on{" "}
+                        {isPaid ? "Placed on " : "Checkout started on "}{" "}
                         {new Date(order.created_at).toLocaleDateString("en-IN", {
                           dateStyle: "medium",
                         })}
@@ -190,9 +197,11 @@ function OrdersContent() {
                             : "bg-amber-100 text-amber-800 border border-amber-200"
                         }`}
                       >
-                        {isPaid ? "PAID" : "PENDING PAYMENT"}
+                        {order.payment_status === "partially_paid" && verifiedAdvance
+                          ? `₹${verifiedAdvance.amount_paisa / 100} ADVANCE PAID`
+                          : isPaid ? "PAID" : "PENDING PAYMENT"}
                       </span>
-                      <StatusBadge status={order.order_status as OrderStatus} />
+                      <StatusBadge status={(isPaid ? order.order_status : "pending_payment") as OrderStatus} />
                       <span className="text-xs font-black text-[#111111]">
                         {formatINR(order.total)}
                       </span>
@@ -213,7 +222,7 @@ function OrdersContent() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <Link
-                            href={`/products/${item.product_slug}`}
+                            href={item.customization ? "/wear-your-mood" : `/products/${item.product_slug}`}
                             className="text-xs font-bold uppercase tracking-tight text-[#111111] hover:underline truncate block"
                           >
                             {item.product_name}
@@ -221,6 +230,7 @@ function OrdersContent() {
                           <p className="text-[11px] text-[#858585] mt-0.5">
                             Size: {item.size} • Color: {item.color} • Qty: {item.quantity} ({formatINR(item.price)} each)
                           </p>
+                          {item.customization && <p className="mt-1 text-[11px] text-[#0876A8]">“{item.customization.quote}” · {item.customization.mood} · {item.customization.quoteStyle} · {item.customization.font} · {item.customization.printColor} · {item.customization.placement} · {item.fulfillment_type === "made_to_order" ? "Made to order" : ""}</p>}
                         </div>
                         <span className="text-xs font-semibold text-[#111111]">
                           {formatINR(item.price * item.quantity)}
@@ -228,6 +238,8 @@ function OrdersContent() {
                       </div>
                     ))}
                   </div>
+
+                  {verifiedAdvance && <p className="text-xs font-semibold text-[#079447]">COD Advance verified: {formatINR(verifiedAdvance.amount_paisa / 100)} · Balance due on delivery: {formatINR(order.total - verifiedAdvance.amount_paisa / 100)}</p>}
 
                   {/* Footer actions */}
                   <div className="pt-2 flex flex-col sm:flex-row items-center justify-between text-xs gap-3">

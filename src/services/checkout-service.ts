@@ -1,13 +1,23 @@
 import { createHash } from "crypto";
 import { z } from "zod";
 import { PRODUCTS } from "@/data/mock-data";
-import { TShirtSize } from "@/types";
+import { CustomTShirtCustomization, TShirtSize } from "@/types";
 
 // Indian Phone Number: allows +91-XXXXXXXXXX, 91XXXXXXXXXX, or 10-digit 6-9XXXXXXXXX
 const phoneRegex = /^(?:\+91|91|0)?[6-9]\d{9}$/;
 
 // Standard Indian postal PIN code: 6 digits (first digit 1-9), spaces sanitized
 const pinCodeRegex = /^[1-9]\d{5}$/;
+export const CUSTOM_QUOTE_PRODUCT_ID = "rnl-custom-quote-tee";
+const CustomizationSchema = z.object({
+  type: z.literal("quote_tshirt"),
+  mood: z.enum(["happy", "confident", "savage", "heartbroken", "overthinking", "energetic", "exhausted", "angry", "funny", "emotional"]),
+  quote: z.string().trim().min(1).max(80),
+  quoteStyle: z.enum(["deep", "savage", "minimal", "funny"]),
+  font: z.enum(["bold", "serif", "mono"]),
+  printColor: z.enum(["ink", "sun", "ocean", "berry"]),
+  placement: z.enum(["center", "chest"]),
+});
 
 export const CheckoutItemSchema = z.object({
   productId: z.string().min(1, "Product ID is required"),
@@ -20,7 +30,8 @@ export const CheckoutItemSchema = z.object({
     .min(1, "Quantity must be at least 1")
     .max(10, "Quantity cannot exceed 10 per design"),
   color: z.string().default("As pictured"),
-});
+  customization: CustomizationSchema.optional(),
+}).strict();
 
 export const DeliveryAddressSchema = z.object({
   fullName: z.string().trim().min(2, "Full name must be at least 2 characters").max(100),
@@ -83,11 +94,13 @@ export interface VerifiedCheckoutItem {
   productName: string;
   color: string;
   size: TShirtSize;
-  price: number; // Trusted: ₹999 strictly
+  price: number;
   quantity: number;
   image: string;
   sku: string;
   fit: string;
+  fulfillmentType: "stock" | "made_to_order";
+  customization?: CustomTShirtCustomization;
 }
 
 export interface CalculatedOrderPricing {
@@ -99,13 +112,19 @@ export interface CalculatedOrderPricing {
   appliedPromo?: string;
 }
 
+export function calculateCodAdvanceAmounts(orderTotal: number): { success: true; advance: number; balanceDue: number } | { success: false; error: string } {
+  if (!Number.isSafeInteger(orderTotal) || orderTotal <= 200) {
+    return { success: false, error: "COD Advance is available only when the final order total is greater than ₹200." };
+  }
+  return { success: true, advance: 200, balanceDue: orderTotal - 200 };
+}
+
 /**
- * Server-controlled calculation of checkout pricing using trusted catalogue data.
- * Fixes every T-shirt price strictly to ₹999.
+ * Server-controlled calculation of checkout pricing using trusted catalogue data
+ * and the explicit made-to-order custom quote product contract.
  * Shipping is ₹0 (Free shipping on all orders).
  * Promo discount is ₹0 (Coupons removed).
- * Line total = ₹999 * quantity.
- * Subtotal = ₹999 * total quantity.
+ * Graphic tees remain ₹999; custom quote tees are ₹1,999.
  * Total = subtotal.
  */
 export function calculateTrustedOrderPricing(
@@ -120,6 +139,36 @@ export function calculateTrustedOrderPricing(
   let calculatedSubtotal = 0;
 
   for (const item of itemsInput) {
+    if (item.productId === CUSTOM_QUOTE_PRODUCT_ID) {
+      const parsedCustomization = CustomizationSchema.safeParse(item.customization);
+      if (!parsedCustomization.success) {
+        return { success: false, error: "Custom T-shirt details are missing or invalid." };
+      }
+      if (/\b(kill|die|hate|fuck|shit|bitch|asshole)\b/i.test(parsedCustomization.data.quote)) {
+        return { success: false, error: "Please choose a T-shirt quote without offensive language." };
+      }
+      const price = 1999;
+      calculatedSubtotal += price * item.quantity;
+      verifiedItems.push({
+        productId: CUSTOM_QUOTE_PRODUCT_ID,
+        productSlug: "wear-your-mood",
+        productName: "Wear Your Mood Custom Quote Tee",
+        color: "Natural",
+        size: item.size,
+        price,
+        quantity: item.quantity,
+        image: "/products/custom-tee-preview.svg",
+        sku: `RNL-CUSTOM-QUOTE-${item.size}`,
+        fit: "Regular",
+        fulfillmentType: "made_to_order",
+        customization: parsedCustomization.data,
+      });
+      continue;
+    }
+
+    if (item.customization) {
+      return { success: false, error: "Customization cannot be attached to a catalog product." };
+    }
     const trustedProduct = PRODUCTS.find((p) => p.id === item.productId);
     if (!trustedProduct) {
       return { success: false, error: `Invalid product ID: ${item.productId}` };
@@ -152,6 +201,7 @@ export function calculateTrustedOrderPricing(
       image: matchedColor?.images[0] || trustedProduct.colors[0].images[0],
       sku: `${trustedProduct.sku}-${item.size}`,
       fit: trustedProduct.fit,
+      fulfillmentType: "stock",
     });
   }
 

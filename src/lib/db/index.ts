@@ -1,7 +1,8 @@
 import "server-only";
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
 import { types } from "pg";
-import { toPostgresPlaceholders } from "./sql";
+import { safePostgresDiagnostic, toPostgresPlaceholders } from "./sql";
+import type { CustomTShirtCustomization } from "@/types";
 
 types.setTypeParser(1184, (value) => value);
 
@@ -22,18 +23,26 @@ export interface DbConnection {
 class PostgresConnection implements DbConnection {
   constructor(private readonly client: Pool | PoolClient) {}
 
+  private async query<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[]): Promise<QueryResult<T>> {
+    try {
+      return await this.client.query<T>(toPostgresPlaceholders(sql), params);
+    } catch (error) {
+      console.error("[database] Query failed.", JSON.stringify(safePostgresDiagnostic(sql, error)));
+      throw error;
+    }
+  }
+
   prepare(sql: string): DbStatement {
     return {
       get: async <T extends QueryResultRow = QueryResultRow>(...params: unknown[]): Promise<T | undefined> => {
-        const result = await this.client.query<T>(toPostgresPlaceholders(sql), params);
+        const result = await this.query<T>(sql, params);
         return result.rows[0];
       },
       all: async <T extends QueryResultRow>(...params: unknown[]) => {
-        const result = await this.client.query<T>(toPostgresPlaceholders(sql), params);
+        const result = await this.query<T>(sql, params);
         return result.rows;
       },
-      run: (...params: unknown[]) =>
-        this.client.query(toPostgresPlaceholders(sql), params),
+      run: (...params: unknown[]) => this.query(sql, params),
     };
   }
 }
@@ -109,6 +118,7 @@ export interface DbOrder {
   razorpay_order_id: string | null;
   razorpay_payment_id: string | null;
   razorpay_signature: string | null;
+  current_payment_attempt_id?: string | null;
   guest_token: string;
   user_id: string | null;
   courier_name: string | null;
@@ -141,6 +151,26 @@ export interface DbOrderItem {
   image: string;
   sku: string;
   fit: string;
+  fulfillment_type: "stock" | "made_to_order";
+  customization: CustomTShirtCustomization | null;
+}
+
+export interface DbRazorpayPaymentAttempt {
+  id: string;
+  order_id: string;
+  attempt_number: number;
+  attempt_key: string;
+  purpose: "full_payment" | "cod_advance";
+  receipt: string;
+  razorpay_order_id: string | null;
+  razorpay_payment_id: string | null;
+  creation_state: "pending" | "creating" | "ready" | "unknown" | "retryable";
+  payment_state: "not_attempted" | "failed" | "authorized" | "captured" | "cancelled" | "unknown";
+  amount_paisa: number;
+  currency: string;
+  reconciliation_note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DbOrderAddress {
@@ -265,6 +295,7 @@ export interface OrderWithDetails extends DbOrder {
   shipping_events?: DbShippingEvent[];
   returns?: (DbReturn & { items: DbReturnItem[] })[];
   refunds?: DbRefundRecord[];
+  payment_attempts?: DbRazorpayPaymentAttempt[];
 }
 
 export interface DbAdminUser {

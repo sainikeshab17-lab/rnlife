@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
-import { getDb, DbRefundRecord } from "@/lib/db/index";
-import { getOrderById, recordRefund } from "@/lib/db/orders";
+import { getDb } from "@/lib/db/index";
+import { getOrderById, recordRefund, reserveRefund } from "@/lib/db/orders";
 import { createRazorpayRefund } from "@/lib/razorpay";
 import { writeAuditLog } from "@/lib/db/audit";
 import { sendRefundConfirmationEmail } from "@/services/notification-service";
+import { canInitiateRefund, shouldMarkOrderRefunded } from "@/lib/order-status-machine";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { orderId, returnId, amount, reason } = body;
 
-  if (!orderId || !amount || amount <= 0) {
+  if (typeof orderId !== "string" || !orderId || typeof amount !== "number" || !Number.isFinite(amount) ||
+      amount <= 0 || !Number.isSafeInteger(Math.round(amount * 100)) || Math.round(amount * 100) !== amount * 100) {
     return NextResponse.json({ error: "Order ID and a positive refund amount are required." }, { status: 400 });
   }
 
@@ -49,7 +51,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Order not found." }, { status: 404 });
   }
 
-  if (order.payment_status !== "paid" && !order.razorpay_payment_id) {
+  if (!canInitiateRefund(order.payment_method) || order.payment_status === "partially_paid") {
+    return NextResponse.json({ error: "The ₹200 COD Advance is non-refundable." }, { status: 422 });
+  }
+
+  if (!["paid", "partially_paid"].includes(order.payment_status) || !order.razorpay_payment_id) {
     return NextResponse.json(
       { error: "Cannot issue refund for an unpaid order or missing payment ID." },
       { status: 400 }
@@ -58,22 +64,27 @@ export async function POST(req: NextRequest) {
 
   const db = getDb();
 
-  // Validate amount does not exceed remaining refundable balance
-  const existingRefundsRow = await db
-    .prepare("SELECT COALESCE(SUM(amount), 0) as total FROM refund_records WHERE order_id = ? AND status != 'failed'")
-    .get<{ total: string | number }>(orderId);
-  const alreadyRefunded = Number(existingRefundsRow?.total ?? 0);
-
-  const remainingRefundable = order.total - alreadyRefunded;
-  if (amount > remainingRefundable) {
-    return NextResponse.json(
-      { error: `Refund amount ₹${amount} exceeds remaining refundable balance ₹${remainingRefundable}.` },
-      { status: 400 }
-    );
-  }
-
   // Convert amount to paisa for Razorpay
   const amountPaisa = Math.round(amount * 100);
+
+  // Reserve under an order row lock. A pending reservation blocks concurrent
+  // requests and remains in place after an uncertain provider timeout.
+  const reserveResult = await reserveRefund({
+    orderId: order.id, returnId: returnId || null, paymentId: order.razorpay_payment_id,
+    amount, reason: reason || "Admin customer refund", initiatedBy: admin.email,
+  });
+  if (!reserveResult.reservation) {
+    const status = reserveResult.reason === "exceeds_balance" ? 400 : 409;
+    return NextResponse.json({
+      error: reserveResult.reason === "exceeds_balance"
+        ? "Refund amount exceeds the remaining refundable balance."
+        : reserveResult.reason === "pending"
+          ? "A refund is already pending provider confirmation; reconcile it before retrying."
+          : "Order payment state changed; reload the order before retrying.",
+    }, { status });
+  }
+  const reservation = reserveResult.reservation;
+  const collected = order.total;
 
   // Invoke server-side Razorpay API
   const rzpResult = await createRazorpayRefund({
@@ -87,19 +98,8 @@ export async function POST(req: NextRequest) {
   });
 
   if (!rzpResult.success) {
-    await recordRefund({
-      orderId: order.id,
-      returnId: returnId || null,
-      razorpayPaymentId: order.razorpay_payment_id,
-      amount,
-      status: "failed",
-      reason: reason || "Admin refund attempt",
-      initiatedBy: admin.email,
-      failureReason: rzpResult.error || "Razorpay API error",
-    });
-
     return NextResponse.json(
-      { error: `Refund failed: ${rzpResult.error}` },
+      { error: "Refund outcome is uncertain. The refund remains pending reconciliation; do not retry until provider status is checked." },
       { status: 502 }
     );
   }
@@ -111,29 +111,57 @@ export async function POST(req: NextRequest) {
     razorpayRefundId: rzpResult.refundId,
     razorpayPaymentId: order.razorpay_payment_id,
     amount,
-    status: rzpResult.status === "processed" ? "processed" : "pending",
+    status: rzpResult.status === "processed" ? "processed" : rzpResult.status === "failed" ? "failed" : "pending",
     reason: reason || "Admin customer refund",
     initiatedBy: admin.email,
+    idempotencyKey: reservation.idempotency_key,
   });
 
-  // Check if fully refunded
-  const newTotalRefunded = alreadyRefunded + amount;
-  if (newTotalRefunded >= order.total) {
+  if (refundRec.status === "failed") {
+    const processed = await db.prepare(`SELECT COALESCE(SUM(amount_paisa), 0) AS total
+      FROM refund_records WHERE order_id = ? AND status = 'processed'`).get<{ total: string | number }>(order.id);
+    const processedTotal = Number(processed?.total ?? 0) / 100;
+    const refunded = shouldMarkOrderRefunded(order.payment_method, order.payment_status, processedTotal, order.total);
+    await db.prepare(`UPDATE orders SET refund_status = ?, refund_id = ?, updated_at = ?
+      WHERE id = ? AND refund_status = 'pending'`).run(
+      refunded ? "refunded" : processedTotal > 0 ? "partially_refunded" : null,
+      refunded ? rzpResult.refundId || null : null,
+      new Date().toISOString(), order.id
+    );
+    return NextResponse.json({
+      success: false,
+      refund: refundRec,
+      error: "Razorpay confirmed that the refund failed. No refund was processed; a new attempt may be made.",
+    }, { status: 502 });
+  }
+
+  const processedTotalRow = await db.prepare(`
+    SELECT COALESCE(SUM(amount_paisa), 0) AS total
+    FROM refund_records WHERE order_id = ? AND status = 'processed'
+  `).get<{ total: string | number }>(order.id);
+  const processedTotal = Number(processedTotalRow?.total ?? 0) / 100;
+  const refundIsComplete = shouldMarkOrderRefunded(order.payment_method, order.payment_status, processedTotal, collected);
+  const now = new Date().toISOString();
+  if (refundIsComplete) {
     await db.prepare(`
       UPDATE orders
       SET order_status = 'refunded', refund_status = 'refunded', refund_id = ?, updated_at = ?
       WHERE id = ?
-    `).run(rzpResult.refundId || null, new Date().toISOString(), order.id);
+    `).run(rzpResult.refundId || null, now, order.id);
+  } else if (refundRec.status === "processed") {
+    await db.prepare(`
+      UPDATE orders SET refund_status = 'partially_refunded', refund_id = ?, updated_at = ? WHERE id = ?
+    `).run(rzpResult.refundId || null, now, order.id);
   } else {
     await db.prepare(`
-      UPDATE orders
-      SET refund_status = 'partially_refunded', refund_id = ?, updated_at = ?
-      WHERE id = ?
-    `).run(rzpResult.refundId || null, new Date().toISOString(), order.id);
+      UPDATE orders SET refund_status = CASE
+        WHEN refund_status IN ('partially_refunded', 'refunded') THEN refund_status ELSE 'pending' END,
+        refund_id = ?, updated_at = ? WHERE id = ?
+    `).run(rzpResult.refundId || null, now, order.id);
   }
 
-  // If return request linked, update return status to completed
-  if (returnId) {
+  // A return is complete only after the provider confirms the refund is processed.
+  if (returnId && refundRec.status === "processed") {
     await db.prepare(`
       UPDATE returns
       SET status = 'completed', updated_at = ?
@@ -141,8 +169,12 @@ export async function POST(req: NextRequest) {
     `).run(new Date().toISOString(), returnId);
   }
 
-  // Send customer email notification
-  sendRefundConfirmationEmail(order, amount, rzpResult.refundId || refundRec.id).catch(console.error);
+  // Never describe a pending provider refund as processed in customer email.
+  if (refundRec.status === "processed") {
+    sendRefundConfirmationEmail(order, amount, rzpResult.refundId || refundRec.id).catch((error) => {
+      console.error(`[Refund] Processed refund notification failed for order ${order.id}.`, error);
+    });
+  }
 
   await writeAuditLog({
     actor: admin.email,
@@ -153,7 +185,7 @@ export async function POST(req: NextRequest) {
       amount,
       refundId: rzpResult.refundId,
       reason,
-      totalRefunded: newTotalRefunded,
+      totalRefunded: processedTotal,
     },
     ipAddress: req.headers.get("x-forwarded-for"),
   });
@@ -161,6 +193,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     success: true,
     refund: refundRec,
-    message: `Refund of ₹${amount} initiated successfully.`,
+    message: refundRec.status === "processed"
+      ? `Refund of ₹${amount} processed successfully.`
+      : `Refund of ₹${amount} initiated; awaiting provider confirmation.`,
   });
 }

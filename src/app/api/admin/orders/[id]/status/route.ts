@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb, DbOrder, withTransaction } from "@/lib/db/index";
-import { isValidAdminTransition, requiresRefund } from "@/lib/order-status-machine";
+import { isValidAdminTransition, requiresRefundForOrder } from "@/lib/order-status-machine";
 import { writeAuditLog } from "@/lib/db/audit";
 import { lockInventoryVariants } from "@/lib/db/orders";
 import { randomBytes } from "crypto";
@@ -16,8 +16,8 @@ export const dynamic = "force-dynamic";
  * - Only admin-initiatable transitions are allowed (see order-status-machine.ts).
  * - Transitioning to "paid" is FORBIDDEN — payment status only changes via
  *   Razorpay checkout/webhook verification.
- * - Cancelling a paid/processing order sets order to "cancelled" and marks
- *   refund_status = "refund_pending" (actual refund must be processed separately).
+ * - Cancelling prepaid paid/processing orders marks refund_status = "refund_pending".
+ * - COD Advance cancellation never marks the advance refundable.
  * - Every transition is recorded in order_status_history and audit_logs.
  */
 export async function POST(
@@ -61,7 +61,7 @@ export async function POST(
   }
 
   const now = new Date().toISOString();
-  const refundNeeded = requiresRefund(order.order_status, newStatus);
+  const refundNeeded = requiresRefundForOrder(order.order_status, newStatus, order.payment_method, order.payment_status);
 
   await withTransaction(async (transaction) => {
     const current = await transaction.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE")
@@ -79,9 +79,9 @@ export async function POST(
       WHERE id = ?
     `).run(newStatus, refundNeeded ? 1 : 0, newStatus, note ?? null, now, id);
 
-    if (newStatus === "cancelled" && current.payment_status === "pending_payment") {
+    if (newStatus === "cancelled" && ["pending_payment", "pending_advance"].includes(current.payment_status)) {
       const items = await transaction.prepare(
-        'SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id COLLATE "C", size COLLATE "C"'
+        'SELECT product_id, size, quantity FROM order_items WHERE order_id = ? AND fulfillment_type = \'stock\' ORDER BY product_id COLLATE "C", size COLLATE "C"'
       ).all<{ product_id: string; size: string; quantity: number }>(id);
       await lockInventoryVariants(transaction, items.map(({ product_id, size }) => ({ productId: product_id, size })));
       for (const item of items) {
@@ -89,6 +89,17 @@ export async function POST(
           UPDATE inventory SET reserved = GREATEST(0, reserved - ?)
           WHERE product_id = ? AND size = ?
         `).run(item.quantity, item.product_id, item.size);
+      }
+    } else if (newStatus === "cancelled" && (refundNeeded || current.payment_status === "partially_paid")) {
+      const items = await transaction.prepare(
+        'SELECT product_id, size, quantity FROM order_items WHERE order_id = ? AND fulfillment_type = \'stock\' ORDER BY product_id COLLATE "C", size COLLATE "C"'
+      ).all<{ product_id: string; size: string; quantity: number }>(id);
+      await lockInventoryVariants(transaction, items.map(({ product_id, size }) => ({ productId: product_id, size })));
+      for (const item of items) {
+        const restocked = await transaction.prepare(`
+          UPDATE inventory SET stock = stock + ? WHERE product_id = ? AND size = ?
+        `).run(item.quantity, item.product_id, item.size);
+        if (restocked.rowCount !== 1) throw new Error("Inventory row missing while cancelling a paid order.");
       }
     }
 
@@ -119,6 +130,8 @@ export async function POST(
     refund_required: refundNeeded,
     message: refundNeeded
       ? `Order cancelled. A refund of ₹${order.total} is pending. Process manually via Razorpay dashboard.`
-      : `Order status updated to ${newStatus}.`,
+      : order.payment_method === "COD Advance" && newStatus === "cancelled" && order.payment_status === "partially_paid"
+        ? "Order cancelled. The ₹200 COD Advance is non-refundable."
+        : `Order status updated to ${newStatus}.`,
   });
 }

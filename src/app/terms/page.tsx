@@ -1,5 +1,6 @@
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
+import { BRAND_INFO } from "@/data/mock-data";
 
 const sectionClass = "space-y-3";
 const headingClass =
@@ -225,10 +226,10 @@ export default function TermsPage() {
               For questions about these terms, an order, or products, contact
               RightNowLife at{" "}
               <a
-                href="mailto:contact@rightnowlife.com"
+                href={`mailto:${BRAND_INFO.supportEmail}`}
                 className="font-bold text-black underline"
               >
-                contact@rightnowlife.com
+                {BRAND_INFO.supportEmail}
               </a>
               .
             </p>
