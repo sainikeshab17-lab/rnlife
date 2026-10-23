@@ -89,7 +89,7 @@ export function WearYourMoodBuilder() {
       productName: "Wear Your Mood Custom Quote Tee",
       color: "Natural",
       size: size as "XS" | "S" | "M" | "L" | "XL" | "XXL",
-      price: 1999,
+      price: 1299,
       image: "/products/custom-tee-preview.svg",
       fit: "Regular",
       customization: { type: "quote_tshirt", mood, quote, quoteStyle: style, font, printColor, placement },
@@ -231,7 +231,7 @@ export function WearYourMoodBuilder() {
             <p className="text-center text-[11px] text-neutral-500">Preview concept only · not a production-ready print file</p>
             <div className="mt-5 flex items-center justify-between border-t border-neutral-300 pt-4">
               <span className="text-xs font-bold uppercase tracking-wider">Custom quote tee</span>
-              <span className="text-lg font-black">₹1,999</span>
+              <span className="text-lg font-black">₹1,299</span>
             </div>
             <label className="mt-4 block text-xs font-bold uppercase tracking-wider">Garment size
               <select value={size} onChange={(event) => setSize(event.target.value)} className="mt-2 min-h-11 w-full border border-neutral-300 bg-white px-3 text-sm font-normal">

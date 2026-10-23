@@ -22,9 +22,13 @@ const filesToCompile = [
   { in: "src/lib/db/orders.ts", out: ".test-dist/src/lib/db/orders.js" },
   { in: "src/lib/db/audit.ts", out: ".test-dist/src/lib/db/audit.js" },
   { in: "src/lib/auth/admin-auth.ts", out: ".test-dist/src/lib/auth/admin-auth.js" },
+  { in: "src/lib/auth/admin-route-gate.ts", out: ".test-dist/src/lib/auth/admin-route-gate.js" },
   { in: "src/lib/order-status-machine.ts", out: ".test-dist/src/lib/order-status-machine.js" },
   { in: "src/lib/razorpay.ts", out: ".test-dist/src/lib/razorpay.js" },
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
+  { in: "src/services/inventory-product-catalog.ts", out: ".test-dist/src/services/inventory-product-catalog.js" },
+  { in: "src/services/admin-orders-list.ts", out: ".test-dist/src/services/admin-orders-list.js" },
+  { in: "src/services/checkout-payment-attempts.ts", out: ".test-dist/src/services/checkout-payment-attempts.js" },
   { in: "src/services/mood-quotes.ts", out: ".test-dist/src/services/mood-quotes.js" },
   { in: "src/services/wear-your-mood-preview.ts", out: ".test-dist/src/services/wear-your-mood-preview.js" },
   { in: "src/services/customer-orders-api.ts", out: ".test-dist/src/services/customer-orders-api.js" },
@@ -32,6 +36,7 @@ const filesToCompile = [
   { in: "src/services/razorpay-order-recovery.ts", out: ".test-dist/src/services/razorpay-order-recovery.js" },
   { in: "src/services/order-payment-state.ts", out: ".test-dist/src/services/order-payment-state.js" },
   { in: "src/services/notification-service.ts", out: ".test-dist/src/services/notification-service.js" },
+  { in: "src/services/admin-notification-route.ts", out: ".test-dist/src/services/admin-notification-route.js" },
   { in: "src/services/contact-submission.ts", out: ".test-dist/src/services/contact-submission.js" },
   { in: "src/services/refund-reconciliation.ts", out: ".test-dist/src/services/refund-reconciliation.js" },
   { in: "src/services/refund-reconciliation-route.ts", out: ".test-dist/src/services/refund-reconciliation-route.js" },
@@ -44,6 +49,8 @@ const filesToCompile = [
   { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
   { in: "tests/refund-reconciliation.test.mjs", out: ".test-dist/tests/refund-reconciliation.test.mjs" },
   { in: "tests/refund-reconciliation-route.test.mjs", out: ".test-dist/tests/refund-reconciliation-route.test.mjs" },
+  { in: "tests/notification-service.test.mjs", out: ".test-dist/tests/notification-service.test.mjs" },
+  { in: "tests/admin-notification-route.test.mjs", out: ".test-dist/tests/admin-notification-route.test.mjs" },
   { in: "tests/storefront-upgrade.test.mjs", out: ".test-dist/tests/storefront-upgrade.test.mjs" },
   { in: "tests/postgres-test-support.mjs", out: ".test-dist/tests/postgres-test-support.mjs" },
   { in: "tests/postgres-sql.test.mjs", out: ".test-dist/tests/postgres-sql.test.mjs" },
@@ -64,6 +71,11 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']@\/lib\/db["']/g, 'from "../lib/db/index.js"');
     code = code.replace(/from\s+["']@\/lib\/db\/sql["']/g, 'from "../lib/db/sql.js"');
     code = code.replace(/from\s+["']@\/lib\/support-contact["']/g, 'from "../lib/support-contact.js"');
+    code = code
+      .replace(/from\s+["']@\/lib\/db\/orders["']/g, 'from "../lib/db/orders.js"')
+      .replace(/from\s+["']@\/lib\/razorpay["']/g, 'from "../lib/razorpay.js"')
+      .replace(/from\s+["']@\/services\/checkout-service["']/g, 'from "./checkout-service.js"');
+    code = code.replace(/from\s+["']@\/services\/razorpay-order-recovery["']/g, 'from "./razorpay-order-recovery.js"');
     if (f.in === "src/services/refund-reconciliation-route.ts") {
       code = code
         .replace(/from\s+["']next\/server["']/g, 'from "../../test-next-server.js"')
@@ -73,6 +85,9 @@ for (const f of filesToCompile) {
         .replace(/from\s+["']@\/services\/notification-service["']/g, 'from "./notification-service.js"')
         .replace(/from\s+["']@\/services\/refund-reconciliation["']/g, 'from "./refund-reconciliation.js"')
         .replace(/from\s+["']@\/lib\/db\/audit["']/g, 'from "../lib/db/audit.js"');
+    }
+    if (f.in === "src/services/admin-notification-route.ts") {
+      code = code.replace(/from\s+["']next\/server["']/g, 'from "../../test-next-server.js"');
     }
   } else if (f.in.startsWith("src/lib/auth/")) {
     code = code.replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "../db/index.js"');
@@ -98,6 +113,9 @@ for (const f of filesToCompile) {
   } else if (f.in.startsWith("tests/")) {
     code = code
       .replace(/from\s+["']\.\.\/src\/services\/checkout-service\.ts["']/g, 'from "../src/services/checkout-service.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/inventory-product-catalog\.ts["']/g, 'from "../src/services/inventory-product-catalog.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/admin-orders-list\.ts["']/g, 'from "../src/services/admin-orders-list.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/checkout-payment-attempts\.ts["']/g, 'from "../src/services/checkout-payment-attempts.js"')
       .replace(/from\s+["']\.\.\/src\/services\/mood-quotes\.ts["']/g, 'from "../src/services/mood-quotes.js"')
       .replace(/from\s+["']\.\.\/src\/services\/wear-your-mood-preview\.ts["']/g, 'from "../src/services/wear-your-mood-preview.js"')
       .replace(/from\s+["']\.\.\/src\/services\/customer-orders-api\.ts["']/g, 'from "../src/services/customer-orders-api.js"')
@@ -109,6 +127,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/contact-submission\.ts["']/g, 'from "../src/services/contact-submission.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation\.ts["']/g, 'from "../src/services/refund-reconciliation.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation-route\.ts["']/g, 'from "../src/services/refund-reconciliation-route.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/admin-notification-route\.ts["']/g, 'from "../src/services/admin-notification-route.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/policies\.ts["']/g, 'from "../src/lib/policies.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/support-contact\.ts["']/g, 'from "../src/lib/support-contact.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/shipping\/provider\.ts["']/g, 'from "../src/lib/shipping/provider.js"')
@@ -118,6 +137,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/lib\/db\/sql\.ts["']/g, 'from "../src/lib/db/sql.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/db\/audit\.ts["']/g, 'from "../src/lib/db/audit.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/auth\/admin-auth\.ts["']/g, 'from "../src/lib/auth/admin-auth.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/auth\/admin-route-gate\.ts["']/g, 'from "../src/lib/auth/admin-route-gate.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/order-status-machine\.ts["']/g, 'from "../src/lib/order-status-machine.js"')
       .replace(/from\s+["']\.\.\/src\/data\/mock-data\.ts["']/g, 'from "../src/data/mock-data.js"');
   }
@@ -196,6 +216,10 @@ try {
     cwd: process.cwd(),
   });
   execSync("node --conditions=react-server --test .test-dist/tests/refund-reconciliation-route.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --conditions=react-server --test .test-dist/tests/notification-service.test.mjs .test-dist/tests/admin-notification-route.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });

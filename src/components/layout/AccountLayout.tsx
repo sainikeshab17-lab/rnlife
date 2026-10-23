@@ -9,8 +9,6 @@ import {
   MapPin,
   Heart,
   LogOut,
-  LayoutDashboard,
-  ShieldAlert,
 } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
@@ -94,24 +92,6 @@ export function AccountLayout({ children, title, subtitle }: AccountLayoutProps)
               })}
 
               <div className="pt-4 mt-4 border-t border-neutral-200 space-y-1">
-                <p className="px-3 text-[10px] uppercase tracking-wider font-bold text-neutral-400">
-                  Staff Interfaces
-                </p>
-                <Link
-                  href="/seller"
-                  className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-600 hover:text-black font-semibold"
-                >
-                  <LayoutDashboard className="w-3.5 h-3.5 text-neutral-500" />
-                  <span>Seller Portal</span>
-                </Link>
-                <Link
-                  href="/admin"
-                  className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-600 hover:text-black font-semibold"
-                >
-                  <ShieldAlert className="w-3.5 h-3.5 text-neutral-500" />
-                  <span>Admin Dashboard</span>
-                </Link>
-
                 <button
                   onClick={logout}
                   className="flex items-center gap-2.5 w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 font-bold uppercase tracking-wider pt-3"

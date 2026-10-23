@@ -115,6 +115,7 @@ export interface DbOrder {
   payment_method: string;
   payment_status: string;
   order_status: string;
+  is_confirmed: boolean;
   razorpay_order_id: string | null;
   razorpay_payment_id: string | null;
   razorpay_signature: string | null;
@@ -171,6 +172,32 @@ export interface DbRazorpayPaymentAttempt {
   reconciliation_note: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DbCheckoutPaymentAttempt {
+  id: string;
+  idempotency_key: string;
+  request_hash: string;
+  user_id: string | null;
+  customer_email: string;
+  guest_token: string;
+  payment_method: string;
+  purpose: "full_payment" | "cod_advance";
+  receipt: string;
+  expected_amount_paisa: number;
+  currency: string;
+  checkout_snapshot: unknown;
+  provider_order_id: string | null;
+  provider_payment_id: string | null;
+  provider_signature: string | null;
+  creation_state: "pending" | "creating" | "ready" | "unknown" | "retryable";
+  attempt_status: "pending" | "authorized" | "failed" | "cancelled" | "captured" | "converted" | "reconciliation_required" | "expired";
+  order_id: string | null;
+  reservation_state: "held" | "released" | "consumed";
+  reservation_released_at: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
 }
 
 export interface DbOrderAddress {

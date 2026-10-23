@@ -124,7 +124,7 @@ export function calculateCodAdvanceAmounts(orderTotal: number): { success: true;
  * and the explicit made-to-order custom quote product contract.
  * Shipping is ₹0 (Free shipping on all orders).
  * Promo discount is ₹0 (Coupons removed).
- * Graphic tees remain ₹999; custom quote tees are ₹1,999.
+ * Graphic tees remain ₹999; custom quote tees are ₹1,299.
  * Total = subtotal.
  */
 export function calculateTrustedOrderPricing(
@@ -147,7 +147,7 @@ export function calculateTrustedOrderPricing(
       if (/\b(kill|die|hate|fuck|shit|bitch|asshole)\b/i.test(parsedCustomization.data.quote)) {
         return { success: false, error: "Please choose a T-shirt quote without offensive language." };
       }
-      const price = 1999;
+      const price = 1299;
       calculatedSubtotal += price * item.quantity;
       verifiedItems.push({
         productId: CUSTOM_QUOTE_PRODUCT_ID,

@@ -56,9 +56,11 @@ export default function AdminNotificationsPage() {
 
       const data = await res.json();
       await fetchJobs();
-      alert(data.result?.sent
-        ? "Email accepted by the provider. Check the job status for confirmation."
-        : "Retry did not report a send. Review the job status and error details.");
+      alert(data.alreadySent
+        ? "This notification was already accepted previously. No duplicate was sent."
+        : data.providerAccepted
+          ? "Email accepted by the provider. Delivery is not confirmed; check the job status."
+          : data.message || "Retry did not send the notification. Review the job status and error details.");
     } catch (err: any) {
       alert(err.message);
     } finally {

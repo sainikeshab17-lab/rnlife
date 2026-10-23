@@ -12,6 +12,7 @@ import {
 } from "@/lib/db/orders";
 import { dispatchAllOrderNotifications, persistPaymentNotificationJobs, sendRefundConfirmationEmail } from "@/services/notification-service";
 import { getDb } from "@/lib/db";
+import { convertCapturedCheckoutAttempt, getCheckoutPaymentAttemptByProviderOrderId, updateCheckoutAttemptPaymentState } from "@/services/checkout-payment-attempts";
 import { classifyRefundWebhook, getRefundWebhookIdempotencyKey, isProcessedRefundEvent, refundPaymentMatchesOrder, shouldMarkOrderRefunded } from "@/lib/order-status-machine";
 
 export async function POST(req: NextRequest) {
@@ -67,6 +68,38 @@ export async function POST(req: NextRequest) {
           orderEntityId: orderEntity.id,
         });
         return NextResponse.json({ error: "Webhook payment and order entities do not match." }, { status: 400 });
+      }
+
+      const checkoutAttempt = rzpOrderId ? await getCheckoutPaymentAttemptByProviderOrderId(rzpOrderId) : null;
+      if (checkoutAttempt) {
+        const paymentNotes = (paymentEntity as unknown as { notes?: Record<string, string> } | undefined)?.notes;
+        if (!rzpPaymentId || paymentEntity.amount !== checkoutAttempt.expected_amount_paisa ||
+          paymentEntity.currency !== checkoutAttempt.currency ||
+          (paymentNotes?.checkoutAttemptId && paymentNotes.checkoutAttemptId !== checkoutAttempt.id) ||
+          (paymentNotes?.customerEmail && paymentNotes.customerEmail.toLowerCase() !== checkoutAttempt.customer_email.toLowerCase()) ||
+          (notesOrderId && notesOrderId !== checkoutAttempt.id) ||
+          (paymentAttemptId && paymentAttemptId !== checkoutAttempt.id)) {
+          await logPaymentAudit(null, "checkout_attempt_webhook_mismatch", {
+            attemptId: checkoutAttempt.id, providerOrderId: rzpOrderId, paymentId: rzpPaymentId,
+            receivedAmount: paymentEntity.amount, receivedCurrency: paymentEntity.currency,
+          });
+          return NextResponse.json({ error: "Webhook payment details do not match the checkout attempt." }, { status: 400 });
+        }
+        await updateCheckoutAttemptPaymentState(checkoutAttempt.id, rzpPaymentId, "captured");
+        const converted = await convertCapturedCheckoutAttempt({ attemptId: checkoutAttempt.id,
+          providerOrderId: rzpOrderId, providerPaymentId: rzpPaymentId });
+        if (!converted.success || !converted.orderId) {
+          await logPaymentAudit(null, "checkout_attempt_webhook_capture_requires_reconciliation", {
+            attemptId: checkoutAttempt.id, paymentId: rzpPaymentId,
+          });
+          return NextResponse.json({ status: "captured_payment_requires_reconciliation" });
+        }
+        await persistPaymentNotificationJobs(converted.orderId, async () => {
+          const refreshed = await getOrderById(converted.orderId!);
+          if (!refreshed) throw new Error("Webhook-converted order could not be reloaded.");
+          return dispatchAllOrderNotifications(refreshed);
+        });
+        return NextResponse.json({ status: converted.alreadyConverted ? "already_converted" : "checkout_attempt_converted" });
       }
 
       const advanceAttempt = rzpOrderId ? await getPaymentAttemptByRazorpayOrderId(rzpOrderId) : null;
@@ -157,6 +190,22 @@ export async function POST(req: NextRequest) {
       const notesOrderId = paymentEntity?.notes?.orderId;
 
       if (typeof rzpOrderId === "string") {
+        const checkoutAttempt = await getCheckoutPaymentAttemptByProviderOrderId(rzpOrderId);
+        if (checkoutAttempt) {
+          if (paymentEntity?.amount !== checkoutAttempt.expected_amount_paisa || paymentEntity?.currency !== checkoutAttempt.currency ||
+            (paymentEntity?.notes?.checkoutAttemptId && paymentEntity.notes.checkoutAttemptId !== checkoutAttempt.id)) {
+            await logPaymentAudit(null, "checkout_attempt_failed_webhook_mismatch", {
+              attemptId: checkoutAttempt.id, paymentId: paymentEntity?.id,
+              amount: paymentEntity?.amount, currency: paymentEntity?.currency,
+            });
+            return NextResponse.json({ status: "checkout_attempt_failure_requires_reconciliation" });
+          }
+          await updateCheckoutAttemptPaymentState(checkoutAttempt.id, paymentEntity?.id ?? null,
+            paymentEntity?.status === "cancelled" ? "cancelled" : "failed");
+          await logPaymentAudit(null, "checkout_attempt_payment_failed", { attemptId: checkoutAttempt.id,
+            paymentId: paymentEntity?.id, status: paymentEntity?.status });
+          return NextResponse.json({ status: "checkout_attempt_payment_failed" });
+        }
         const attempt = await getPaymentAttemptByRazorpayOrderId(rzpOrderId);
         if (attempt?.purpose === "cod_advance") {
           if (paymentEntity?.amount !== attempt.amount_paisa || paymentEntity?.currency !== attempt.currency || typeof paymentEntity?.id !== "string") {

@@ -23,6 +23,22 @@ const customOrdersAndCodAdvanceMigration = await readFile(
   new URL("../supabase/migrations/20261022120000_custom_orders_and_cod_advance.sql", import.meta.url),
   "utf8"
 );
+const orderConfirmationMigration = await readFile(
+  new URL("../supabase/migrations/20261023190000_order_confirmation_visibility.sql", import.meta.url),
+  "utf8"
+);
+const checkoutPaymentAttemptsMigration = await readFile(
+  new URL("../supabase/migrations/20261023200000_checkout_payment_attempts.sql", import.meta.url),
+  "utf8"
+);
+const checkoutAttemptExpiryMigration = await readFile(
+  new URL("../supabase/migrations/20261023210000_checkout_attempt_reservation_expiry.sql", import.meta.url),
+  "utf8"
+);
+const checkoutAttemptRuntime = await readFile(new URL("../src/services/checkout-payment-attempts.ts", import.meta.url), "utf8");
+const checkoutCreateRoute = await readFile(new URL("../src/app/api/checkout/create-order/route.ts", import.meta.url), "utf8");
+const checkoutVerifyRoute = await readFile(new URL("../src/app/api/checkout/verify-payment/route.ts", import.meta.url), "utf8");
+const razorpayWebhookRoute = await readFile(new URL("../src/app/api/webhooks/razorpay/route.ts", import.meta.url), "utf8");
 const importer = await readFile(
   new URL("../scripts/import-sqlite-to-postgres.mjs", import.meta.url),
   "utf8"
@@ -137,6 +153,46 @@ test("consolidated custom-order and COD Advance migration is additive and preser
   assert.doesNotMatch(customOrdersAndCodAdvanceMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN|UPDATE orders|UPDATE order_items)\b/i);
   assert.match(prismaSchema, /customization Json\? @db\.JsonB/);
   assert.match(prismaSchema, /fulfillmentType String @default\("stock"\)/);
+});
+
+test("order confirmation migration is additive and preserves existing data for review", () => {
+  assert.match(orderConfirmationMigration, /ADD COLUMN IF NOT EXISTS is_confirmed BOOLEAN NOT NULL DEFAULT TRUE/i);
+  assert.match(orderConfirmationMigration, /CREATE INDEX IF NOT EXISTS idx_orders_confirmed_created/i);
+  assert.doesNotMatch(orderConfirmationMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN|UPDATE orders)\b/i);
+  assert.match(orderRuntime, /is_confirmed = TRUE/);
+  assert.match(orderRuntime, /payment_method IN \('COD', 'Cash on Delivery'\)/);
+  assert.match(customerOrdersApi, /getOrdersByCustomer/);
+});
+
+test("separate checkout-attempt storage is additive and only converts verified attempts", () => {
+  assert.match(checkoutPaymentAttemptsMigration, /CREATE TABLE IF NOT EXISTS checkout_payment_attempts/i);
+  assert.match(checkoutPaymentAttemptsMigration, /checkout_snapshot JSONB NOT NULL/i);
+  assert.match(checkoutPaymentAttemptsMigration, /provider_order_id TEXT UNIQUE/i);
+  assert.match(checkoutPaymentAttemptsMigration, /provider_payment_id TEXT UNIQUE/i);
+  assert.doesNotMatch(checkoutPaymentAttemptsMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN|UPDATE orders)\b/i);
+  assert.match(prismaSchema, /model CheckoutPaymentAttempt/);
+  assert.match(checkoutCreateRoute, /createCheckoutPaymentAttempt/);
+  assert.doesNotMatch(checkoutCreateRoute, /createPendingOrder/);
+  assert.match(checkoutVerifyRoute, /verifyPaymentSignature/);
+  assert.match(checkoutVerifyRoute, /isVerifiedPaymentDetails/);
+  assert.match(checkoutVerifyRoute, /convertCapturedCheckoutAttempt/);
+  assert.match(checkoutAttemptRuntime, /attempt\.attempt_status !== "captured"/);
+  assert.match(checkoutAttemptRuntime, /FOR UPDATE/);
+  assert.match(razorpayWebhookRoute, /getCheckoutPaymentAttemptByProviderOrderId/);
+  assert.match(razorpayWebhookRoute, /convertCapturedCheckoutAttempt/);
+});
+
+test("reservation expiry migration is additive, auditable, and does not clean legacy rows", () => {
+  assert.match(checkoutAttemptExpiryMigration, /reservation_state TEXT NOT NULL DEFAULT 'held'/i);
+  assert.match(checkoutAttemptExpiryMigration, /reservation_released_at TIMESTAMPTZ/i);
+  assert.match(checkoutAttemptExpiryMigration, /'expired'/i);
+  assert.match(checkoutAttemptExpiryMigration, /idx_checkout_attempt_expiry_reservation/i);
+  assert.doesNotMatch(checkoutAttemptExpiryMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE|DROP COLUMN|UPDATE orders)\b/i);
+  assert.match(prismaSchema, /reservationState\s+String\s+@default\("held"\)/);
+  assert.match(checkoutAttemptRuntime, /FOR UPDATE SKIP LOCKED/);
+  assert.match(checkoutAttemptRuntime, /reservation_state = 'released'/);
+  assert.match(checkoutAttemptRuntime, /captured_checkout_without_held_reservation/);
+  assert.match(checkoutAttemptRuntime, /processCheckoutAttemptExpiryBatch/);
 });
 
 test("authenticated order-list UI and API do not expose or link guest tokens", () => {

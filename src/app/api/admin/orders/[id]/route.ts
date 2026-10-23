@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 
 async function fetchOrderWithDetails(orderId: string) {
   const db = getDb();
-  const order = await db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  const order = await db.prepare(`SELECT * FROM orders WHERE id = ? AND is_confirmed = TRUE
+    AND (payment_status NOT IN ('pending_payment', 'pending_advance') OR payment_method IN ('COD', 'Cash on Delivery'))`).get<DbOrder>(orderId);
   if (!order) return null;
   const items = await db.prepare("SELECT * FROM order_items WHERE order_id = ?").all<DbOrderItem>(orderId);
   const address = (await db.prepare("SELECT * FROM order_addresses WHERE order_id = ?")

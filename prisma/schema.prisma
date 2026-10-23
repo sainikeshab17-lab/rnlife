@@ -20,6 +20,7 @@ model Order {
   paymentMethod            String    @map("payment_method")
   paymentStatus            String    @default("pending_payment") @map("payment_status")
   orderStatus              String    @default("pending_payment") @map("order_status")
+  isConfirmed              Boolean   @default(true) @map("is_confirmed")
   razorpayOrderId          String?   @map("razorpay_order_id")
   razorpayPaymentId        String?   @map("razorpay_payment_id")
   razorpaySignature        String?   @map("razorpay_signature")
@@ -45,6 +46,7 @@ model Order {
   items          OrderItem[]
   paymentAttempts RazorpayPaymentAttempt[] @relation("OrderPaymentAttempts")
   currentPaymentAttempt RazorpayPaymentAttempt? @relation("CurrentPaymentAttempt", fields: [currentPaymentAttemptId], references: [id], onDelete: SetNull)
+  checkoutPaymentAttempts CheckoutPaymentAttempt[]
   addresses      OrderAddress[]
   statusHistory  OrderStatusHistory[]
   shippingEvents ShippingEvent[]
@@ -108,6 +110,38 @@ model RazorpayPaymentAttempt {
   @@index([orderId, createdAt(sort: Desc)])
   @@index([orderId, purpose, paymentState])
   @@map("razorpay_payment_attempts")
+}
+
+model CheckoutPaymentAttempt {
+  id                  String   @id
+  idempotencyKey      String   @unique @map("idempotency_key")
+  requestHash         String   @map("request_hash")
+  userId              String?  @map("user_id")
+  customerEmail       String   @map("customer_email")
+  guestToken          String   @unique @map("guest_token")
+  paymentMethod       String   @map("payment_method")
+  purpose             String
+  receipt             String   @unique
+  expectedAmountPaisa Int      @map("expected_amount_paisa")
+  currency            String   @default("INR")
+  checkoutSnapshot    Json     @map("checkout_snapshot") @db.JsonB
+  providerOrderId     String?  @unique @map("provider_order_id")
+  providerPaymentId   String?  @unique @map("provider_payment_id")
+  providerSignature   String?  @map("provider_signature")
+  creationState       String   @default("pending") @map("creation_state")
+  attemptStatus       String   @default("pending") @map("attempt_status")
+  orderId             String?  @map("order_id")
+  reservationState    String   @default("held") @map("reservation_state")
+  reservationReleasedAt DateTime? @map("reservation_released_at") @db.Timestamptz(6)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  expiresAt           DateTime @default(dbgenerated("NOW() + INTERVAL '24 hours'")) @map("expires_at") @db.Timestamptz(6)
+
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, customerEmail, createdAt(sort: Desc)])
+  @@index([attemptStatus, expiresAt])
+  @@map("checkout_payment_attempts")
 }
 
 model OrderAddress {

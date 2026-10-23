@@ -29,6 +29,45 @@ import {
 } from "../src/lib/db/orders.ts";
 import { generateOrderNumber } from "../src/services/checkout-service.ts";
 import { COLLECTIONS, PRODUCTS } from "../src/data/mock-data.ts";
+import { getCatalogDisplayName, getInventoryProductLabel, getInventoryProductIdsMissingFromCatalog } from "../src/services/inventory-product-catalog.ts";
+import { listAdminOrders } from "../src/services/admin-orders-list.ts";
+import { getAdminRouteView, resolveAdminSessionResponse } from "../src/lib/auth/admin-route-gate.ts";
+
+describe("Admin route session gate", () => {
+  test("direct Orders navigation and refresh wait for a valid server session", () => {
+    for (const navigation of ["direct", "refresh"]) {
+      assert.equal(getAdminRouteView("/admin/orders", null, "checking"), "checking", `${navigation} must wait for the session check`);
+      assert.equal(getAdminRouteView("/admin/orders", "/admin/orders", "authenticated"), "content", `${navigation} renders only after server validation`);
+    }
+  });
+
+  test("dashboard navigation rechecks before mounting Orders under the previous route session", () => {
+    assert.equal(getAdminRouteView("/admin/orders", "/admin", "authenticated"), "checking");
+  });
+
+  test("missing and expired sessions redirect without mounting protected page content", () => {
+    assert.deepEqual(resolveAdminSessionResponse(401, { error: "Unauthorized" }), { status: "redirect" });
+    assert.equal(getAdminRouteView("/admin/orders", null, "checking"), "checking");
+    assert.equal(getAdminRouteView("/admin/login", null, "checking"), "login");
+  });
+
+  test("valid sessions render and malformed or unavailable responses remain retryable", () => {
+    const admin = { id: "adm_test", email: "admin@example.test", name: "Test Admin", role: "admin" };
+    assert.deepEqual(resolveAdminSessionResponse(200, { admin }), { status: "authenticated", admin });
+    assert.deepEqual(resolveAdminSessionResponse(200, { admin: { id: "partial" } }), { status: "unavailable" });
+    assert.deepEqual(resolveAdminSessionResponse(503, {}), { status: "unavailable" });
+  });
+
+  test("the admin segment gates page mounting and login remains reachable", () => {
+    const layout = fs.readFileSync(path.join(process.cwd(), "src/app/admin/layout.tsx"), "utf8");
+    const provider = fs.readFileSync(path.join(process.cwd(), "src/components/layout/AdminSessionProvider.tsx"), "utf8");
+    const ordersPage = fs.readFileSync(path.join(process.cwd(), "src/app/admin/orders/page.tsx"), "utf8");
+    assert.match(layout, /<AdminSessionProvider>\{children\}<\/AdminSessionProvider>/);
+    assert.match(provider, /if \(routeView === "login"\) return <>{children}<\/>/);
+    assert.match(provider, /routeView === "content" && contextValue/);
+    assert.match(ordersPage, /if \(res\.status === 401\)\s*\{\s*router\.replace\("\/admin\/login"\)/);
+  });
+});
 
 describe("COD Advance refund policy", () => {
   test("admin refund policy rejects COD Advance before provider initiation", () => {
@@ -82,6 +121,109 @@ describe("COD Advance refund policy", () => {
     assert.match(route, /Razorpay confirmed that the refund failed/);
     const notifications = fs.readFileSync(path.join(process.cwd(), "src/services/notification-service.ts"), "utf8");
     assert.match(notifications, /idempotencyKey: `notif_rfnd_\$\{refundId\}`/);
+  });
+});
+
+describe("Warehouse inventory product catalog mapping", () => {
+  test("resolves all eight inventory designs from the storefront catalog without a Supabase products row", () => {
+    const designs = PRODUCTS.filter((product) => /^rnl-design-0[1-8]$/.test(product.id));
+    assert.equal(designs.length, 8);
+    for (const product of designs) {
+      const label = getInventoryProductLabel(product.id);
+      assert.ok(label, `${product.id} should resolve`);
+      assert.equal(label.product_name, product.name);
+      assert.equal(label.sku, product.sku);
+      assert.ok(label.image, `${product.id} should use a catalog image`);
+      assert.deepEqual(product.sizes, ["XS", "S", "M", "L", "XL", "XXL"]);
+    }
+    assert.deepEqual(getInventoryProductIdsMissingFromCatalog(designs.map(({ id }) => id)), []);
+  });
+
+  test("accepts name or title fields and returns diagnostic IDs for missing products", () => {
+    assert.equal(getCatalogDisplayName({ name: " Catalog name ", title: "Other title" }), "Catalog name");
+    assert.equal(getCatalogDisplayName({ title: "Title-shaped record" }), "Title-shaped record");
+    assert.equal(getCatalogDisplayName({ name: " ", title: null }), null);
+    assert.equal(getInventoryProductLabel("missing-product-id"), null);
+    assert.deepEqual(getInventoryProductIdsMissingFromCatalog(["rnl-design-01", "missing-product-id"]), ["missing-product-id"]);
+
+    const inventoryRoute = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/inventory/route.ts"), "utf8");
+    const dashboardRoute = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/dashboard/route.ts"), "utf8");
+    assert.match(inventoryRoute, /getInventoryProductLabel/);
+    assert.match(dashboardRoute, /getInventoryProductLabel/);
+    assert.doesNotMatch(inventoryRoute, /from\("products"\)/);
+    assert.doesNotMatch(dashboardRoute, /from\("products"\)/);
+    assert.match(inventoryRoute, /Product not found \(/);
+    assert.match(dashboardRoute, /Product not found \(/);
+  });
+});
+
+describe("Admin orders list query", () => {
+  const filters = { query: "RNL-42", status: "paid", paymentStatus: "paid", fromDate: "2026-01-01", toDate: "2026-01-31", page: 2, limit: 15 };
+
+  test("loads a page with safe nullable customer/payment fields and preserves filters and sort", async () => {
+    const calls = [];
+    const db = {
+      prepare(sql) {
+        calls.push(sql);
+        return {
+          async get(...args) {
+            assert.deepEqual(args, ["%RNL-42%", "%RNL-42%", "%RNL-42%", "%RNL-42%", "paid", "paid", "2026-01-01", "2026-01-31"]);
+            return { count: "1" };
+          },
+          async all(...args) {
+            assert.deepEqual(args.slice(0, 8), ["%RNL-42%", "%RNL-42%", "%RNL-42%", "%RNL-42%", "paid", "paid", "2026-01-01", "2026-01-31"]);
+            assert.deepEqual(args.slice(-2), [15, 15]);
+            return [{ id: "ord_1", order_number: "RNL-42", customer_name: null, customer_email: null,
+              customer_phone: null, payment_method: null, payment_status: null, razorpay_payment_id: null,
+              total: 999, discount: 0, order_status: "paid", courier_name: null, tracking_number: null,
+              refund_status: null, created_at: "2026-01-10T00:00:00Z", subtotal: 999, shipping: 0 }];
+          },
+        };
+      },
+    };
+    const result = await listAdminOrders(db, filters);
+    assert.equal(result.total, 1);
+    assert.equal(result.page, 2);
+    assert.equal(result.pages, 1);
+    assert.equal(result.orders[0].customer_email, null);
+    assert.equal(result.orders[0].payment_status, null);
+    assert.match(calls[0], /is_confirmed = TRUE/);
+    assert.match(calls[1], /ORDER BY created_at DESC LIMIT \? OFFSET \?/);
+    assert.doesNotMatch(calls[1], /SELECT \* /);
+    assert.doesNotMatch(calls[1], /guest_token|razorpay_signature|user_id/);
+  });
+
+  test("keeps orders available during rollout when only the confirmation migration is missing", async () => {
+    let queryCount = 0;
+    const db = {
+      prepare(sql) {
+        return {
+          async get() {
+            queryCount += 1;
+            if (queryCount === 1) throw Object.assign(new Error('column "is_confirmed" does not exist'), { code: "42703", column: "is_confirmed" });
+            assert.doesNotMatch(sql, /is_confirmed/);
+            return { count: "0" };
+          },
+          async all() { return []; },
+        };
+      },
+    };
+    const result = await listAdminOrders(db, { ...filters, page: 1 });
+    assert.equal(result.total, 0);
+    assert.equal(queryCount, 2);
+  });
+
+  test("propagates unrelated database failures for the API to report instead of fabricating results", async () => {
+    const db = { prepare() { return { async get() { throw Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" }); } }; } };
+    await assert.rejects(listAdminOrders(db, filters), { code: "ECONNREFUSED" });
+  });
+
+  test("API still requires admin auth and returns safe JSON errors", () => {
+    const route = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/orders/route.ts"), "utf8");
+    assert.match(route, /requireAdminAuth\(req\)/);
+    assert.match(route, /ORDERS_UNAVAILABLE/);
+    assert.match(route, /ORDERS_QUERY_FAILED/);
+    assert.doesNotMatch(route, /NextResponse\.json\(\{[^}]*err\s*\}/);
   });
 });
 

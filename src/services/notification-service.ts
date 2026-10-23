@@ -1,4 +1,4 @@
-import { getDb, DbNotificationJob, OrderWithDetails } from "@/lib/db";
+import { getDb, DbNotificationJob, OrderWithDetails, type DbConnection } from "@/lib/db";
 import { randomUUID } from "crypto";
 
 const RESEND_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
@@ -28,9 +28,19 @@ function safeTrackingHref(value: string): string | null {
 
 export interface EmailSendResult {
   sent: boolean;
+  alreadySent?: boolean;
   provider: "smtp" | "resend" | "none";
   messageId?: string;
   error?: string;
+}
+
+export interface ProcessNotificationOptions {
+  manualRetry?: boolean;
+  db?: DbConnection;
+  apiKey?: string;
+  from?: string;
+  fetcher?: typeof fetch;
+  now?: () => Date;
 }
 
 /**
@@ -88,26 +98,27 @@ export async function queueNotificationJob(params: {
  */
 export async function processNotificationJob(
   jobId: string,
-  options: { manualRetry?: boolean } = {}
+  options: ProcessNotificationOptions = {}
 ): Promise<EmailSendResult> {
-  const db = getDb();
+  const db = options.db ?? getDb();
   let job = await db.prepare("SELECT * FROM notification_jobs WHERE id = ?")
     .get<DbNotificationJob>(jobId);
 
   if (!job) {
     return { sent: false, provider: "none", error: "Notification job not found." };
   }
-  const now = new Date().toISOString();
+  const currentTime = (options.now ?? (() => new Date()))();
+  const now = currentTime.toISOString();
 
   if (job.status === "sent") {
-    return { sent: true, provider: "resend", messageId: job.provider_message_id ?? undefined };
+    return { sent: true, alreadySent: true, provider: "resend", messageId: job.provider_message_id ?? undefined };
   }
 
   // created_at is present in the original schema and immutable, so it can
   // conservatively bound the provider idempotency window without a migration.
   const firstProviderAttempt = job.created_at;
   if (job.attempts > 0 && isProviderRetryWindowExpired(firstProviderAttempt)) {
-    if (job.status === "sending" && Date.now() - Date.parse(job.updated_at) < 5 * 60 * 1000) {
+    if (job.status === "sending" && currentTime.getTime() - Date.parse(job.updated_at) < 5 * 60 * 1000) {
       return { sent: false, provider: "resend", error: "Notification is processing; reconcile its provider outcome before retrying." };
     }
     const message = "Provider outcome is unknown and the provider idempotency window has expired; reconcile in Resend before retrying.";
@@ -121,7 +132,7 @@ export async function processNotificationJob(
     return { sent: false, provider: "none", error: message };
   }
 
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const resendApiKey = options.apiKey ?? process.env.RESEND_API_KEY;
 
   if (!resendApiKey) {
     // Graceful unconfigured fallback
@@ -167,6 +178,7 @@ export async function processNotificationJob(
       .get<DbNotificationJob>(jobId);
     return {
       sent: job?.status === "sent",
+      alreadySent: job?.status === "sent",
       provider: job?.provider === "resend" ? "resend" : "none",
       messageId: job?.provider_message_id ?? undefined,
       error: job?.status === "sending" ? "Notification is processing or requires reconciliation." :
@@ -176,7 +188,7 @@ export async function processNotificationJob(
   }
 
   try {
-    const response = await fetch("https://api.resend.com/emails", {
+    const response = await (options.fetcher ?? fetch)("https://api.resend.com/emails", {
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: {
@@ -185,7 +197,7 @@ export async function processNotificationJob(
         "Idempotency-Key": claimed.idempotency_key,
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM || "RightNowLife Orders <orders@rightnowlife.in>",
+        from: options.from ?? (process.env.EMAIL_FROM || "RightNowLife Orders <orders@rightnowlife.in>"),
         to: [claimed.recipient_email],
         subject: claimed.subject,
         html: claimed.body_html,
@@ -204,18 +216,20 @@ export async function processNotificationJob(
       return { sent: true, provider: "resend", messageId: data.id };
     }
 
-    const providerError = await response.text();
+    // Provider bodies can echo submitted addresses or payload details; retain
+    // only the status code in the job record and the admin response.
+    const providerError = `Resend rejected request (HTTP ${response.status}).`;
     const status = claimed.attempts >= claimed.max_attempts ? "failed" : "pending";
     await db.prepare(`UPDATE notification_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending'`)
-      .run(status, `Resend ${response.status}: ${providerError}`, new Date().toISOString(), jobId);
+      .run(status, providerError, currentTime.toISOString(), jobId);
     return { sent: false, provider: "resend", error: providerError };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Email provider request failed.";
-    const status = Date.now() - Date.parse(claimed.created_at) > 23 * 60 * 60 * 1000
+  } catch {
+    const message = "Email provider request failed or timed out; retry or reconcile the outcome.";
+    const status = currentTime.getTime() - Date.parse(claimed.created_at) > 23 * 60 * 60 * 1000
       ? "unknown"
       : claimed.attempts >= claimed.max_attempts ? "failed" : "pending";
     await db.prepare(`UPDATE notification_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending'`)
-      .run(status, `Provider outcome uncertain: ${message}`, new Date().toISOString(), jobId);
+      .run(status, `Provider outcome uncertain: ${message}`, currentTime.toISOString(), jobId);
     return { sent: false, provider: "resend", error: message };
   }
 }

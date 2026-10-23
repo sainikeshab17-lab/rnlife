@@ -1,156 +1,127 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
-  CreateCheckoutOrderSchema, CheckoutIdempotencyKeySchema, calculateTrustedOrderPricing,
-  createCheckoutRequestHash, generateOrderNumber, calculateCodAdvanceAmounts,
+  CheckoutIdempotencyKeySchema, CreateCheckoutOrderSchema,
+  calculateCodAdvanceAmounts, calculateTrustedOrderPricing, createCheckoutRequestHash,
 } from "@/services/checkout-service";
+import { scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
+import { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, getRazorpayClient, findRazorpayOrdersByReceipt } from "@/lib/razorpay";
 import {
-  checkAndReserveInventory, createCodAdvanceAttempt, createPendingOrder,
-  getOrderById, scopeCheckoutIdempotencyKey, withCheckoutIdempotency,
-  claimCodAdvanceOrderCreation, attachCodAdvanceRazorpayOrder, setCodAdvanceCreationFailure,
-  getPaymentAttemptById,
-} from "@/lib/db/orders";
-import { getRazorpayClient, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, findRazorpayOrdersByReceipt } from "@/lib/razorpay";
+  attachCheckoutProviderOrder, claimCheckoutProviderOrder, createCheckoutPaymentAttempt,
+  getCheckoutPaymentAttempt, reconcileCapturedCheckoutAttempt, setCheckoutAttemptCreationFailure,
+} from "@/services/checkout-payment-attempts";
+import { getOrderById } from "@/lib/db/orders";
+import { dispatchAllOrderNotifications, persistPaymentNotificationJobs } from "@/services/notification-service";
 import { classifyRazorpayOrderCreateFailure, classifyRazorpayOrderPayments, validateRazorpayOrderLookup, validateRazorpayOrderResponse } from "@/services/razorpay-order-recovery";
-import type { DbOrder } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
-
 const RequestSchema = CreateCheckoutOrderSchema.extend({ idempotencyKey: CheckoutIdempotencyKeySchema });
-class InventoryConflictError extends Error {}
 
-async function prepareAdvanceProviderOrder(order: DbOrder, attemptId: string): Promise<
-  | { status: "ready"; razorpayOrderId: string }
-  | { status: "processing" | "reconciliation_required" | "retryable" }
-> {
-  const attempt = await getPaymentAttemptById(attemptId);
-  if (!attempt || attempt.order_id !== order.id || attempt.purpose !== "cod_advance" || attempt.amount_paisa !== 20000) {
-    return { status: "reconciliation_required" as const };
+async function recoverCapturedAdvance(attempt: NonNullable<Awaited<ReturnType<typeof getCheckoutPaymentAttempt>>>) {
+  const converted = await reconcileCapturedCheckoutAttempt(attempt);
+  if (!converted?.success || !converted.orderId) {
+    return NextResponse.json({ success: false, error: "The advance was captured but needs reconciliation. Do not pay again." }, { status: 409 });
   }
-  if (attempt.razorpay_order_id && attempt.creation_state === "ready") {
-    try {
-      const outcome = classifyRazorpayOrderPayments(await getRazorpayClient().orders.fetchPayments(attempt.razorpay_order_id), {
-        orderId: attempt.razorpay_order_id, amount: 20000,
-      });
-      if (outcome === "none" || outcome === "failed") return { status: "ready" as const, razorpayOrderId: attempt.razorpay_order_id };
-      return { status: outcome === "authorized" ? "processing" as const : "reconciliation_required" as const };
-    } catch {
-      return { status: "reconciliation_required" as const };
-    }
-  }
-
-  if (attempt.creation_state === "unknown" && !attempt.razorpay_order_id) {
-    try {
-      const lookup = validateRazorpayOrderLookup(await findRazorpayOrdersByReceipt(attempt.receipt), {
-        receipt: attempt.receipt, amount: 20000, orderId: order.id,
-      });
-      if (lookup.status === "found" && await attachCodAdvanceRazorpayOrder(attempt.id, lookup.razorpayOrderId)) {
-        return prepareAdvanceProviderOrder(order, attempt.id);
-      }
-    } catch { /* ambiguity remains durable; never create another provider order */ }
-    return { status: "reconciliation_required" as const };
-  }
-
-  const claim = await claimCodAdvanceOrderCreation(attempt.id);
-  if (claim === "ready") return prepareAdvanceProviderOrder(order, attempt.id);
-  if (claim !== "claimed") return { status: claim === "wait" ? "processing" as const : "reconciliation_required" as const };
-
-  try {
-    const providerOrder = await getRazorpayClient().orders.create({
-      amount: 20000, currency: "INR", receipt: attempt.receipt,
-      notes: { orderId: order.id, orderNumber: order.order_number, paymentAttemptId: attempt.id, paymentPurpose: "cod_advance" },
-    });
-    const checked = validateRazorpayOrderResponse(providerOrder, { receipt: attempt.receipt, amount: 20000, orderId: order.id });
-    if (!checked.valid || !await attachCodAdvanceRazorpayOrder(attempt.id, checked.razorpayOrderId)) {
-      await setCodAdvanceCreationFailure(attempt.id, "unknown", "provider_order_response_mismatch");
-      return { status: "reconciliation_required" as const };
-    }
-    return { status: "ready" as const, razorpayOrderId: checked.razorpayOrderId };
-  } catch (error) {
-    const state = classifyRazorpayOrderCreateFailure(error);
-    await setCodAdvanceCreationFailure(attempt.id, state === "retryable" ? "retryable" : "unknown", state);
-    if (state === "unknown") {
-      // Receipt reconciliation is read-only and must find exactly one matching provider order.
-      try {
-        const lookup = validateRazorpayOrderLookup(await findRazorpayOrdersByReceipt(attempt.receipt), {
-          receipt: attempt.receipt, amount: 20000, orderId: order.id,
-        });
-        if (lookup.status === "found" && await attachCodAdvanceRazorpayOrder(attempt.id, lookup.razorpayOrderId)) {
-          return prepareAdvanceProviderOrder(order, attempt.id);
-        }
-      } catch { /* keep the attempt ambiguous and require safe reconciliation */ }
-    }
-    return { status: state === "retryable" ? "retryable" as const : "reconciliation_required" as const };
-  }
+  await persistPaymentNotificationJobs(converted.orderId, async () => {
+    const order = await getOrderById(converted.orderId!);
+    if (!order) throw new Error("Recovered COD Advance order could not be loaded for notifications.");
+    return dispatchAllOrderNotifications(order);
+  });
+  return NextResponse.json({ success: false, alreadyCompleted: true,
+    error: `The ₹200 advance was captured and order ${converted.orderNumber} is confirmed. Check My Orders.` }, { status: 409 });
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const { data, error } = await supabase.auth.getUser();
-    const user = data.user;
-    if (error || !user?.email) return NextResponse.json({ success: false, error: "Please sign in before choosing COD Advance." }, { status: 401 });
-
-    const raw: unknown = await req.json();
-    const parsed = RequestSchema.safeParse(raw);
+    if (error || !data.user?.email || !data.user.id) return NextResponse.json({ success: false, error: "Please sign in before choosing COD Advance." }, { status: 401 });
+    const parsed = RequestSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ success: false, error: "Invalid checkout details.", details: parsed.error.flatten().fieldErrors }, { status: 400 });
     const { customerName, customerPhone, address, items, promoCode, idempotencyKey: requestKey } = parsed.data;
-    const customerEmail = user.email;
-    const result = calculateTrustedOrderPricing(items, promoCode);
-    if (!result.success) return NextResponse.json({ success: false, error: result.error }, { status: 400 });
-    const pricing = result.pricing;
-    const advanceAmounts = calculateCodAdvanceAmounts(pricing.total);
-    if (!advanceAmounts.success) return NextResponse.json({ success: false, error: advanceAmounts.error }, { status: 400 });
+    const priced = calculateTrustedOrderPricing(items, promoCode);
+    if (!priced.success) return NextResponse.json({ success: false, error: priced.error }, { status: 400 });
+    const pricing = priced.pricing;
+    const amounts = calculateCodAdvanceAmounts(pricing.total);
+    if (!amounts.success) return NextResponse.json({ success: false, error: amounts.error }, { status: 400 });
     if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) return NextResponse.json({ success: false, error: "Online payments are temporarily unavailable." }, { status: 503 });
 
-    const stockItems = pricing.items.filter((item) => item.fulfillmentType === "stock");
-    const idempotencyKey = scopeCheckoutIdempotencyKey(user.id, requestKey);
     const paymentMethod = "COD Advance";
-    const requestHash = createCheckoutRequestHash({
-      userId: user.id, customerEmail, paymentMethod, customerName, customerPhone, address,
-      items: pricing.items, subtotal: pricing.subtotal, shipping: pricing.shipping,
-      discount: pricing.discount, total: pricing.total,
-    });
-    const checkout = await withCheckoutIdempotency({
-      idempotencyKey, requestHash,
-      create: async (db) => {
-        const stock = await checkAndReserveInventory(stockItems.map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity })), db);
-        if (!stock.ok) throw new InventoryConflictError(stock.error || "Insufficient stock.");
-        const created = await createPendingOrder({
-          orderNumber: generateOrderNumber(), customerName, customerEmail, customerPhone,
-          subtotal: pricing.subtotal, shipping: pricing.shipping, discount: pricing.discount,
-          total: pricing.total, paymentMethod, userId: user.id,
-          items: pricing.items, address,
-        }, db);
-        await db.prepare("UPDATE orders SET payment_status = 'pending_advance' WHERE id = ?").run(created.order.id);
-        await createCodAdvanceAttempt(created.order.id, idempotencyKey, db);
-        return created;
-      },
-    });
-    if (checkout.status === "conflict") return NextResponse.json({ success: false, error: "This checkout key was used with different details. Start checkout again." }, { status: 409 });
-    const order = await getOrderById(checkout.order.id);
-    if (!order) return NextResponse.json({ success: false, error: "Created order could not be reloaded for payment setup." }, { status: 503 });
-    if (checkout.status === "replayed" && order.payment_status !== "pending_advance") {
-      return NextResponse.json({ success: false, error: "This order is no longer waiting for an advance. Check your orders." }, { status: 409 });
+    const customerEmail = data.user.email;
+    const snapshot = { customerName, customerEmail, customerPhone, subtotal: pricing.subtotal, shipping: pricing.shipping,
+      discount: pricing.discount, total: pricing.total, paymentMethod, userId: data.user.id, items: pricing.items, address };
+    const requestHash = createCheckoutRequestHash({ userId: data.user.id, customerEmail, paymentMethod,
+      customerName, customerPhone, address, items: pricing.items, subtotal: pricing.subtotal,
+      shipping: pricing.shipping, discount: pricing.discount, total: pricing.total });
+    const idempotencyKey = scopeCheckoutIdempotencyKey(data.user.id, requestKey);
+    const stored = await createCheckoutPaymentAttempt({ idempotencyKey, requestHash, customerEmail,
+      userId: data.user.id, paymentMethod, purpose: "cod_advance", expectedAmountPaisa: 20_000, snapshot });
+    if (stored.status === "conflict") return NextResponse.json({ success: false, error: "This checkout key was used with different details. Start checkout again." }, { status: 409 });
+    const attempt = stored.attempt!;
+    if (attempt.attempt_status === "converted") return NextResponse.json({ success: false, error: "This advance is already verified. Check your orders." }, { status: 409 });
+
+    let providerOrderId = attempt.provider_order_id;
+    if (providerOrderId && attempt.creation_state === "ready") {
+      const outcome = classifyRazorpayOrderPayments(await getRazorpayClient().orders.fetchPayments(providerOrderId), {
+        orderId: providerOrderId, amount: attempt.expected_amount_paisa,
+      });
+      if (outcome === "captured") return recoverCapturedAdvance(attempt);
+      if (outcome === "authorized") return NextResponse.json({ success: false, error: "The advance payment is authorized and awaiting capture. Check again shortly." }, { status: 409 });
+      if (!["none", "failed"].includes(outcome)) return NextResponse.json({ success: false, error: "Advance payment status needs reconciliation. Do not pay again yet." }, { status: 409 });
     }
-    const attemptId = order.current_payment_attempt_id;
-    if (!attemptId) return NextResponse.json({ success: false, error: "Payment attempt is missing and requires support reconciliation." }, { status: 503 });
-    const provider = await prepareAdvanceProviderOrder(order, attemptId);
-    if (provider.status !== "ready") {
-      const status = provider.status === "processing" ? 202 : provider.status === "retryable" ? 502 : 503;
-      return NextResponse.json({ success: false, status: provider.status, orderId: order.id, orderNumber: order.order_number,
-        error: provider.status === "processing" ? "The ₹200 payment is still being checked. Retry shortly; do not start a new checkout."
-          : provider.status === "retryable" ? "Razorpay declined order setup. Correct the issue and retry this same checkout."
-            : "Payment setup needs reconciliation. Your order and stock reservation are saved; do not start another checkout." }, { status });
+    if (!providerOrderId || attempt.creation_state !== "ready") {
+      const claim = await claimCheckoutProviderOrder(attempt.id);
+      if (claim === "wait") return NextResponse.json({ success: false, error: "The advance payment setup is still processing. Retry shortly." }, { status: 202 });
+      if (claim === "reconcile") {
+        const current = await getCheckoutPaymentAttempt(attempt.id);
+        providerOrderId = current?.provider_order_id ?? null;
+        if (!providerOrderId) {
+          try {
+            const found = validateRazorpayOrderLookup(await findRazorpayOrdersByReceipt(attempt.receipt), {
+              receipt: attempt.receipt, amount: attempt.expected_amount_paisa, orderId: attempt.id,
+            });
+            if (found.status === "found" && await attachCheckoutProviderOrder(attempt.id, found.razorpayOrderId)) providerOrderId = found.razorpayOrderId;
+          } catch { /* uncertain provider state remains attached to this attempt for safe retry */ }
+          if (!providerOrderId) return NextResponse.json({ success: false, error: "Advance setup needs reconciliation. Do not start another checkout." }, { status: 503 });
+        }
+      } else if (claim === "claimed") {
+        try {
+          const expected = { receipt: attempt.receipt, amount: attempt.expected_amount_paisa, orderId: attempt.id };
+          const providerOrder = await getRazorpayClient().orders.create({ amount: expected.amount, currency: attempt.currency,
+            receipt: expected.receipt, notes: { orderId: attempt.id, checkoutAttemptId: attempt.id, paymentPurpose: "cod_advance", customerEmail } });
+          const checked = validateRazorpayOrderResponse(providerOrder, expected);
+          if (!checked.valid || !await attachCheckoutProviderOrder(attempt.id, checked.razorpayOrderId)) {
+            await setCheckoutAttemptCreationFailure(attempt.id, "unknown");
+            return NextResponse.json({ success: false, error: "Advance order details could not be safely matched." }, { status: 503 });
+          }
+          providerOrderId = checked.razorpayOrderId;
+        } catch (providerError) {
+          const failure = classifyRazorpayOrderCreateFailure(providerError);
+          await setCheckoutAttemptCreationFailure(attempt.id, failure === "retryable" ? "retryable" : "unknown");
+          if (failure === "unknown") {
+            try {
+              const found = validateRazorpayOrderLookup(await findRazorpayOrdersByReceipt(attempt.receipt), { receipt: attempt.receipt, amount: 20_000, orderId: attempt.id });
+              if (found.status === "found" && await attachCheckoutProviderOrder(attempt.id, found.razorpayOrderId)) providerOrderId = found.razorpayOrderId;
+            } catch { /* keep ambiguous payment setup for reconciliation */ }
+          }
+          if (!providerOrderId) return NextResponse.json({ success: false, error: "Unable to safely initialize COD Advance. Retry the same checkout shortly." }, { status: failure === "retryable" ? 502 : 503 });
+        }
+      }
     }
-    return NextResponse.json({ success: true, orderId: order.id, orderNumber: order.order_number,
-      paymentAttemptId: attemptId, razorpayOrderId: provider.razorpayOrderId, amount: 20000, currency: "INR", keyId: RAZORPAY_KEY_ID,
-      total: order.total, balanceDue: calculateCodAdvanceAmounts(order.total).success
-        ? order.total - advanceAmounts.advance : 0,
-      pricing: { subtotal: order.subtotal, shipping: order.shipping, discount: order.discount, total: order.total },
-    }, { status: checkout.status === "created" ? 201 : 200 });
+    if (providerOrderId) {
+      const outcome = classifyRazorpayOrderPayments(await getRazorpayClient().orders.fetchPayments(providerOrderId), {
+        orderId: providerOrderId, amount: attempt.expected_amount_paisa,
+      });
+      if (outcome === "captured") return recoverCapturedAdvance(attempt);
+      if (outcome === "authorized") return NextResponse.json({ success: false, error: "The advance payment is authorized and awaiting capture. Check again shortly." }, { status: 409 });
+      if (!["none", "failed"].includes(outcome)) return NextResponse.json({ success: false, error: "Advance payment status needs reconciliation. Do not pay again yet." }, { status: 409 });
+    }
+    return NextResponse.json({ success: true, orderId: attempt.id, checkoutAttemptId: attempt.id,
+      paymentAttemptId: attempt.id, razorpayOrderId: providerOrderId, amount: 20_000, currency: "INR",
+      keyId: RAZORPAY_KEY_ID, total: pricing.total, balanceDue: amounts.balanceDue,
+      pricing: { subtotal: pricing.subtotal, shipping: pricing.shipping, discount: pricing.discount, total: pricing.total },
+      replayed: stored.status === "replayed" }, { status: stored.status === "created" ? 201 : 200 });
   } catch (error) {
-    if (error instanceof InventoryConflictError) return NextResponse.json({ success: false, error: error.message }, { status: 409 });
     console.error("[COD Advance] Checkout initialization failed.", error);
     return NextResponse.json({ success: false, error: "Unable to initialize COD Advance. Please retry the same checkout." }, { status: 500 });
   }

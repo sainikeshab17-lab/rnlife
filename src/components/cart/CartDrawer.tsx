@@ -213,7 +213,7 @@ export function CartDrawer() {
                     </div>
 
                     <p className="text-xs font-bold text-neutral-900">
-                      {formatINR((item.customization ? 1999 : 999) * item.quantity)}
+                      {formatINR((item.customization ? 1299 : 999) * item.quantity)}
                     </p>
                   </div>
                 </div>

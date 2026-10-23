@@ -4,6 +4,7 @@ import { getOrderById, getPaymentAttemptById, logPaymentAudit, markCodAdvanceAsV
 import { getRazorpayClient, isPaymentCaptured, isVerifiedPaymentDetails, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, verifyPaymentSignature } from "@/lib/razorpay";
 import { dispatchAllOrderNotifications, persistPaymentNotificationJobs } from "@/services/notification-service";
 import { createClient } from "@/lib/supabase/server";
+import { convertCapturedCheckoutAttempt, getCheckoutPaymentAttempt, updateCheckoutAttemptPaymentState } from "@/services/checkout-payment-attempts";
 
 const VerifySchema = z.object({
   orderId: z.string().min(1), paymentAttemptId: z.string().min(1),
@@ -18,6 +19,52 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData.user?.id) return NextResponse.json({ error: "Please sign in to verify this COD Advance payment." }, { status: 401 });
+    const checkoutAttempt = await getCheckoutPaymentAttempt(orderId);
+    if (checkoutAttempt) {
+      if (checkoutAttempt.user_id !== authData.user.id || checkoutAttempt.id !== paymentAttemptId ||
+        checkoutAttempt.purpose !== "cod_advance" || checkoutAttempt.expected_amount_paisa !== 20_000 ||
+        checkoutAttempt.currency !== "INR" || checkoutAttempt.provider_order_id !== razorpayOrderId) {
+        return NextResponse.json({ error: "Payment attempt does not match this COD Advance checkout." }, { status: 400 });
+      }
+      if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) return NextResponse.json({ error: "Payment verification is temporarily unavailable." }, { status: 503 });
+      if (!verifyPaymentSignature({ razorpayOrderId, razorpayPaymentId, razorpaySignature })) {
+        await logPaymentAudit(null, "cod_advance_checkout_invalid_signature", { attemptId: checkoutAttempt.id, razorpayOrderId, razorpayPaymentId });
+        return NextResponse.json({ error: "Payment signature could not be verified." }, { status: 400 });
+      }
+      try {
+        const payment = await getRazorpayClient().payments.fetch(razorpayPaymentId);
+        if (!isVerifiedPaymentDetails(payment, razorpayOrderId, checkoutAttempt.expected_amount_paisa, razorpayPaymentId) || payment.currency !== checkoutAttempt.currency) {
+          await logPaymentAudit(null, "cod_advance_checkout_payment_mismatch", {
+            attemptId: checkoutAttempt.id, receivedAmount: payment.amount, receivedCurrency: payment.currency,
+          });
+          return NextResponse.json({ error: "Payment details do not match the ₹200 COD Advance." }, { status: 400 });
+        }
+        if (!isPaymentCaptured(payment.status) || payment.captured !== true) {
+          const providerStatus = String(payment.status);
+          const state = providerStatus === "failed" ? "failed" : providerStatus === "cancelled" ? "cancelled" : providerStatus === "authorized" ? "authorized" : "reconciliation_required";
+          await updateCheckoutAttemptPaymentState(checkoutAttempt.id, payment.id, state);
+          return NextResponse.json({ error: "The advance payment is not captured. No order was created; do not pay again until status is clear." }, { status: 409 });
+        }
+        await updateCheckoutAttemptPaymentState(checkoutAttempt.id, payment.id, "captured", razorpaySignature);
+        const converted = await convertCapturedCheckoutAttempt({ attemptId: checkoutAttempt.id,
+          providerOrderId: razorpayOrderId, providerPaymentId: payment.id, signature: razorpaySignature });
+        if (!converted.success || !converted.orderId) {
+          await logPaymentAudit(null, "cod_advance_checkout_capture_requires_reconciliation", { attemptId: checkoutAttempt.id, paymentId: payment.id });
+          return NextResponse.json({ error: "The ₹200 was captured but the order needs reconciliation. Contact support; do not pay again." }, { status: 409 });
+        }
+        await persistPaymentNotificationJobs(converted.orderId, async () => {
+          const refreshed = await getOrderById(converted.orderId!);
+          if (!refreshed) throw new Error("Converted COD Advance order could not be reloaded.");
+          return dispatchAllOrderNotifications(refreshed);
+        });
+        const snapshot = checkoutAttempt.checkout_snapshot as { total: number };
+        return NextResponse.json({ success: true, orderId: converted.orderId, orderNumber: converted.orderNumber,
+          advancePaid: 200, balanceDue: snapshot.total - 200, total: snapshot.total, alreadyVerified: converted.alreadyConverted });
+      } catch (providerError) {
+        console.error("[COD Advance] Unable to verify provider payment.", providerError);
+        return NextResponse.json({ error: "Unable to verify COD Advance payment." }, { status: 503 });
+      }
+    }
     const order = await getOrderById(orderId);
     const attempt = await getPaymentAttemptById(paymentAttemptId);
     if (!order || order.user_id !== authData.user.id || !attempt || attempt.order_id !== order.id || attempt.purpose !== "cod_advance" ||

@@ -149,7 +149,7 @@ export default function CartPage() {
 
                       <div className="flex items-center gap-4">
                         <span className="text-sm font-black font-editorial">
-                          {formatINR((item.customization ? 1999 : 999) * item.quantity)}
+                          {formatINR((item.customization ? 1299 : 999) * item.quantity)}
                         </span>
                         <button
                           onClick={() => removeFromBag(item.id)}

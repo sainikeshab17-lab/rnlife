@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb } from "@/lib/db/index";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { getInventoryProductIdsMissingFromCatalog, getInventoryProductLabel } from "@/services/inventory-product-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -35,21 +35,21 @@ export async function GET(req: NextRequest) {
         SUM(CASE WHEN order_status = 'payment_failed' THEN 1 ELSE 0 END) as payment_failed,
         SUM(CASE WHEN order_status = 'refund_pending' THEN 1 ELSE 0 END) as refund_pending,
         SUM(CASE WHEN order_status = 'refunded' THEN 1 ELSE 0 END) as refunded
-      FROM orders
+      FROM orders WHERE is_confirmed = TRUE AND (payment_status NOT IN ('pending_payment', 'pending_advance') OR payment_method IN ('COD', 'Cash on Delivery'))
     `).get<Record<string, string | number>>();
 
     // Gross sales (all collected payments)
     const grossRow = await db.prepare(`
       SELECT COALESCE(SUM(total), 0) as gross
       FROM orders
-      WHERE payment_status IN ('paid', 'refund_pending')
+      WHERE is_confirmed = TRUE AND payment_status IN ('paid', 'refund_pending')
     `).get<{ gross: string | number }>();
 
     // Refunded amount
     const refundRow = await db.prepare(`
       SELECT COALESCE(SUM(total), 0) as refunded
       FROM orders
-      WHERE order_status = 'refunded'
+      WHERE is_confirmed = TRUE AND order_status = 'refunded'
     `).get<{ refunded: string | number }>();
 
     const grossSales = Number(grossRow?.gross ?? 0);
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
         COUNT(*) as order_count,
         COALESCE(SUM(total), 0) as revenue
       FROM orders
-      WHERE payment_status = 'paid'
+      WHERE is_confirmed = TRUE AND payment_status = 'paid'
       AND created_at >= NOW() - INTERVAL '30 days'
       GROUP BY created_at::date
       ORDER BY date ASC
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
     // Recent 10 orders
     const recentOrders = await db.prepare(`
       SELECT id, order_number, customer_name, customer_email, total, order_status, payment_status, created_at
-      FROM orders
+      FROM orders WHERE is_confirmed = TRUE AND (payment_status NOT IN ('pending_payment', 'pending_advance') OR payment_method IN ('COD', 'Cash on Delivery'))
       ORDER BY created_at DESC
       LIMIT 10
     `).all<{
@@ -96,16 +96,16 @@ export async function GET(req: NextRequest) {
     `).all<{ product_id: string; size: string; stock: number; reserved: number; available: number }>();
 
     // Enrich inventory warnings with product names
-    const supabase = createAdminSupabaseClient();
-    const { data: products, error: productsError } = await supabase
-      .from("products").select("id,name");
-    if (productsError) throw new Error(`Unable to load product labels: ${productsError.message}`);
-    const productNames: Record<string, string> = {};
-    for (const p of products ?? []) productNames[p.id] = p.name;
+    const missingProductIds = getInventoryProductIdsMissingFromCatalog(inventoryWarnings.map((warning) => warning.product_id));
+    if (missingProductIds.length) {
+      console.warn("[admin/dashboard] Inventory rows reference products missing from the storefront catalog.", {
+        productIds: missingProductIds,
+      });
+    }
 
     const enrichedWarnings = inventoryWarnings.map((w) => ({
       ...w,
-      product_name: productNames[w.product_id] ?? `Unknown product (${w.product_id})`,
+      product_name: getInventoryProductLabel(w.product_id)?.product_name ?? `Product not found (${w.product_id})`,
     }));
 
     return NextResponse.json({

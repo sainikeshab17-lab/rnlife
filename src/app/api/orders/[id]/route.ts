@@ -21,6 +21,9 @@ export async function GET(
     if (!order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
+    if (!order.is_confirmed || (["pending_payment", "pending_advance"].includes(order.payment_status) && !["COD", "Cash on Delivery"].includes(order.payment_method))) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
 
     const supabase = await createClient();
     const { data } = await supabase.auth.getUser();

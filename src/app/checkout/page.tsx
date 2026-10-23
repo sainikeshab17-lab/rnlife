@@ -57,7 +57,7 @@ interface ConfirmedOrderDetails {
 
   id: string;
 
-  orderNumber: string;
+  orderNumber?: string;
 
   guestToken: string;
 
@@ -502,7 +502,7 @@ export default function CheckoutPage() {
       }
       const rzp = new window.Razorpay({
         key: data.keyId, amount: data.amount, currency: data.currency, name: "RIGHTNOWLIFE",
-        description: `COD Advance for Order #${data.orderNumber}`,
+        description: "₹200 COD Advance",
         order_id: data.razorpayOrderId,
         theme: { color: "#FFB900" },
         modal: { ondismiss: () => { setIsProcessing(false); setPaymentError("Payment window closed. The order remains unconfirmed; retry the same checkout after checking payment status."); } },
@@ -522,7 +522,7 @@ export default function CheckoutPage() {
             }
             clearBag();
             clearCheckoutIdempotencyKey();
-            setConfirmedOrder({ id: data.orderId, orderNumber: data.orderNumber, guestToken: "",
+            setConfirmedOrder({ id: result.orderId, orderNumber: result.orderNumber, guestToken: "",
               total: result.total, subtotal: data.pricing.subtotal, shipping: data.pricing.shipping, discount: data.pricing.discount, items: [...items], address: { ...addressForm },
               paymentId: response.razorpay_payment_id, paymentMethod: "cod_advance",
               advancePaid: result.advancePaid, balanceDue: result.balanceDue });
@@ -608,9 +608,9 @@ export default function CheckoutPage() {
 
         setConfirmedOrder({
 
-          id: orderId,
+          id: data.orderId || orderId,
 
-          orderNumber: serverOrder.orderNumber,
+          orderNumber: data.orderNumber || serverOrder.orderNumber || "",
 
           guestToken: data.guestToken || serverOrder.guestToken,
 
@@ -882,7 +882,7 @@ export default function CheckoutPage() {
 
                           <p className="text-[11px] text-[#858585]">
 
-                            Size: {item.size} • Qty: {item.quantity} • {formatINR(item.customization ? 1999 : 999)} each
+                            Size: {item.size} • Qty: {item.quantity} • {formatINR(item.customization ? 1299 : 999)} each
 
                           </p>
 
@@ -892,7 +892,7 @@ export default function CheckoutPage() {
 
                       <span className="font-bold text-[#111111] shrink-0">
 
-                        {formatINR((item.customization ? 1999 : 999) * item.quantity)}
+                        {formatINR((item.customization ? 1299 : 999) * item.quantity)}
 
                       </span>
 
@@ -1589,14 +1589,14 @@ export default function CheckoutPage() {
 
                             </p>
 
-                            <span className="text-[10px] font-mono text-[#0876A8]">{item.customization ? "Custom quote price: ₹1,999" : "Fixed Price: ₹999 per unit"}</span>
+                            <span className="text-[10px] font-mono text-[#0876A8]">{item.customization ? "Custom quote price: ₹1,299" : "Fixed Price: ₹999 per unit"}</span>
                             {item.customization && <span className="block text-[10px] text-neutral-600">“{item.customization.quote}” · {item.customization.font} · {item.customization.printColor} · {item.customization.placement}</span>}
 
                           </div>
 
                           <div className="text-right shrink-0">
 
-                            <p className="text-xs font-black text-[#111111]">{formatINR((item.customization ? 1999 : 999) * item.quantity)}</p>
+                            <p className="text-xs font-black text-[#111111]">{formatINR((item.customization ? 1299 : 999) * item.quantity)}</p>
 
                           </div>
 
@@ -1822,7 +1822,7 @@ export default function CheckoutPage() {
 
                         <p className="text-[11px] text-[#858585]">
 
-                          Size: {item.size} • Qty: {item.quantity} ({formatINR(item.customization ? 1999 : 999)} each)
+                          Size: {item.size} • Qty: {item.quantity} ({formatINR(item.customization ? 1299 : 999)} each)
 
                         </p>
 
@@ -1830,7 +1830,7 @@ export default function CheckoutPage() {
 
                       <span className="font-semibold text-[#111111] shrink-0">
 
-                        {formatINR((item.customization ? 1999 : 999) * item.quantity)}
+                        {formatINR((item.customization ? 1299 : 999) * item.quantity)}
 
                       </span>
 

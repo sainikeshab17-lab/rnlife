@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useAdminSession } from "@/components/layout/AdminSessionProvider";
 import {
   ShieldAlert,
   LayoutDashboard,
@@ -18,17 +19,9 @@ import {
   ExternalLink,
   LogOut,
   FileText,
-  Loader2,
   RotateCcw,
   Star,
 } from "lucide-react";
-
-interface AdminUser {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-}
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -45,33 +38,8 @@ export function AdminLayout({
 }: AdminLayoutProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const { admin: adminUser } = useAdminSession();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-
-  useEffect(() => {
-    let isMounted = true;
-    async function verifyAuth() {
-      try {
-        const res = await fetch("/api/admin/me");
-        if (!res.ok) {
-          router.replace("/admin/login");
-          return;
-        }
-        const data = await res.json();
-        if (isMounted) {
-          setAdminUser(data.admin);
-          setCheckingAuth(false);
-        }
-      } catch {
-        router.replace("/admin/login");
-      }
-    }
-    verifyAuth();
-    return () => {
-      isMounted = false;
-    };
-  }, [router]);
 
   const handleLogout = async () => {
     try {
@@ -241,16 +209,7 @@ export function AdminLayout({
             {actions && <div className="flex items-center gap-2">{actions}</div>}
           </div>
 
-          {checkingAuth ? (
-            <div className="bg-white border border-neutral-200 p-12 text-center shadow-sm">
-              <Loader2 className="w-8 h-8 animate-spin text-neutral-400 mx-auto mb-3" />
-              <p className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-                Verifying Administrator Session...
-              </p>
-            </div>
-          ) : (
-            children
-          )}
+          {children}
         </main>
       </div>
     </div>

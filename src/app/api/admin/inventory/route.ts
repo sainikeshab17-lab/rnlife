@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb, DbInventoryRow } from "@/lib/db/index";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { getInventoryProductIdsMissingFromCatalog, getInventoryProductLabel } from "@/services/inventory-product-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -29,22 +29,21 @@ export async function GET(req: NextRequest) {
       total_available: number;
     }> = {};
 
-    const supabase = createAdminSupabaseClient();
-    const { data: products, error: productsError } = await supabase
-      .from("products").select("id,name,sku,images");
-    if (productsError) throw new Error(`Unable to load product labels: ${productsError.message}`);
-    const productInfo: Record<string, { name: string; sku: string; image: string }> = {};
-    for (const p of products ?? []) {
-      productInfo[p.id] = { name: p.name, sku: p.sku ?? "", image: Array.isArray(p.images) ? (p.images[0] ?? "") : "" };
+    const missingProductIds = getInventoryProductIdsMissingFromCatalog(rows.map((row) => row.product_id));
+    if (missingProductIds.length) {
+      console.warn("[admin/inventory] Inventory rows reference products missing from the storefront catalog.", {
+        productIds: missingProductIds,
+      });
     }
 
     for (const row of rows) {
       if (!productMap[row.product_id]) {
+        const product = getInventoryProductLabel(row.product_id);
         productMap[row.product_id] = {
           product_id: row.product_id,
-          product_name: productInfo[row.product_id]?.name ?? `Unknown product (${row.product_id})`,
-          sku: productInfo[row.product_id]?.sku ?? "",
-          image: productInfo[row.product_id]?.image ?? "",
+          product_name: product?.product_name ?? `Product not found (${row.product_id})`,
+          sku: product?.sku ?? "",
+          image: product?.image ?? "",
           sizes: [],
           total_stock: 0,
           total_reserved: 0,

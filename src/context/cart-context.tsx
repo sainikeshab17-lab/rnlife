@@ -53,7 +53,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         if (Array.isArray(parsed) && parsed.length > 0) {
           setItems(parsed.map((item: CartItem) => ({
             ...item,
-            price: item.customization?.type === "quote_tshirt" ? 1999 : 999,
+            price: item.customization?.type === "quote_tshirt" ? 1299 : 999,
           })));
         }
       }
@@ -91,7 +91,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const sku = product.customization
         ? `${product.productId}-${product.customization.font}-${product.size}`
         : `${product.productId}-${product.color.toUpperCase().replace(/\s+/g, "")}-${product.size}`;
-      const authoritativePrice = product.customization ? 1999 : 999;
+      const authoritativePrice = product.customization ? 1299 : 999;
       const designKey = JSON.stringify(product.customization ?? null);
 
       setItems((prev) => {
@@ -140,7 +140,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setItems((prev) => prev.filter((i) => i.id !== itemId));
     } else {
       setItems((prev) =>
-        prev.map((i) => (i.id === itemId ? { ...i, quantity: Math.min(qty, 10), price: i.customization ? 1999 : 999 } : i))
+        prev.map((i) => (i.id === itemId ? { ...i, quantity: Math.min(qty, 10), price: i.customization ? 1299 : 999 } : i))
       );
     }
   }, []);
@@ -174,7 +174,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
-  const subtotal = items.reduce((sum, item) => sum + (item.customization ? 1999 : 999) * item.quantity, 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.customization ? 1299 : 999) * item.quantity, 0);
 
   // Section 7 pricing rules:
   // Discount: ₹0 (Promo codes removed)

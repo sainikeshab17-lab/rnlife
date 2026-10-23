@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
-import { getDb, DbOrder, DbOrderItem, DbOrderAddress, DbOrderStatusHistory } from "@/lib/db/index";
-import { isValidAdminTransition, requiresRefund } from "@/lib/order-status-machine";
-import { writeAuditLog } from "@/lib/db/audit";
-import { randomBytes } from "crypto";
-import { releaseInventoryReservation } from "@/lib/db/orders";
+import { getDb } from "@/lib/db/index";
+import { listAdminOrders, isValidOrderListDate } from "@/services/admin-orders-list";
 
 export const dynamic = "force-dynamic";
 
@@ -13,42 +10,48 @@ export const dynamic = "force-dynamic";
  * Query params: q, status, payment_status, from_date, to_date, page, limit
  */
 export async function GET(req: NextRequest) {
-  const admin = await requireAdminAuth(req);
-  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+  let stage: "authentication" | "query" = "authentication";
   try {
+    const admin = await requireAdminAuth(req);
+    if (!admin) return NextResponse.json({ error: "Your admin session is invalid or has expired. Sign in again.", code: "UNAUTHORIZED" }, { status: 401 });
+
     const url = new URL(req.url);
-    const q = url.searchParams.get("q") ?? "";
+    const query = url.searchParams.get("q") ?? "";
     const status = url.searchParams.get("status") ?? "";
     const paymentStatus = url.searchParams.get("payment_status") ?? "";
     const fromDate = url.searchParams.get("from_date") ?? "";
     const toDate = url.searchParams.get("to_date") ?? "";
-    const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10));
-    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "25", 10)));
-    const offset = (page - 1) * limit;
-
-    const db = getDb();
-    const conditions: string[] = [];
-    const args: (string | number)[] = [];
-
-    if (q) {
-      conditions.push("(order_number ILIKE ? OR customer_name ILIKE ? OR customer_email ILIKE ? OR tracking_number ILIKE ?)");
-      const like = `%${q}%`;
-      args.push(like, like, like, like);
+    if (!isValidOrderListDate(fromDate) || !isValidOrderListDate(toDate)) {
+      return NextResponse.json({ error: "Use valid calendar dates for the order date filters.", code: "INVALID_DATE_FILTER" }, { status: 400 });
     }
-    if (status) { conditions.push("order_status = ?"); args.push(status); }
-    if (paymentStatus) { conditions.push("payment_status = ?"); args.push(paymentStatus); }
-    if (fromDate) { conditions.push("created_at::date >= ?::date"); args.push(fromDate); }
-    if (toDate) { conditions.push("created_at::date <= ?::date"); args.push(toDate); }
+    const parseBoundedInt = (value: string | null, fallback: number, max: number) => {
+      const parsed = Number.parseInt(value ?? "", 10);
+      return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+    };
+    const page = parseBoundedInt(url.searchParams.get("page"), 1, 1_000_000);
+    const limit = parseBoundedInt(url.searchParams.get("limit"), 25, 100);
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const totalRow = await db.prepare(`SELECT COUNT(*) as count FROM orders ${where}`).get<{ count: string | number }>(...args);
-    const total = Number(totalRow?.count ?? 0);
-    const orders = await db.prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all<DbOrder>(...args, limit, offset);
-
-    return NextResponse.json({ orders, total, page, limit, pages: Math.ceil(total / limit) });
+    stage = "query";
+    const result = await listAdminOrders(getDb(), {
+      query, status, paymentStatus, fromDate, toDate, page, limit,
+    });
+    return NextResponse.json(result);
   } catch (err) {
-    console.error("[admin/orders GET]", err);
-    return NextResponse.json({ error: "Failed to list orders." }, { status: 500 });
+    const record = err && typeof err === "object"
+      ? err as { code?: unknown; column?: unknown; message?: unknown }
+      : {};
+    const dbCode = typeof record.code === "string" ? record.code : undefined;
+    const column = typeof record.column === "string" ? record.column : undefined;
+    const missingDatabaseUrl = typeof record.message === "string" && record.message.includes("DATABASE_URL is required");
+    const unavailable = missingDatabaseUrl || Boolean(dbCode?.startsWith("08") || dbCode === "ECONNREFUSED" || dbCode === "ETIMEDOUT" || dbCode === "57P03" || dbCode === "53300");
+    console.error("[admin/orders GET] Request failed.", {
+      stage,
+      reason: missingDatabaseUrl ? "database_configuration_missing" : unavailable ? "database_unavailable" : "query_or_schema_error",
+      databaseCode: dbCode,
+      column,
+    });
+    return unavailable
+      ? NextResponse.json({ error: "Orders are temporarily unavailable. Please retry shortly.", code: "ORDERS_UNAVAILABLE" }, { status: 503 })
+      : NextResponse.json({ error: "Orders could not be loaded. Contact support if the problem continues.", code: "ORDERS_QUERY_FAILED" }, { status: 500 });
   }
 }

@@ -20,10 +20,10 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
   test("custom quote tees use the server price and made-to-order fulfillment", () => {
     const result = calculateTrustedOrderPricing([{ productId: "rnl-custom-quote-tee", size: "M", quantity: 2, customization: customDetails }]);
     assert.equal(result.success, true);
-    assert.equal(result.pricing.items[0].price, 1999);
+    assert.equal(result.pricing.items[0].price, 1299);
     assert.equal(result.pricing.items[0].fulfillmentType, "made_to_order");
     assert.equal(result.pricing.items[0].customization.quote, customDetails.quote);
-    assert.equal(result.pricing.subtotal, 3998);
+    assert.equal(result.pricing.subtotal, 2598);
     assert.equal(result.pricing.items[0].productId, "rnl-custom-quote-tee");
   });
 
@@ -45,6 +45,30 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
     assert.deepEqual(calculateCodAdvanceAmounts(1999), { success: true, advance: 200, balanceDue: 1799 });
     assert.deepEqual(calculateCodAdvanceAmounts(999), { success: true, advance: 200, balanceDue: 799 });
     assert.deepEqual(calculateCodAdvanceAmounts(200), { success: false, error: "COD Advance is available only when the final order total is greater than ₹200." });
+  });
+
+  test("Wear Your Mood price is ₹1,299 and the old ₹1,999 price is no longer the current selling price", () => {
+    const single = calculateTrustedOrderPricing([{
+      productId: "rnl-custom-quote-tee", size: "L", quantity: 1,
+      customization: { type: "quote_tshirt", mood: "happy", quote: "Good vibes only", quoteStyle: "minimal", font: "bold", printColor: "ink", placement: "center" },
+    }]);
+    assert.equal(single.success, true);
+    assert.equal(single.pricing.items[0].price, 1299, "WYM price must be ₹1,299");
+    assert.notEqual(single.pricing.items[0].price, 1999, "WYM price must NOT be ₹1,999");
+    assert.equal(single.pricing.subtotal, 1299);
+    assert.equal(single.pricing.total, 1299);
+    // Two WYM tees: ₹1,299 × 2 = ₹2,598
+    const double = calculateTrustedOrderPricing([{
+      productId: "rnl-custom-quote-tee", size: "M", quantity: 2,
+      customization: { type: "quote_tshirt", mood: "confident", quote: "I own this", quoteStyle: "savage", font: "serif", printColor: "ocean", placement: "chest" },
+    }]);
+    assert.equal(double.success, true);
+    assert.equal(double.pricing.subtotal, 2598);
+    assert.equal(double.pricing.total, 2598);
+    // Catalog tees are still ₹999 — unaffected
+    const catalog = calculateTrustedOrderPricing([{ productId: "rnl-design-01", size: "M", quantity: 1, color: "As pictured" }]);
+    assert.equal(catalog.success, true);
+    assert.equal(catalog.pricing.items[0].price, 999);
   });
 });
 import {
@@ -83,6 +107,7 @@ import {
   classifyRazorpayOrderPayments,
 } from "../src/services/razorpay-order-recovery.ts";
 import { queueNotificationJob, isProviderRetryWindowExpired, persistPaymentNotificationJobs } from "../src/services/notification-service.ts";
+import { createCheckoutPaymentAttempt, attachCheckoutProviderOrder, claimCheckoutProviderOrder, convertCapturedCheckoutAttempt, getCheckoutPaymentAttempt, processCheckoutAttemptExpiryBatch, updateCheckoutAttemptPaymentState } from "../src/services/checkout-payment-attempts.ts";
 
 describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
   test("checkout idempotency key is reused for an unchanged retry", async () => {
@@ -429,6 +454,162 @@ describe("Phase 2: Secure Checkout & Pricing Integrity", () => {
   });
 });
 
+describe("Separate checkout payment attempts", () => {
+  const makeSnapshot = (email, paymentMethod = "Razorpay (UPI / Cards / NetBanking)") => ({
+    customerName: "Attempt Test", customerEmail: email, customerPhone: "9876543210",
+    subtotal: 999, shipping: 0, discount: 0, total: 999, paymentMethod, userId: null,
+    items: [{ productId: "rnl-design-01", productSlug: "rightnowlife-design-01", productName: "DESIGN 01",
+      color: "As pictured", size: "M", price: 999, quantity: 1, image: "/products/design_01_front.png",
+      sku: `CPA-${crypto.randomUUID()}`, fit: "Regular", fulfillmentType: "stock" }],
+    address: { fullName: "Attempt Test", phone: "9876543210", addressLine1: "Test Street", city: "Pune", state: "Maharashtra", pinCode: "411001" },
+  });
+
+  databaseTest("checkout initiation persists an attempt but creates no order; verified capture converts exactly once", async () => {
+    const email = `checkout-attempt-${crypto.randomUUID()}@example.test`;
+    const key = crypto.randomUUID();
+    const hash = crypto.createHash("sha256").update(key).digest("hex");
+    const snapshot = makeSnapshot(email);
+    const created = await createCheckoutPaymentAttempt({ idempotencyKey: key, requestHash: hash,
+      customerEmail: email, userId: null, paymentMethod: snapshot.paymentMethod,
+      purpose: "full_payment", expectedAmountPaisa: 99_900, snapshot });
+    assert.equal(created.status, "created");
+    assert.equal(created.attempt?.attempt_status, "pending");
+    assert.equal(await getDb().prepare("SELECT COUNT(*) AS n FROM orders WHERE customer_email = ?").get(email).then((row) => Number(row.n)), 0);
+
+    const replay = await createCheckoutPaymentAttempt({ idempotencyKey: key, requestHash: hash,
+      customerEmail: email, userId: null, paymentMethod: snapshot.paymentMethod,
+      purpose: "full_payment", expectedAmountPaisa: 99_900, snapshot });
+    assert.equal(replay.status, "replayed");
+    assert.equal(replay.attempt?.id, created.attempt?.id);
+    assert.equal(await claimCheckoutProviderOrder(created.attempt.id), "claimed");
+    assert.equal(await attachCheckoutProviderOrder(created.attempt.id, `order_${crypto.randomUUID()}`), true);
+    const attempt = await getCheckoutPaymentAttempt(created.attempt.id);
+    await updateCheckoutAttemptPaymentState(attempt.id, `pay_${crypto.randomUUID()}`, "captured", "test-signature");
+    const captured = await getCheckoutPaymentAttempt(attempt.id);
+    const converted = await convertCapturedCheckoutAttempt({ attemptId: attempt.id,
+      providerOrderId: attempt.provider_order_id, providerPaymentId: captured.provider_payment_id, signature: "test-signature" });
+    assert.equal(converted.success, true);
+    assert.equal(converted.alreadyConverted, false);
+    const replayedCapture = await convertCapturedCheckoutAttempt({ attemptId: attempt.id,
+      providerOrderId: attempt.provider_order_id, providerPaymentId: captured.provider_payment_id, signature: "test-signature" });
+    assert.equal(replayedCapture.success, true);
+    assert.equal(replayedCapture.alreadyConverted, true);
+    const order = await getOrderById(converted.orderId);
+    assert.equal(order.payment_status, "paid");
+    assert.equal(order.is_confirmed, true);
+    assert.equal(await getDb().prepare("SELECT COUNT(*) AS n FROM orders WHERE id = ?").get(order.id).then((row) => Number(row.n)), 1);
+  });
+
+  databaseTest("failed and abandoned attempts do not convert; verified COD Advance records its balance", async () => {
+    const email = `checkout-advance-${crypto.randomUUID()}@example.test`;
+    const key = crypto.randomUUID();
+    const snapshot = { ...makeSnapshot(email, "COD Advance"), total: 999, userId: "test-cod-advance-user" };
+    const failedAttempt = await createCheckoutPaymentAttempt({ idempotencyKey: key, requestHash: key,
+      customerEmail: email, userId: snapshot.userId, paymentMethod: "COD Advance", purpose: "cod_advance",
+      expectedAmountPaisa: 20_000, snapshot });
+    await claimCheckoutProviderOrder(failedAttempt.attempt.id);
+    await attachCheckoutProviderOrder(failedAttempt.attempt.id, `order_${crypto.randomUUID()}`);
+    await updateCheckoutAttemptPaymentState(failedAttempt.attempt.id, `pay_${crypto.randomUUID()}`, "failed");
+    const failed = await getCheckoutPaymentAttempt(failedAttempt.attempt.id);
+    const rejected = await convertCapturedCheckoutAttempt({ attemptId: failed.id,
+      providerOrderId: failed.provider_order_id, providerPaymentId: "pay_not_captured" });
+    assert.equal(rejected.success, false);
+    assert.equal(await getDb().prepare("SELECT COUNT(*) AS n FROM orders WHERE customer_email = ?").get(email).then((row) => Number(row.n)), 0);
+
+    const cancelledKey = crypto.randomUUID();
+    const cancelledAttempt = await createCheckoutPaymentAttempt({ idempotencyKey: cancelledKey, requestHash: cancelledKey,
+      customerEmail: email, userId: snapshot.userId, paymentMethod: "COD Advance", purpose: "cod_advance",
+      expectedAmountPaisa: 20_000, snapshot });
+    await claimCheckoutProviderOrder(cancelledAttempt.attempt.id);
+    await attachCheckoutProviderOrder(cancelledAttempt.attempt.id, `order_${crypto.randomUUID()}`);
+    await updateCheckoutAttemptPaymentState(cancelledAttempt.attempt.id, `pay_${crypto.randomUUID()}`, "cancelled");
+    const cancelled = await getCheckoutPaymentAttempt(cancelledAttempt.attempt.id);
+    assert.equal((await convertCapturedCheckoutAttempt({ attemptId: cancelled.id,
+      providerOrderId: cancelled.provider_order_id, providerPaymentId: "pay_cancelled" })).success, false);
+
+    const advanceKey = crypto.randomUUID();
+    const advance = await createCheckoutPaymentAttempt({ idempotencyKey: advanceKey, requestHash: advanceKey,
+      customerEmail: email, userId: snapshot.userId, paymentMethod: "COD Advance", purpose: "cod_advance",
+      expectedAmountPaisa: 20_000, snapshot });
+    const advanceReplay = await createCheckoutPaymentAttempt({ idempotencyKey: advanceKey, requestHash: advanceKey,
+      customerEmail: email, userId: snapshot.userId, paymentMethod: "COD Advance", purpose: "cod_advance",
+      expectedAmountPaisa: 20_000, snapshot });
+    assert.equal(advanceReplay.status, "replayed");
+    assert.equal(advanceReplay.attempt.id, advance.attempt.id);
+    await claimCheckoutProviderOrder(advance.attempt.id);
+    await attachCheckoutProviderOrder(advance.attempt.id, `order_${crypto.randomUUID()}`);
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    await updateCheckoutAttemptPaymentState(advance.attempt.id, paymentId, "captured", "test-signature");
+    const ready = await getCheckoutPaymentAttempt(advance.attempt.id);
+    const result = await convertCapturedCheckoutAttempt({ attemptId: ready.id,
+      providerOrderId: ready.provider_order_id, providerPaymentId: paymentId, signature: "test-signature" });
+    const order = await getOrderById(result.orderId);
+    assert.equal(order.payment_status, "partially_paid");
+    assert.equal(order.order_status, "advance_paid");
+    assert.equal(order.total - 200, 799);
+    assert.equal(order.is_confirmed, true);
+  });
+
+  databaseTest("expired unstarted attempts release reservations once under concurrent workers", async () => {
+    const email = `checkout-expiry-${crypto.randomUUID()}@example.test`;
+    const key = crypto.randomUUID();
+    const productId = `expiry-${crypto.randomUUID()}`;
+    const snapshot = makeSnapshot(email);
+    snapshot.items[0].productId = productId;
+    snapshot.items[0].sku = productId;
+    const { attempt } = await createCheckoutPaymentAttempt({ idempotencyKey: key, requestHash: key,
+      customerEmail: email, userId: null, paymentMethod: snapshot.paymentMethod,
+      purpose: "full_payment", expectedAmountPaisa: 99_900, snapshot });
+    await getDb().prepare("UPDATE checkout_payment_attempts SET expires_at = NOW() - INTERVAL '1 hour', updated_at = NOW() - INTERVAL '1 hour' WHERE id = ?").run(attempt.id);
+    const reservedBefore = await getDb().prepare("SELECT reserved FROM inventory WHERE product_id = ? AND size = 'M'").get(productId);
+    assert.equal(Number(reservedBefore.reserved), 1);
+
+    const [first, second] = await Promise.all([
+      processCheckoutAttemptExpiryBatch(),
+      processCheckoutAttemptExpiryBatch(),
+    ]);
+    assert.equal(first.released + second.released, 1);
+    const reservedAfter = await getDb().prepare("SELECT reserved FROM inventory WHERE product_id = ? AND size = 'M'").get(productId);
+    const expired = await getCheckoutPaymentAttempt(attempt.id);
+    assert.equal(Number(reservedAfter.reserved), 0);
+    assert.equal(expired.attempt_status, "expired");
+    assert.equal(expired.reservation_state, "released");
+    assert.equal(await claimCheckoutProviderOrder(attempt.id), "reconcile");
+    assert.equal((await processCheckoutAttemptExpiryBatch()).released, 0);
+  });
+
+  databaseTest("provider-backed expiry keeps reservations for delayed successful webhook capture", async () => {
+    const email = `checkout-late-capture-${crypto.randomUUID()}@example.test`;
+    const key = crypto.randomUUID();
+    const productId = `late-${crypto.randomUUID()}`;
+    const snapshot = makeSnapshot(email);
+    snapshot.items[0].productId = productId;
+    snapshot.items[0].sku = productId;
+    const { attempt } = await createCheckoutPaymentAttempt({ idempotencyKey: key, requestHash: key,
+      customerEmail: email, userId: null, paymentMethod: snapshot.paymentMethod,
+      purpose: "full_payment", expectedAmountPaisa: 99_900, snapshot });
+    await claimCheckoutProviderOrder(attempt.id);
+    const providerOrderId = `order_${crypto.randomUUID()}`;
+    await attachCheckoutProviderOrder(attempt.id, providerOrderId);
+    await getDb().prepare("UPDATE checkout_payment_attempts SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = ?").run(attempt.id);
+
+    const expiry = await processCheckoutAttemptExpiryBatch(100, async () => null);
+    assert.equal(expiry.released, 0);
+    assert.equal(expiry.deferred, 1);
+    const stillHeld = await getCheckoutPaymentAttempt(attempt.id);
+    assert.equal(stillHeld.reservation_state, "held");
+    assert.equal(Number((await getDb().prepare("SELECT reserved FROM inventory WHERE product_id = ? AND size = 'M'").get(productId)).reserved), 1);
+
+    const paymentId = `pay_${crypto.randomUUID()}`;
+    await updateCheckoutAttemptPaymentState(attempt.id, paymentId, "captured");
+    const converted = await convertCapturedCheckoutAttempt({ attemptId: attempt.id, providerOrderId, providerPaymentId: paymentId });
+    const duplicate = await convertCapturedCheckoutAttempt({ attemptId: attempt.id, providerOrderId, providerPaymentId: paymentId });
+    assert.equal(converted.success, true);
+    assert.equal(duplicate.alreadyConverted, true);
+    assert.equal((await getCheckoutPaymentAttempt(attempt.id)).reservation_state, "consumed");
+  });
+});
+
 describe("Phase 2: Cryptographic Razorpay Signature Verification", () => {
   const testSecret = "test_secret_key_rnl_2026";
   const orderId = "order_test_123456789";
@@ -563,11 +744,11 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
       .get(customProductId);
     const { order } = await createPendingOrder({
       orderNumber: generateOrderNumber(), customerName: "Custom Test", customerEmail: `custom-${id}@example.test`,
-      customerPhone: "9876543210", subtotal: 1999, shipping: 0, discount: 0, total: 1999,
+      customerPhone: "9876543210", subtotal: 1299, shipping: 0, discount: 0, total: 1299,
       paymentMethod: "Razorpay (UPI / Cards / NetBanking)", userId: "test-customer-account", razorpayOrderId: `order_test_custom_${id}`,
       items: [{
         productId: "rnl-custom-quote-tee", productSlug: "wear-your-mood", productName: "Wear Your Mood Custom Quote Tee",
-        color: "Natural", size: "M", price: 1999, quantity: 1, image: "/products/custom-tee-preview.svg",
+        color: "Natural", size: "M", price: 1299, quantity: 1, image: "/products/custom-tee-preview.svg",
         sku: `RNL-CUSTOM-QUOTE-M-${id}`, fit: "Regular", fulfillmentType: "made_to_order",
         customization: { type: "quote_tshirt", mood: "confident", quote: "I choose my own way", quoteStyle: "deep", font: "serif", printColor: "ocean", placement: "center" },
       }],
@@ -624,6 +805,7 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
     assert.ok(order.id);
     assert.strictEqual(order.payment_status, "pending_payment");
     assert.strictEqual(order.order_status, "pending_payment");
+    assert.strictEqual(order.is_confirmed, false);
     assert.ok(guestToken);
 
     // Fetch order back with relations
@@ -683,6 +865,8 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
     const paidOrder = await getOrderById(order.id);
     assert.strictEqual(paidOrder?.payment_status, "paid");
     assert.strictEqual(paidOrder?.order_status, "paid");
+    assert.strictEqual(paidOrder?.is_confirmed, true);
+    assert.equal((await getOrdersByEmail("kabir@rightnowlife.in")).some((entry) => entry.id === paidOrder.id), true);
 
     // 2nd duplicate transition (idempotent duplicate callback)
     const secondCall = await markOrderAsPaid(order.id, "pay_kabir_123", "order_test_kabir_1", "sig_123");
@@ -772,9 +956,9 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
     assert.strictEqual(stillPendingOrder?.order_status, "pending_payment");
   });
 
-  databaseTest("Retrieves customer order history correctly by email", async () => {
-    const email = "customer_test@rightnowlife.in";
-    await createPendingOrder({
+  databaseTest("Customer history excludes unpaid online checkouts and keeps pending COD orders", async () => {
+    const email = `customer-test-${crypto.randomUUID()}@rightnowlife.in`;
+    const checkout = {
       orderNumber: generateOrderNumber(),
       customerName: "Test Customer",
       customerEmail: email,
@@ -806,14 +990,20 @@ describe("Phase 2: Database Order Management & Idempotency", () => {
         state: "Maharashtra",
         pinCode: "411001",
       },
-    });
+    };
+    const online = await createPendingOrder(checkout);
 
     const orders = await getOrdersByEmail(email);
-    assert.ok(orders.length >= 1);
-    assert.strictEqual(orders[0].customer_email, email);
+    assert.equal(orders.some((order) => order.id === online.order.id), false);
+
+    const cod = await createPendingOrder({ ...checkout, orderNumber: generateOrderNumber(), paymentMethod: "COD" });
+    assert.equal(cod.order.is_confirmed, true);
+    const codOrders = await getOrdersByEmail(email);
+    assert.equal(codOrders.some((order) => order.id === cod.order.id && order.payment_status === "pending_payment"), true);
 
     const accountOrders = await getOrdersByCustomer("test-customer-account", email);
-    assert.ok(accountOrders.some((order) => order.customer_email === email));
+    assert.ok(accountOrders.some((order) => order.id === cod.order.id));
+    assert.equal(accountOrders.some((order) => order.id === online.order.id), false);
   });
 
   databaseTest("Concurrent notification retries call Resend once with a stable idempotency key", async () => {

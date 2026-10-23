@@ -12,6 +12,7 @@ import {
 } from "@/lib/razorpay";
 import { dispatchAllOrderNotifications, persistPaymentNotificationJobs } from "@/services/notification-service";
 import { createClient } from "@/lib/supabase/server";
+import { convertCapturedCheckoutAttempt, getCheckoutPaymentAttempt, updateCheckoutAttemptPaymentState } from "@/services/checkout-payment-attempts";
 
 const VerifyPaymentSchema = z.object({
   orderId: z.string().min(1, "Order ID is required"),
@@ -34,6 +35,66 @@ export async function POST(req: NextRequest) {
     }
 
     const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature, guestToken } = validation.data;
+
+    // New checkout sessions live outside orders until the provider confirms capture.
+    const checkoutAttempt = await getCheckoutPaymentAttempt(orderId);
+    if (checkoutAttempt) {
+      if (checkoutAttempt.user_id) {
+        const supabase = await createClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || authData.user?.id !== checkoutAttempt.user_id) return NextResponse.json({ error: "Payment attempt not found." }, { status: 404 });
+      } else if (!guestToken || guestToken !== checkoutAttempt.guest_token) {
+        return NextResponse.json({ error: "Payment attempt not found." }, { status: 404 });
+      }
+      if (!checkoutAttempt.provider_order_id || checkoutAttempt.provider_order_id !== razorpayOrderId) {
+        return NextResponse.json({ error: "Payment does not match this checkout attempt." }, { status: 400 });
+      }
+      if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) return NextResponse.json({ error: "Payment verification is temporarily unavailable." }, { status: 503 });
+      if (!verifyPaymentSignature({ razorpayOrderId, razorpayPaymentId, razorpaySignature })) {
+        await logPaymentAudit(null, "checkout_attempt_invalid_signature", { attemptId: checkoutAttempt.id, razorpayOrderId, razorpayPaymentId });
+        return NextResponse.json({ error: "Payment verification failed: Invalid cryptographic signature" }, { status: 400 });
+      }
+      try {
+        const payment = await getRazorpayClient().payments.fetch(razorpayPaymentId);
+        if (!isVerifiedPaymentDetails(payment, razorpayOrderId, checkoutAttempt.expected_amount_paisa, razorpayPaymentId) ||
+          payment.currency !== checkoutAttempt.currency) {
+          await logPaymentAudit(null, "checkout_attempt_payment_details_mismatch", {
+            attemptId: checkoutAttempt.id, expectedAmount: checkoutAttempt.expected_amount_paisa,
+            receivedAmount: payment.amount, expectedCurrency: checkoutAttempt.currency,
+            receivedCurrency: payment.currency, providerOrderId: payment.order_id,
+          });
+          return NextResponse.json({ error: "Payment details do not match this checkout." }, { status: 400 });
+        }
+        if (!isPaymentCaptured(payment.status) || payment.captured !== true) {
+          const providerStatus = String(payment.status);
+          const state = providerStatus === "failed" ? "failed" : providerStatus === "cancelled" ? "cancelled" : providerStatus === "authorized" ? "authorized" : "reconciliation_required";
+          await updateCheckoutAttemptPaymentState(checkoutAttempt.id, razorpayPaymentId, state);
+          return NextResponse.json({ error: providerStatus === "failed" || providerStatus === "cancelled"
+            ? "Payment failed or was cancelled. No order was created; retry checkout if you still want to purchase."
+            : "Payment is not captured yet. No order was created; check again shortly." }, { status: 409 });
+        }
+        await updateCheckoutAttemptPaymentState(checkoutAttempt.id, razorpayPaymentId, "captured", razorpaySignature);
+        const conversion = await convertCapturedCheckoutAttempt({
+          attemptId: checkoutAttempt.id, providerOrderId: razorpayOrderId,
+          providerPaymentId: razorpayPaymentId, signature: razorpaySignature,
+        });
+        if (!conversion.success || !conversion.orderId) {
+          await logPaymentAudit(null, "checkout_attempt_capture_requires_reconciliation", { attemptId: checkoutAttempt.id, razorpayPaymentId });
+          return NextResponse.json({ error: "Payment was captured but the order needs reconciliation. Contact support; do not pay again." }, { status: 409 });
+        }
+        await persistPaymentNotificationJobs(conversion.orderId, async () => {
+          const refreshed = await getOrderById(conversion.orderId!);
+          if (!refreshed) throw new Error("Converted order could not be reloaded for notification processing.");
+          return dispatchAllOrderNotifications(refreshed);
+        });
+        return NextResponse.json({ success: true, orderId: conversion.orderId, orderNumber: conversion.orderNumber,
+          guestToken: checkoutAttempt.user_id === null ? conversion.guestToken : undefined,
+          alreadyPaid: conversion.alreadyConverted, notificationStatus: "persisted" });
+      } catch (error) {
+        console.error("Failed to verify checkout attempt with Razorpay:", error);
+        return NextResponse.json({ error: "Unable to confirm payment status with Razorpay gateway" }, { status: 503 });
+      }
+    }
 
     // 1. Fetch order from database
     const order = await getOrderById(orderId);

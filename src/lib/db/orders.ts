@@ -203,8 +203,8 @@ export async function createPendingOrder(params: CreateOrderParams, connection?:
     INSERT INTO orders (
       id, order_number, customer_name, customer_email, customer_phone,
       subtotal, shipping, discount, total, payment_method, payment_status,
-      order_status, razorpay_order_id, guest_token, user_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', 'pending_payment', ?, ?, ?, ?, ?)
+      order_status, is_confirmed, razorpay_order_id, guest_token, user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', 'pending_payment', ?, ?, ?, ?, ?, ?)
   `).run(
     orderId,
     params.orderNumber,
@@ -216,6 +216,7 @@ export async function createPendingOrder(params: CreateOrderParams, connection?:
     params.discount,
     params.total,
     params.paymentMethod,
+    params.paymentMethod === "COD" || params.paymentMethod === "Cash on Delivery",
     params.razorpayOrderId || null,
     guestToken,
     params.userId || null,
@@ -571,7 +572,7 @@ export async function markCodAdvanceAsVerified(params: {
     if (captured.rowCount !== 1) throw new Error("Advance payment state changed during capture.");
     const transition = await db.prepare(`UPDATE orders SET payment_status = 'partially_paid',
       order_status = 'advance_paid', razorpay_payment_id = ?, razorpay_signature = COALESCE(?, razorpay_signature),
-      updated_at = ? WHERE id = ? AND payment_status = 'pending_advance' AND order_status = 'pending_payment'`)
+      is_confirmed = TRUE, updated_at = ? WHERE id = ? AND payment_status = 'pending_advance' AND order_status = 'pending_payment'`)
       .run(params.paymentId, params.signature ?? null, now, order.id);
     if (transition.rowCount !== 1) throw new Error(`COD Advance order state changed during capture for ${order.id}.`);
     await recordOrderStatusHistory(order.id, "pending_payment", "advance_paid", "razorpay", "₹200 COD Advance verified", db);
@@ -654,7 +655,7 @@ export async function getOrderByNumber(orderNumber: string): Promise<OrderWithDe
 export async function getOrdersByEmail(email: string): Promise<OrderWithDetails[]> {
   const db = getDb();
   const orders = await db
-    .prepare("SELECT * FROM orders WHERE customer_email = ? ORDER BY created_at DESC")
+    .prepare("SELECT * FROM orders WHERE customer_email = ? AND is_confirmed = TRUE AND (payment_status NOT IN ('pending_payment', 'pending_advance') OR payment_method IN ('COD', 'Cash on Delivery')) ORDER BY created_at DESC")
     .all<DbOrder>(email.toLowerCase().trim());
 
   return Promise.all(orders.map(populateOrderRelations));
@@ -665,7 +666,8 @@ export async function getOrdersByCustomer(userId: string, email: string): Promis
   const orders = await db
     .prepare(`
       SELECT * FROM orders
-      WHERE user_id = ? OR lower(customer_email) = ?
+      WHERE (user_id = ? OR lower(customer_email) = ?) AND is_confirmed = TRUE
+        AND (payment_status NOT IN ('pending_payment', 'pending_advance') OR payment_method IN ('COD', 'Cash on Delivery'))
       ORDER BY created_at DESC
     `)
     .all<DbOrder>(userId, email.toLowerCase().trim());
@@ -676,7 +678,7 @@ export async function getOrdersByCustomer(userId: string, email: string): Promis
 
 export async function getAllOrders(): Promise<OrderWithDetails[]> {
   const db = getDb();
-  const orders = await db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all<DbOrder>();
+  const orders = await db.prepare("SELECT * FROM orders WHERE is_confirmed = TRUE AND (payment_status NOT IN ('pending_payment', 'pending_advance') OR payment_method IN ('COD', 'Cash on Delivery')) ORDER BY created_at DESC").all<DbOrder>();
 
   return Promise.all(orders.map(populateOrderRelations));
 }
@@ -727,6 +729,7 @@ export async function markOrderAsPaid(
     UPDATE orders
     SET payment_status = 'paid',
         order_status = 'paid',
+        is_confirmed = TRUE,
         razorpay_payment_id = ?,
         razorpay_signature = COALESCE(?, razorpay_signature),
         updated_at = ?

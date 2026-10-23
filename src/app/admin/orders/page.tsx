@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Search,
   Truck,
@@ -21,10 +22,12 @@ import {
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { formatINR } from "@/lib/utils";
 import { STATUS_LABELS, STATUS_COLORS } from "@/lib/order-status-machine";
-import { DbOrder } from "@/lib/db/index";
+import type { AdminOrderListItem } from "@/services/admin-orders-list";
 
 export default function AdminOrdersPage() {
-  const [orders, setOrders] = useState<DbOrder[]>([]);
+  const router = useRouter();
+  const [orders, setOrders] = useState<AdminOrderListItem[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -37,6 +40,7 @@ export default function AdminOrdersPage() {
 
   const fetchOrders = async (targetPage = page) => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       const params = new URLSearchParams();
       params.set("page", targetPage.toString());
@@ -48,14 +52,23 @@ export default function AdminOrdersPage() {
       if (toDate) params.set("to_date", toDate);
 
       const res = await fetch(`/api/admin/orders?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to load orders");
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (res.status === 401) {
+        router.replace("/admin/login");
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Orders could not be loaded. Please retry.");
+      }
+      if (!data || !Array.isArray(data.orders)) throw new Error("The order service returned an invalid response. Please retry.");
       setOrders(data.orders);
       setTotal(data.total);
       setPages(data.pages);
       setPage(data.page);
     } catch (err) {
-      console.error(err);
+      const message = err instanceof Error ? err.message : "Orders could not be loaded. Please retry.";
+      setErrorMessage(message);
+      console.error("[admin/orders page] Order list request failed.", message);
     } finally {
       setLoading(false);
     }
@@ -182,6 +195,13 @@ export default function AdminOrdersPage() {
         </div>
 
         {/* Orders Table */}
+        {errorMessage && (
+          <div role="alert" className="mx-4 mt-4 flex items-start gap-2 border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="flex-1">{errorMessage}</div>
+            <button onClick={() => fetchOrders(page)} className="font-bold underline">Retry</button>
+          </div>
+        )}
         {loading ? (
           <div className="py-16 text-center text-neutral-400">
             <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-neutral-400" />
@@ -223,15 +243,15 @@ export default function AdminOrdersPage() {
                       </td>
 
                       <td className="py-3 px-4">
-                        <span className="font-bold text-neutral-900 block">{o.customer_name}</span>
-                        <span className="text-[11px] text-neutral-500 block font-mono">{o.customer_email}</span>
-                        <span className="text-[10px] text-neutral-400 font-mono">{o.customer_phone}</span>
+                        <span className="font-bold text-neutral-900 block">{o.customer_name || "Customer name unavailable"}</span>
+                        <span className="text-[11px] text-neutral-500 block font-mono">{o.customer_email || "Email unavailable"}</span>
+                        <span className="text-[10px] text-neutral-400 font-mono">{o.customer_phone || "Phone unavailable"}</span>
                       </td>
 
                       <td className="py-3 px-4">
                         <span className="font-mono font-bold text-black block">{formatINR(o.total)}</span>
                         <span className="text-[10px] text-neutral-400">
-                          {o.discount > 0 && `(Saved ${formatINR(o.discount)})`}
+                          {(o.discount ?? 0) > 0 && `(Saved ${formatINR(o.discount)})`}
                         </span>
                       </td>
 
@@ -245,7 +265,7 @@ export default function AdminOrdersPage() {
                               : "bg-amber-100 text-amber-800"
                           }`}
                         >
-                          {o.payment_status}
+                          {o.payment_status ?? "unknown"}
                         </span>
                         {o.razorpay_payment_id && (
                           <span className="text-[10px] font-mono text-neutral-400 block mt-0.5 truncate max-w-[120px]">
