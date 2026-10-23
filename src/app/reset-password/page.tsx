@@ -2,21 +2,20 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ArrowRight, Lock, CheckCircle2 } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { useToast } from "@/context/toast-context";
+import { createClient } from "@/lib/supabase/client";
 
 export default function ResetPasswordPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { toast } = useToast();
-  const router = useRouter();
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword.length < 6) {
       setError("Password must be at least 6 characters.");
@@ -27,12 +26,19 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    setIsSuccess(true);
-    toast({
-      type: "success",
-      title: "Password Updated",
-      message: "Your prototype password has been updated.",
-    });
+    setIsSubmitting(true);
+    setError("");
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) throw updateError;
+      setIsSuccess(true);
+      toast({ type: "success", title: "Password Updated", message: "Your password has been updated." });
+    } catch {
+      setError("The reset link may have expired. Request a new password reset link and try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -79,6 +85,7 @@ export default function ResetPasswordPage() {
                   <input
                     type="password"
                     required
+                    minLength={6}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     className="w-full pl-9 pr-3 py-2.5 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
@@ -96,6 +103,7 @@ export default function ResetPasswordPage() {
                   <input
                     type="password"
                     required
+                    minLength={6}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     className="w-full pl-9 pr-3 py-2.5 text-xs border border-neutral-300 focus:border-black outline-none font-medium"
@@ -107,9 +115,10 @@ export default function ResetPasswordPage() {
 
               <button
                 type="submit"
-                className="w-full py-3.5 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center justify-center gap-2"
+                disabled={isSubmitting}
+                className="w-full py-3.5 bg-black hover:bg-neutral-800 text-white text-xs uppercase tracking-widest font-black transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
               >
-                <span>Update Password</span>
+                <span>{isSubmitting ? "Updating…" : "Update Password"}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>

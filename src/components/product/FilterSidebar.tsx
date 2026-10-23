@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Filter, X, ChevronDown, Check } from "lucide-react";
 import { ProductCategory, TShirtSize } from "@/types";
-import { PRODUCT_CATEGORIES } from "@/data/mock-data";
+import { PRODUCTS, getVisibleProductCategories } from "@/data/mock-data";
 
 export interface FilterState {
   collection: string;
@@ -78,7 +78,7 @@ export function FilterSidebar({
 
   const categories: { label: string; value: "all" | ProductCategory }[] = [
     { label: "All Categories", value: "all" },
-    ...PRODUCT_CATEGORIES.map(({ name, slug }) => ({ label: name, value: slug })),
+    ...getVisibleProductCategories(PRODUCTS).map(({ name, slug }) => ({ label: name, value: slug })),
   ];
 
   const fits: { label: string; value: string }[] = [

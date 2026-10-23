@@ -39,7 +39,7 @@ test("contact email uses configured sender, correct recipient, reply-to, and for
   });
   assert.deepEqual(result, { messageId: "mock-message-id" });
   assert.equal(sent.from, "RIGHTNOWLIFE <verified@example.com>");
-  assert.deepEqual(sent.to, ["rightnowlife8@gmail.com"]);
+  assert.deepEqual(sent.to, ["contact@rightnowlife.com"]);
   assert.equal(sent.reply_to, contact.email);
   assert.match(sent.text, /2026-10-22T12:30:00.000Z/);
   assert.match(sent.text, /Please help with my order\./);
@@ -55,7 +55,7 @@ test("Drop Notes requests use the shared recipient and are labeled as signup req
       return Response.json({ id: "mock-id" });
     },
   });
-  assert.deepEqual(sent.to, ["rightnowlife8@gmail.com"]);
+  assert.deepEqual(sent.to, ["contact@rightnowlife.com"]);
   assert.equal(sent.subject, "Drop Notes signup request");
   assert.equal(sent.reply_to, undefined);
 });
@@ -154,7 +154,7 @@ test("public support email and account label behavior are consistent", () => {
     assert.doesNotMatch(fs.readFileSync(path.join(root, file), "utf8"), /contact@rightnowlife\.com/);
   }
   assert.match(fs.readFileSync(path.join(root, "src/data/mock-data.ts"), "utf8"), /supportEmail: SUPPORT_EMAIL/);
-  assert.match(fs.readFileSync(path.join(root, "src/lib/support-contact.ts"), "utf8"), /SUPPORT_EMAIL = "rightnowlife8@gmail\.com"/);
+  assert.match(fs.readFileSync(path.join(root, "src/lib/support-contact.ts"), "utf8"), /SUPPORT_EMAIL = "contact@rightnowlife\.com"/);
   const navbar = fs.readFileSync(path.join(root, "src/components/layout/Navbar.tsx"), "utf8");
   assert.match(navbar, /user\.role !== "customer"/);
   assert.match(navbar, /\{user\.role\} Demo Account/);

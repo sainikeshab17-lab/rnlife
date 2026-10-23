@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { X, AlertCircle, RefreshCw, CheckCircle2 } from "lucide-react";
-import { RETURN_REASONS } from "@/lib/policies";
+import { RETURN_REASONS, STORE_POLICIES } from "@/lib/policies";
 
 interface ReturnModalProps {
   orderId: string;
@@ -114,7 +114,7 @@ export function ReturnModal({
           Return or Exchange Request
         </h3>
         <p className="text-xs text-[#858585] mb-5">
-          Order #{orderNumber} • 7-day standard policy window
+          Order #{orderNumber} • exchange/return request window: {STORE_POLICIES.returns.windowDays} days from delivery
         </p>
 
         {successMsg ? (

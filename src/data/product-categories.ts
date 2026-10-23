@@ -38,6 +38,15 @@ export const PRODUCT_CATEGORIES = [
 
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number]["slug"];
 
+export function getVisibleProductCategories<T extends { category: string; isPublished?: boolean }>(
+  products: readonly T[],
+) {
+  const publishedCategories = new Set(
+    products.filter((product) => product.isPublished !== false).map((product) => product.category),
+  );
+  return PRODUCT_CATEGORIES.filter((category) => publishedCategories.has(category.slug));
+}
+
 const normalizeCategoryValue = (value: string) =>
   value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 

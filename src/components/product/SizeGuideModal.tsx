@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { X, Ruler, CheckCircle } from "lucide-react";
 import { TShirtFit } from "@/types";
 import { SIZE_CHART_OVERSIZED, SIZE_CHART_RELAXED, SIZE_CHART_REGULAR } from "@/data/mock-data";
@@ -113,7 +114,7 @@ export function SizeGuideModal({
 
         {/* Fit Explanation Notice */}
         <div className="mt-4 p-3 bg-[#FFFFFF] border-l-2 border-black text-xs text-neutral-700 leading-relaxed">
-          <p><strong>{selectedFit} fit.</strong> Measurements below are garment dimensions in centimeters. Compare them with a tee that fits you well.</p>
+          <p><strong>{selectedFit} fit.</strong> Dimensions are in centimetres. Chest is the flat garment width, measured armpit to armpit. Compare with a tee that fits you well. These proposed charts are pending verification against physical garments.</p>
         </div>
 
         {/* Measurement Table in CM */}
@@ -138,7 +139,7 @@ export function SizeGuideModal({
                   <td className="py-2.5 px-3">{row.chestCm}</td>
                   <td className="py-2.5 px-3">{row.lengthCm}</td>
                   <td className="py-2.5 px-3">{row.shoulderCm}</td>
-                  <td className="py-2.5 px-3">{row.sleeveCm}</td>
+                  <td className="py-2.5 px-3">{row.sleeveCm}*</td>
                 </tr>
               ))}
             </tbody>
@@ -151,11 +152,11 @@ export function SizeGuideModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-neutral-600">
             <div className="flex items-start gap-2">
               <CheckCircle className="w-4 h-4 text-neutral-900 shrink-0 mt-0.5" />
-              <span><strong>Chest:</strong> Lay tee flat and measure pit to pit, then double the measurement.</span>
+              <span><strong>Chest width:</strong> Lay tee flat and measure straight across from armpit to armpit; do not double.</span>
             </div>
             <div className="flex items-start gap-2">
               <CheckCircle className="w-4 h-4 text-neutral-900 shrink-0 mt-0.5" />
-              <span><strong>Length:</strong> Measure straight down from highest shoulder point to bottom hem.</span>
+              <span><strong>Body length:</strong> Measure from the high point of shoulder beside the neckline to the hem.</span>
             </div>
             <div className="flex items-start gap-2">
               <CheckCircle className="w-4 h-4 text-neutral-900 shrink-0 mt-0.5" />
@@ -163,13 +164,23 @@ export function SizeGuideModal({
             </div>
             <div className="flex items-start gap-2">
               <CheckCircle className="w-4 h-4 text-neutral-900 shrink-0 mt-0.5" />
-              <span><strong>Sleeve:</strong> Measure from the shoulder seam straight to the sleeve hem.</span>
+              <span><strong>Sleeve:</strong> Measure from the shoulder seam to the sleeve opening. *Sleeve values are estimates from screenshots.</span>
             </div>
           </div>
         </div>
 
-        {/* Close Button */}
-        <div className="mt-6 pt-4 border-t border-neutral-100 flex justify-end">
+        <p className="mt-4 text-xs leading-relaxed text-amber-900 bg-amber-50 border border-amber-200 p-3">
+          Verification note: these are proposed values, not physically verified production measurements. Chest widths were estimated by halving circumference-equivalent figures; sleeve values marked * were estimated from screenshots. Please confirm against real garments before relying on them.
+        </p>
+
+        {/* Full Guide and Close Actions */}
+        <div className="mt-6 pt-4 border-t border-neutral-100 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Link
+            href="/size-guide"
+            className="text-xs font-bold text-neutral-700 underline underline-offset-2 hover:text-black"
+          >
+            View full Size Guide
+          </Link>
           <button
             onClick={onClose}
             className="px-6 py-2 bg-black text-white text-xs uppercase tracking-widest font-bold hover:bg-neutral-800"

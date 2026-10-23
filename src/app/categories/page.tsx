@@ -6,9 +6,10 @@ import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
-import { PRODUCT_CATEGORIES, PRODUCTS } from "@/data/mock-data";
+import { PRODUCTS, getVisibleProductCategories } from "@/data/mock-data";
 
 export default function CategoriesPage() {
+  const categories = getVisibleProductCategories(PRODUCTS);
   return (
     <StoreLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -27,7 +28,7 @@ export default function CategoriesPage() {
         </div>
 
         <div className="py-12 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {PRODUCT_CATEGORIES.map((category, idx) => {
+          {categories.map((category, idx) => {
             const count = PRODUCTS.filter((product) => product.category === category.slug).length;
             return (
               <Link
@@ -46,7 +47,7 @@ export default function CategoriesPage() {
 
                 <div className="absolute inset-x-0 bottom-0 p-6 flex flex-col justify-end text-white">
                   <span className="text-[10px] uppercase font-mono tracking-widest text-[#B8FF3B] mb-1">
-                    {idx + 1} / 7 • {count} {count === 1 ? "TEE" : "TEES"}
+                    {idx + 1} / {categories.length} • {count} {count === 1 ? "TEE" : "TEES"}
                   </span>
                   <h2 className="text-2xl font-black uppercase tracking-tight font-editorial">
                     {category.name}

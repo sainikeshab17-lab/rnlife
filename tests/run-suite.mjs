@@ -44,6 +44,7 @@ const filesToCompile = [
   { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
   { in: "tests/refund-reconciliation.test.mjs", out: ".test-dist/tests/refund-reconciliation.test.mjs" },
   { in: "tests/refund-reconciliation-route.test.mjs", out: ".test-dist/tests/refund-reconciliation-route.test.mjs" },
+  { in: "tests/storefront-upgrade.test.mjs", out: ".test-dist/tests/storefront-upgrade.test.mjs" },
   { in: "tests/postgres-test-support.mjs", out: ".test-dist/tests/postgres-test-support.mjs" },
   { in: "tests/postgres-sql.test.mjs", out: ".test-dist/tests/postgres-sql.test.mjs" },
 ];
@@ -84,6 +85,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']@\/data\/mock-data["']/g, 'from "../../data/mock-data.js"')
       .replace(/from\s+["']@\/types["']/g, 'from "../../types/index.js"')
       .replace(/from\s+["']@\/lib\/order-status-machine["']/g, 'from "../order-status-machine.js"')
+      .replace(/from\s+["']@\/lib\/policies["']/g, 'from "../policies.js"')
       .replace(/from\s+["']\.\/index["']/g, 'from "./index.js"');
   } else if (f.in.startsWith("src/data/")) {
   code = code
@@ -154,6 +156,10 @@ try {
     cwd: process.cwd(),
   });
   execSync("node --test tests/mobile-navigation.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --test .test-dist/tests/storefront-upgrade.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });

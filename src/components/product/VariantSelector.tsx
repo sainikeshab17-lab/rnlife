@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Heart,
   ShoppingBag,
@@ -35,6 +35,8 @@ export function VariantSelector({
   const [quantity, setQuantity] = useState(1);
   const [sizeError, setSizeError] = useState(false);
   const [isSizeGuideOpen, setIsSizeGuideOpen] = useState(false);
+  const [availability, setAvailability] = useState<Record<string, number>>({});
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false);
 
   const { addToBag, closeDrawer } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
@@ -44,7 +46,23 @@ export function VariantSelector({
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
   const isFavorited = isInWishlist(product.id);
 
-  const isInStock = product.stock > 0;
+  useEffect(() => {
+    let active = true;
+    setAvailabilityLoaded(false);
+    setAvailability({});
+    fetch(`/api/products/${encodeURIComponent(product.id)}/inventory`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("unavailable")))
+      .then((data: { sizes?: Array<{ size: string; available: number }> }) => {
+        if (!active) return;
+        setAvailability(Object.fromEntries((data.sizes ?? []).map(({ size, available }) => [size, available])));
+        setAvailabilityLoaded(true);
+      })
+      .catch(() => { if (active) setAvailabilityLoaded(true); });
+    return () => { active = false; };
+  }, [product.id]);
+  const selectedAvailable = selectedSize ? availability[selectedSize] ?? 0 : 0;
+  const isInStock = availabilityLoaded && selectedAvailable > 0;
+  const hasAnyStock = Object.values(availability).some((count) => count > 0);
 
   const handleAddToBag = () => {
     if (!selectedSize) {
@@ -54,6 +72,11 @@ export function VariantSelector({
         title: "Please Select a Size",
         message: "Choose an available size before adding this T-shirt to your bag.",
       });
+      return;
+    }
+
+    if (!isInStock || quantity > selectedAvailable) {
+      toast({ type: "error", title: "Size Unavailable", message: "This size is sold out or no longer available. Please choose another size." });
       return;
     }
 
@@ -121,7 +144,7 @@ export function VariantSelector({
 
       {/* Stock Status */}
       <div className="flex items-center gap-1.5">
-        {isInStock ? (
+        {!availabilityLoaded ? <span className="text-[11px] text-[#858585]">Checking size availability…</span> : hasAnyStock ? (
           <>
             <span className="w-2 h-2 rounded-full bg-[#079447]" />
             <span className="text-[11px] font-semibold uppercase tracking-wider text-[#079447]">
@@ -214,18 +237,17 @@ export function VariantSelector({
                     ? "bg-[#111111] text-white border-[#111111] -translate-y-0.5 shadow-sm"
                     : "bg-white text-[#111111] border-[#E5E5E5] hover:border-[#111111]"
                 }`}
-                disabled={!isInStock}
-                aria-label={`Select size ${size}`}
+                  disabled={!availabilityLoaded || (availability[size] ?? 0) < 1}
+                  aria-label={`Select size ${size}${(availability[size] ?? 0) < 1 ? ", sold out" : (availability[size] ?? 0) <= 5 ? `, low stock, ${availability[size]} available` : ", in stock"}`}
                 aria-pressed={isSelected}
               >
-                {size}
+                <span className="block">{size}</span>
+                {availabilityLoaded && <span className="block text-[9px] font-medium normal-case tracking-normal">{(availability[size] ?? 0) < 1 ? "Sold out" : (availability[size] ?? 0) <= 5 ? "Low stock" : "In stock"}</span>}
               </button>
             );
           })}
         </div>
-        <p className="text-[10px] text-[#858585]">
-          Size-level inventory is not tracked in this prototype.
-        </p>
+        <p className="text-[10px] text-[#858585]">Availability is updated from current size stock. Checkout rechecks stock before payment.</p>
 
         {/* Size error */}
         {sizeError && (
@@ -258,7 +280,7 @@ export function VariantSelector({
             {quantity}
           </span>
           <button
-            onClick={() => setQuantity(Math.min(10, quantity + 1))}
+            onClick={() => setQuantity(Math.min(10, selectedAvailable || 10, quantity + 1))}
             disabled={!isInStock}
             className="px-3 py-2 text-sm hover:bg-[#FFFFFF] text-[#111111] transition-colors"
             aria-label="Increase quantity"

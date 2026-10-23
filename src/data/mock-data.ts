@@ -1,6 +1,6 @@
 import { Product, Collection, SizeMeasurement, Order, StaffMember, User } from "@/types";
 import { SUPPORT_EMAIL } from "@/lib/support-contact";
-export { PRODUCT_CATEGORIES } from "@/data/product-categories";
+export { PRODUCT_CATEGORIES, getVisibleProductCategories } from "@/data/product-categories";
 
 const designGalleryAssets: Record<
   number,
@@ -75,7 +75,9 @@ const designGalleryAssets: Record<
 const designGallery = (
   designNumber: number
 ): { images: string[]; imageAlts: string[] } => {
-  const assets = designGalleryAssets[designNumber];
+  const assets = designGalleryAssets[designNumber]?.filter(({ fileName }) =>
+    /front|print-closeup|garment-details/.test(fileName),
+  );
   if (!assets) {
     throw new Error(`No image gallery configured for design ${designNumber}`);
   }
@@ -159,7 +161,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Go Crazy About Me",
     category: "hot-girl-stuff",
     tagline: "A relationship-status graphic tee for the loudest little obsession.",
-    description: "Go Crazy About Me is a mood-first raglan graphic tee designed for the kind of love that feels instant, loud, and a little dramatic. The regular fit keeps the message front and center without trying too hard.",
+    description: "A soft rose-coloured block carries the line “Go crazy about me, that’s my type.” The playful relationship joke gives this graphic an expressive feel for casual dates, meetups, and relaxed days out.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(1) }],
@@ -176,7 +178,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: true,
     isFeatured: true,
@@ -191,7 +193,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Monday: Tired, Messy, No Motivation",
     category: "monday-to-friday",
     tagline: "A Monday graphic tee for the messy, overcaffeinated kind of week.",
-    description: "Monday: Tired, Messy, No Motivation captures the universal mood of the first workday. The design sits on a heavy cotton raglan cut that feels lived in from day one.",
+    description: "“Monday: Tired, Messy, No Motivation” turns the start-of-week slump into the graphic’s punchline. It is an easy pick for casual Fridays, coffee runs, or any day when your mood gets there before you do.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(4) }],
@@ -208,7 +210,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: true,
     isFeatured: true,
@@ -223,7 +225,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "I Love Sarcasm",
     category: "everyday-chaos",
     tagline: "A dry, deadpan graphic for the brutally honest crowd.",
-    description: "I Love Sarcasm is all sharp wit and zero effort. It pairs as well with coffee runs as it does with weekend plans and low-key chaos.",
+    description: "The graphic starts with “I Love Sarcasm” and follows with the joke “It’s like punching people in the face but with words.” The deadpan punchline suits casual meetups and anyone who likes their humour dry and direct.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(7) }],
@@ -240,7 +242,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: false,
     isFeatured: true,
@@ -255,7 +257,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Bitch, I Am the Secret Ingredient",
     category: "brutally-honest",
     tagline: "Low-key power, loud energy, and all the confidence in the room.",
-    description: "Bitch, I Am the Secret Ingredient is a bold, unapologetic graphic meant for the women who make every room better just by walking in. The regular-fit cut gives the print room to be the star.",
+    description: "A drawn spice bottle carries the label “Bitch, I Am the Secret Ingredient,” turning the familiar kitchen phrase into a cheeky confidence joke. It is an easy conversation piece for casual plans and nights out.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(3) }],
@@ -272,7 +274,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: false,
     isFeatured: true,
@@ -287,7 +289,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Prayers Become Reality",
     category: "social-battery",
     tagline: "A hopeful chaos tee for the days when everything goes sideways and still somehow works.",
-    description: "Prayers Become Reality is a reminder that even in the mess, the good stuff still lands. It captures the steady optimism behind the everyday chaos of modern life.",
+    description: "The “Prayers Become Reality” graphic gives this design a hopeful, reflective mood. It suits everyday plans and makes a thoughtful gift for someone who likes a little encouragement in their rotation.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(6) }],
@@ -304,7 +306,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: false,
     isFeatured: true,
@@ -319,7 +321,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Hot Girls Do Yoga",
     category: "hot-girl-stuff",
     tagline: "A flexy little reminder that balance can be both stylish and unbothered.",
-    description: "Hot Girls Do Yoga is for the women who can do a downward dog and still look like they own the room. The clean, confident graphic sits on a heavy raglan frame that keeps the mood relaxed.",
+    description: "“Hot Girls Do Yoga” brings a playful line about yoga and confidence to the front of the design. Wear it to a casual class, on the way to meet friends, or simply when the slogan matches your mood.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(8) }],
@@ -336,7 +338,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: false,
     isFeatured: true,
@@ -351,7 +353,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Phirse Bolo?",
     category: "everyday-chaos",
     tagline: "A social-battery tee for the conversations you keep replaying.",
-    description: "Phirse Bolo? brings a playful, familiar tone into the collection and works especially well for anyone who likes their humour a little sharper and a lot more personal.",
+    description: "“Phirse Bolo?”—Hindi for “say that again?”—gives this graphic its teasing, conversational punch. It is made for casual plans and for anyone who enjoys a quick-witted line that invites a second look.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(5) }],
@@ -368,7 +370,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: false,
     isFeatured: true,
@@ -383,7 +385,7 @@ export const PRODUCTS: Product[] = [
     printedMessage: "Friday Mode",
     category: "friday-mode",
     tagline: "The loudest, easiest way to say the week is officially over.",
-    description: "Friday Mode is the no-explanation tee for the end of the workweek. It lands with the same ease as a good playlist, a long drive, and zero plans beyond the weekend.",
+    description: "The front reads “Friday: Half Dead / Half Alive,” a familiar end-of-week mood in a clean typographic layout. Wear it to casual meetups, a weekend drive, or whenever Friday feels like both things at once.",
     price: 999,
     fit: "Regular",
     colors: [{ name: "As pictured", hex: "#F5F4F0", ...designGallery(2) }],
@@ -400,7 +402,7 @@ export const PRODUCTS: Product[] = [
       "Do not iron directly over the print",
       "Dry in shade",
     ],
-    stock: 20,
+    stock: 0,
     isNewDrop: true,
     isBestseller: true,
     isFeatured: true,
@@ -411,30 +413,38 @@ export const PRODUCTS: Product[] = [
 ];
 
 export const SIZE_CHART_OVERSIZED: SizeMeasurement[] = [
-  { size: "XS", chestCm: 104, lengthCm: 70, shoulderCm: 50, sleeveCm: 22 },
-  { size: "S", chestCm: 110, lengthCm: 72, shoulderCm: 53, sleeveCm: 23 },
-  { size: "M", chestCm: 116, lengthCm: 74, shoulderCm: 56, sleeveCm: 24 },
-  { size: "L", chestCm: 122, lengthCm: 76, shoulderCm: 59, sleeveCm: 25 },
-  { size: "XL", chestCm: 128, lengthCm: 78, shoulderCm: 62, sleeveCm: 26 },
-  { size: "XXL", chestCm: 134, lengthCm: 80, shoulderCm: 65, sleeveCm: 27 },
+  { size: "XS", chestCm: 52, lengthCm: 70, shoulderCm: 50, sleeveCm: 22 },
+  { size: "S", chestCm: 55, lengthCm: 72, shoulderCm: 53, sleeveCm: 23 },
+  { size: "M", chestCm: 58, lengthCm: 74, shoulderCm: 56, sleeveCm: 24 },
+  { size: "L", chestCm: 61, lengthCm: 76, shoulderCm: 59, sleeveCm: 25 },
+  { size: "XL", chestCm: 64, lengthCm: 78, shoulderCm: 62, sleeveCm: 26 },
+  { size: "XXL", chestCm: 67, lengthCm: 80, shoulderCm: 65, sleeveCm: 27 },
 ];
 
 export const SIZE_CHART_RELAXED: SizeMeasurement[] = [
-  { size: "XS", chestCm: 98, lengthCm: 69, shoulderCm: 45, sleeveCm: 20 },
-  { size: "S", chestCm: 102, lengthCm: 71, shoulderCm: 47, sleeveCm: 21 },
-  { size: "M", chestCm: 108, lengthCm: 73, shoulderCm: 50, sleeveCm: 22 },
-  { size: "L", chestCm: 114, lengthCm: 75, shoulderCm: 53, sleeveCm: 23 },
-  { size: "XL", chestCm: 120, lengthCm: 77, shoulderCm: 56, sleeveCm: 24 },
-  { size: "XXL", chestCm: 126, lengthCm: 79, shoulderCm: 59, sleeveCm: 25 },
+  { size: "XS", chestCm: 49, lengthCm: 69, shoulderCm: 45, sleeveCm: 20 },
+  { size: "S", chestCm: 51, lengthCm: 71, shoulderCm: 47, sleeveCm: 21 },
+  { size: "M", chestCm: 54, lengthCm: 73, shoulderCm: 50, sleeveCm: 22 },
+  { size: "L", chestCm: 57, lengthCm: 75, shoulderCm: 53, sleeveCm: 23 },
+  { size: "XL", chestCm: 60, lengthCm: 77, shoulderCm: 56, sleeveCm: 24 },
+  { size: "XXL", chestCm: 63, lengthCm: 79, shoulderCm: 59, sleeveCm: 25 },
 ];
 
 export const SIZE_CHART_REGULAR: SizeMeasurement[] = [
-  { size: "XS", chestCm: 92, lengthCm: 68, shoulderCm: 42, sleeveCm: 19 },
-  { size: "S", chestCm: 96, lengthCm: 70, shoulderCm: 44, sleeveCm: 20 },
-  { size: "M", chestCm: 102, lengthCm: 72, shoulderCm: 46, sleeveCm: 21 },
-  { size: "L", chestCm: 108, lengthCm: 74, shoulderCm: 48, sleeveCm: 22 },
-  { size: "XL", chestCm: 114, lengthCm: 76, shoulderCm: 50, sleeveCm: 23 },
-  { size: "XXL", chestCm: 120, lengthCm: 78, shoulderCm: 52, sleeveCm: 24 },
+  { size: "XS", chestCm: 46, lengthCm: 68, shoulderCm: 42, sleeveCm: 19 },
+  { size: "S", chestCm: 48, lengthCm: 70, shoulderCm: 44, sleeveCm: 20 },
+  { size: "M", chestCm: 51, lengthCm: 72, shoulderCm: 46, sleeveCm: 21 },
+  { size: "L", chestCm: 54, lengthCm: 74, shoulderCm: 48, sleeveCm: 22 },
+  { size: "XL", chestCm: 57, lengthCm: 76, shoulderCm: 50, sleeveCm: 23 },
+  { size: "XXL", chestCm: 60, lengthCm: 78, shoulderCm: 52, sleeveCm: 24 },
+];
+
+export const SIZE_CHART_INDUSTRY_REFERENCE: SizeMeasurement[] = [
+  { size: "S", chestCm: 45.7, lengthCm: 68.6, shoulderCm: 40.6, sleeveCm: 20 },
+  { size: "M", chestCm: 48.3, lengthCm: 71.1, shoulderCm: 43.2, sleeveCm: 21 },
+  { size: "L", chestCm: 50.8, lengthCm: 73.7, shoulderCm: 45.7, sleeveCm: 22 },
+  { size: "XL", chestCm: 53.3, lengthCm: 76.2, shoulderCm: 48.3, sleeveCm: 23 },
+  { size: "XXL", chestCm: 55.9, lengthCm: 78.7, shoulderCm: 50.8, sleeveCm: 24 },
 ];
 
 export const DEMO_USER: User = {

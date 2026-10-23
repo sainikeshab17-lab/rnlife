@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { ProductGrid } from "@/components/product/ProductGrid";
-import { BRAND_INFO, COLLECTIONS, PRODUCT_CATEGORIES, PRODUCTS } from "@/data/mock-data";
+import { BRAND_INFO, COLLECTIONS, PRODUCTS, getVisibleProductCategories } from "@/data/mock-data";
 
 const allProducts = PRODUCTS;
 const heroProduct = (() => {
@@ -15,10 +15,10 @@ const heroProduct = (() => {
 })();
 const heroColor = heroProduct.colors[0];
 const heroImageIndex = heroColor.images.findIndex((image) =>
-  image.endsWith("/design_05_01_couple.png")
+  image.endsWith("/design_05_02_front.png")
 );
 if (heroImageIndex === -1) {
-  throw new Error("The Phirse Bolo? Design 5 couple image is missing from its gallery");
+  throw new Error("The Phirse Bolo? product image is missing from its gallery");
 }
 const heroImage = heroColor.images[heroImageIndex];
 const heroImageAlt = heroColor.imageAlts?.[heroImageIndex] ?? heroProduct.name;
@@ -33,7 +33,7 @@ const essentialsImageAlt = PRODUCTS.flatMap((product) =>
     alt: color.imageAlts?.[index],
   })))
 ).find((entry) => entry.image === essentialsImage)?.alt ?? essentialsCollection.name;
-const categoryCards = PRODUCT_CATEGORIES.map((category) => ({
+const categoryCards = getVisibleProductCategories(PRODUCTS).map((category) => ({
   ...category,
   count: PRODUCTS.filter((product) => product.category === category.slug).length,
 }));

@@ -16,6 +16,7 @@ import {
 } from "./index";
 import type { CustomTShirtCustomization } from "@/types";
 import { getCancellationResultStatus, shouldMarkOrderRefunded } from "@/lib/order-status-machine";
+import { STORE_POLICIES } from "@/lib/policies";
 
 export function orderInventoryVariants<T extends { productId: string; size: string }>(items: T[]): T[] {
   return [...items].sort((a, b) =>
@@ -936,7 +937,7 @@ export async function decideOrderCancellation(
 
 /**
  * Customer submits return or exchange request.
- * Validates 7-day window and prevents returning more items than purchased.
+ * Validates the configured return window and prevents returning more items than purchased.
  */
 export async function requestReturnOrExchange(params: {
   orderId: string;
@@ -966,8 +967,8 @@ export async function requestReturnOrExchange(params: {
 
     const deliveryTime = new Date(order.actual_delivery_date || order.updated_at).getTime();
     const daysSinceDelivery = (Date.now() - deliveryTime) / (1000 * 60 * 60 * 24);
-    if (!Number.isFinite(deliveryTime) || daysSinceDelivery > 7) {
-      return { success: false, error: "Return window has expired (7 days policy)." };
+    if (!Number.isFinite(deliveryTime) || daysSinceDelivery > STORE_POLICIES.returns.windowDays) {
+      return { success: false, error: `Return window has expired (${STORE_POLICIES.returns.windowDays} days policy).` };
     }
 
     const validatedItems: Array<{ request: typeof params.items[number]; orderItem: DbOrderItem }> = [];

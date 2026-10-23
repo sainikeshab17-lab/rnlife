@@ -20,6 +20,7 @@ import {
   FileText,
   Loader2,
   RotateCcw,
+  Star,
 } from "lucide-react";
 
 interface AdminUser {
@@ -99,6 +100,7 @@ export function AdminLayout({
     { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
     { label: "Order Operations", href: "/admin/orders", icon: ShoppingBag },
     { label: "Returns & Exchanges", href: "/admin/returns", icon: RotateCcw },
+    { label: "Product Reviews", href: "/admin/reviews", icon: Star },
     { label: "Notification Queue", href: "/admin/notifications", icon: FileText },
     { label: "Warehouse Inventory", href: "/admin/inventory", icon: Boxes },
     { label: "Catalog Products", href: "/admin/products", icon: Package },

@@ -116,8 +116,6 @@ export function Footer() {
         <p>© {new Date().getFullYear()} RIGHTNOWLIFE</p>
         <div className="flex gap-4">
           <Link href="/account" className="hover:text-white">Account</Link>
-          <Link href="/seller" className="hover:text-white">Staff portal</Link>
-          <Link href="/admin" className="hover:text-white">Admin Portal</Link>
         </div>
       </div>
     </footer>

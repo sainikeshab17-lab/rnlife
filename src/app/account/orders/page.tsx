@@ -10,9 +10,11 @@ import { StatusBadge } from "@/components/common/StatusBadge";
 import { formatINR } from "@/lib/utils";
 import type { OrderStatus } from "@/types";
 import { hasRequiredOrderPayment } from "@/services/order-payment-state";
+import { OrderReviewForm } from "@/components/order/OrderReviewForm";
 
 interface OrderItem {
   id: string;
+  product_id: string;
   product_name: string;
   product_slug: string;
   size: string;
@@ -231,6 +233,7 @@ function OrdersContent() {
                             Size: {item.size} • Color: {item.color} • Qty: {item.quantity} ({formatINR(item.price)} each)
                           </p>
                           {item.customization && <p className="mt-1 text-[11px] text-[#0876A8]">“{item.customization.quote}” · {item.customization.mood} · {item.customization.quoteStyle} · {item.customization.font} · {item.customization.printColor} · {item.customization.placement} · {item.fulfillment_type === "made_to_order" ? "Made to order" : ""}</p>}
+                          {order.order_status === "delivered" && /^rnl-design-0[1-8]$/.test(item.product_id) && <OrderReviewForm productId={item.product_id} orderItemId={item.id} />}
                         </div>
                         <span className="text-xs font-semibold text-[#111111]">
                           {formatINR(item.price * item.quantity)}

@@ -36,11 +36,9 @@ test("account menu keeps customer account actions without exposing internal staf
   assert.match(accountMenu, /onClick=\{logout\}/);
 });
 
-test("footer retains staff portal destinations and uses the Admin Portal label", async () => {
+test("public footer does not expose staff or admin portal links", async () => {
   const footer = await read("../src/components/layout/Footer.tsx");
-  assert.match(footer, /href="\/seller"[^>]*>Staff portal<\/Link>/);
-  assert.match(footer, /href="\/admin"[^>]*>Admin Portal<\/Link>/);
-  assert.doesNotMatch(footer, /Admin Demo|Admin demo/);
+  assert.doesNotMatch(footer, /href="\/(?:seller|admin)"/);
 });
 
 test("desktop navigation remains in its existing large-screen navigation region", async () => {

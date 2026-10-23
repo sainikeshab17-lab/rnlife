@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 
 import { StoreLayout } from "@/components/layout/StoreLayout";
+import { STORE_POLICIES } from "@/lib/policies";
 
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
 
@@ -1893,7 +1894,7 @@ export default function CheckoutPage() {
 
                   <p>• Complimentary express air shipping on all orders (₹0).</p>
 
-                  <p>• Covered by RightNowLife 7-day size exchange guarantee.</p>
+                  <p>• Exchange requests may be submitted within {STORE_POLICIES.returns.windowDays} days after delivery and are reviewed under our Returns & Exchanges Policy.</p>
 
                 </div>
 

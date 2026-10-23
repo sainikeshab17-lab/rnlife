@@ -6,6 +6,7 @@ import { Product } from "@/types";
 import { ProductGallery } from "@/components/product/ProductGallery";
 import { VariantSelector } from "@/components/product/VariantSelector";
 import { ProductGrid } from "@/components/product/ProductGrid";
+import { ProductReviews } from "@/components/product/ProductReviews";
 import { formatINR } from "@/lib/utils";
 import {
   ChevronDown,
@@ -184,14 +185,14 @@ export function ProductDetailsClient({
             </AccordionSection>
 
             {/* Specifications */}
-            <AccordionSection
+            {(product.fabricComposition !== "Fabric details coming soon" || product.gsm > 0 || Boolean(product.printTechnique)) && <AccordionSection
               id="specs"
               label="Fabric & Print Specifications"
               open={openSection === "specs"}
               onToggle={toggleSection}
             >
               <dl className="space-y-1.5 text-[#111111]">
-                <SpecRow label="Fabric" value={product.fabricComposition} />
+                {product.fabricComposition !== "Fabric details coming soon" && <SpecRow label="Fabric" value={product.fabricComposition} />}
                 {product.gsm > 0 && (
                   <SpecRow
                     label="Fabric Weight"
@@ -205,9 +206,10 @@ export function ProductDetailsClient({
                   />
                 )}
               </dl>
-            </AccordionSection>
+            </AccordionSection>}
 
             {/* Care */}
+            {product.careInstructions.length > 0 && (
             <AccordionSection
               id="care"
               label="Washing & Care Instructions"
@@ -220,6 +222,7 @@ export function ProductDetailsClient({
                 ))}
               </ul>
             </AccordionSection>
+            )}
 
             {/* Shipping */}
             <AccordionSection
@@ -229,7 +232,7 @@ export function ProductDetailsClient({
               onToggle={toggleSection}
             >
               <p className="text-[#858585] leading-relaxed">
-                Delivery coverage and exchange eligibility are not checked live in this prototype. Review the current policies before placing an order.
+                Shipping options and delivery estimates are shown during checkout. Exchange requests are reviewed against the published policy and requested-size availability.
               </p>
               <div className="mt-3 flex gap-4 font-semibold text-[#0876A8]">
                 <Link href="/shipping" className="underline underline-offset-2">Shipping policy</Link>
@@ -257,6 +260,7 @@ export function ProductDetailsClient({
           <ProductGrid products={relatedProducts} columns={4} />
         </div>
       )}
+      <ProductReviews productId={product.id} />
     </div>
   );
 }

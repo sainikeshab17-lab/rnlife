@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Heart, Plus, ShoppingBag } from "lucide-react";
@@ -19,12 +19,24 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [showQuickSizes, setShowQuickSizes] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
+  const [availableSizes, setAvailableSizes] = useState<Record<string, number>>({});
 
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { addToBag } = useCart();
 
   const isFavorited = isInWishlist(product.id);
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
+
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/products/${encodeURIComponent(product.id)}/inventory`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("unavailable")))
+      .then((data: { sizes?: Array<{ size: string; available: number }> }) => {
+        if (active) setAvailableSizes(Object.fromEntries((data.sizes ?? []).map(({ size, available }) => [size, available])));
+      })
+      .catch(() => { if (active) setAvailableSizes({}); });
+    return () => { active = false; };
+  }, [product.id]);
 
   const primaryImage = currentColor?.images[0] || product.colors[0]?.images[0] || "";
   const hoverImage =
@@ -154,10 +166,10 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
                   <button
                     key={size}
                     onClick={(e) => handleQuickAdd(size, e)}
-                    disabled={product.stock <= 0}
+                    disabled={(availableSizes[size] ?? 0) <= 0}
                     className="py-1.5 text-[11px] font-bold text-[#111111] bg-[#FFFFFF] hover:bg-[#FFB900] hover:text-[#111111] transition-colors border border-[#E5E5E5]"
                   >
-                    {size}
+                    {size}{(availableSizes[size] ?? 0) > 0 && (availableSizes[size] ?? 0) <= 5 ? " · Low" : ""}
                   </button>
                 ))}
               </div>

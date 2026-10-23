@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, HelpCircle, ArrowRight } from "lucide-react";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
+import { STORE_POLICIES } from "@/lib/policies";
 
 export default function FAQPage() {
   const [openIdx, setOpenIdx] = useState<number | null>(0);
@@ -12,23 +13,23 @@ export default function FAQPage() {
   const faqs = [
     {
       q: "How do I choose between an Oversized Fit and a Relaxed Fit?",
-      a: "Our Oversized Fit is intentionally designed with exaggerated dropped shoulders, lengthened half sleeves, and a boxy torso. We suggest picking your standard size for the intended streetwear drape. If you prefer a more tailored fit, choose our Relaxed Fit or size down.",
+      a: "Compare the proposed garment chart with a T-shirt that fits you well. The published size charts are pending physical verification; use the size guide for measurement definitions and the current verification note.",
     },
     {
       q: "What does 260 GSM mean for a T-shirt?",
-      a: "GSM stands for Grams per Square Meter — the metric weight of the cotton fabric. Standard mass-market tees are typically 140–180 GSM and tend to cling. Our 240–280 GSM custom combed cotton provides substantial structural drape, opaque non-see-through thickness, and long-lasting durability.",
+      a: "GSM means grams per square metre, a measure of fabric weight. Please check the product details for the specifications currently listed for that design.",
     },
     {
       q: "How should I wash my RightNowLife graphic tees?",
-      a: "To preserve deep cotton pigments and tactile puff/discharge prints, always wash your tees inside out in cold water (30°C or below). Avoid bleach and tumble drying; instead, hang dry naturally in the shade. Never iron directly over printed graphics.",
+      a: "Follow the care instructions shown on the individual product page. They are also available on the garment label.",
     },
     {
       q: "How long does shipping take across India?",
-      a: "Metro destinations (Bengaluru, Mumbai, Delhi NCR, Hyderabad, Chennai) receive express air delivery in 2 to 3 business days. Non-metro locations take 3 to 5 business days. Real-time air tracking numbers (AWB) are emailed upon dispatch.",
+      a: "Available shipping methods, charges, and delivery estimates are shown during checkout and may vary by destination. See our Shipping Policy for details.",
     },
     {
       q: "Can I exchange my T-shirt for a different size?",
-      a: "Yes! We offer a hassle-free 7-day size exchange guarantee. If your silhouette doesn't sit quite right, visit your Account Orders page or contact us to schedule a doorstep reverse pickup and replacement dispatch.",
+      a: `The current policy configuration accepts exchange requests within ${STORE_POLICIES.returns.windowDays} days after delivery. Submit a size-exchange request from Account → Orders or contact support. The team reviews eligibility and confirms requested-size stock before completing an exchange. Return shipping charges and final item-condition rules require owner confirmation; see the Returns & Refunds Policy.`,
     },
     {
       q: "Is Cash on Delivery (COD) supported?",
