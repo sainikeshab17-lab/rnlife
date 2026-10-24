@@ -1,42 +1,14 @@
 import { after, test } from "node:test";
+import { validateTestDatabaseConfig } from "./postgres-test-database-gate.mjs";
 
-const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-const nonProductionApproved = process.env.TEST_DATABASE_IS_NON_PRODUCTION === "1";
-const schemaReady = process.env.TEST_DATABASE_SCHEMA_READY === "1";
-const hasAnyTestDatabaseConfig = Boolean(
-  testDatabaseUrl || process.env.TEST_DATABASE_IS_NON_PRODUCTION || process.env.TEST_DATABASE_SCHEMA_READY
-);
-
-let approvedTestDatabaseUrl;
-if (hasAnyTestDatabaseConfig) {
-  if (!testDatabaseUrl || !nonProductionApproved || !schemaReady) {
-    throw new Error(
-      "Test database configuration is incomplete; set TEST_DATABASE_URL, TEST_DATABASE_IS_NON_PRODUCTION=1, and TEST_DATABASE_SCHEMA_READY=1."
-    );
-  }
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(testDatabaseUrl);
-  } catch {
-    throw new Error("TEST_DATABASE_URL must be a valid local PostgreSQL URL.");
-  }
-
-  if (
-    !["postgres:", "postgresql:"].includes(parsedUrl.protocol) ||
-    !["localhost", "127.0.0.1", "::1"].includes(parsedUrl.hostname)
-  ) {
-    throw new Error("Database integration tests only permit a loopback PostgreSQL host.");
-  }
-
-  approvedTestDatabaseUrl = testDatabaseUrl;
-}
+const testDatabaseConfig = validateTestDatabaseConfig(process.env);
+const approvedTestDatabaseUrl = testDatabaseConfig.url;
 
 export function databaseTest(name, callback) {
   test(name, {
     skip: approvedTestDatabaseUrl
       ? false
-      : "requires an explicitly configured loopback TEST_DATABASE_URL, non-production approval, and a ready schema",
+      : "requires an explicitly approved loopback PostgreSQL database with a test-only database name",
   }, async (...args) => {
     if (!approvedTestDatabaseUrl) return;
 

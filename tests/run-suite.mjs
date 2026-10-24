@@ -20,11 +20,15 @@ const filesToCompile = [
   { in: "src/lib/db/index.ts", out: ".test-dist/src/lib/db/index.js" },
   { in: "src/lib/db/sql.ts", out: ".test-dist/src/lib/db/sql.js" },
   { in: "src/lib/db/orders.ts", out: ".test-dist/src/lib/db/orders.js" },
+  { in: "src/lib/db/shiprocket-operation-guard.ts", out: ".test-dist/src/lib/db/shiprocket-operation-guard.js" },
   { in: "src/lib/db/audit.ts", out: ".test-dist/src/lib/db/audit.js" },
   { in: "src/lib/auth/admin-auth.ts", out: ".test-dist/src/lib/auth/admin-auth.js" },
   { in: "src/lib/auth/admin-route-gate.ts", out: ".test-dist/src/lib/auth/admin-route-gate.js" },
   { in: "src/lib/order-status-machine.ts", out: ".test-dist/src/lib/order-status-machine.js" },
   { in: "src/lib/razorpay.ts", out: ".test-dist/src/lib/razorpay.js" },
+  { in: "src/lib/shiprocket/client.ts", out: ".test-dist/src/lib/shiprocket/client.js" },
+  { in: "src/services/shiprocket/shipping-service.ts", out: ".test-dist/src/services/shiprocket/shipping-service.js" },
+  { in: "src/services/shiprocket/shipping-route-handler.ts", out: ".test-dist/src/services/shiprocket/shipping-route-handler.js" },
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
   { in: "src/services/inventory-product-catalog.ts", out: ".test-dist/src/services/inventory-product-catalog.js" },
   { in: "src/services/admin-orders-list.ts", out: ".test-dist/src/services/admin-orders-list.js" },
@@ -40,6 +44,8 @@ const filesToCompile = [
   { in: "src/services/contact-submission.ts", out: ".test-dist/src/services/contact-submission.js" },
   { in: "src/services/refund-reconciliation.ts", out: ".test-dist/src/services/refund-reconciliation.js" },
   { in: "src/services/refund-reconciliation-route.ts", out: ".test-dist/src/services/refund-reconciliation-route.js" },
+  { in: "src/services/razorpay/refund-webhook-inbox-policy.ts", out: ".test-dist/src/services/razorpay/refund-webhook-inbox-policy.js" },
+  { in: "src/services/razorpay/refund-webhook-inbox.ts", out: ".test-dist/src/services/razorpay/refund-webhook-inbox.js" },
   { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" },
   { in: "tests/mood-quotes.test.mjs", out: ".test-dist/tests/mood-quotes.test.mjs" },
   { in: "tests/wear-your-mood-preview.test.mjs", out: ".test-dist/tests/wear-your-mood-preview.test.mjs" },
@@ -49,10 +55,16 @@ const filesToCompile = [
   { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
   { in: "tests/refund-reconciliation.test.mjs", out: ".test-dist/tests/refund-reconciliation.test.mjs" },
   { in: "tests/refund-reconciliation-route.test.mjs", out: ".test-dist/tests/refund-reconciliation-route.test.mjs" },
+  { in: "tests/refund-webhook-inbox.test.mjs", out: ".test-dist/tests/refund-webhook-inbox.test.mjs" },
+  { in: "tests/refund-webhook-inbox-policy.test.mjs", out: ".test-dist/tests/refund-webhook-inbox-policy.test.mjs" },
   { in: "tests/notification-service.test.mjs", out: ".test-dist/tests/notification-service.test.mjs" },
   { in: "tests/admin-notification-route.test.mjs", out: ".test-dist/tests/admin-notification-route.test.mjs" },
+  { in: "tests/shiprocket-client.test.mjs", out: ".test-dist/tests/shiprocket-client.test.mjs" },
+  { in: "tests/shiprocket-shipping-service.test.mjs", out: ".test-dist/tests/shiprocket-shipping-service.test.mjs" },
+  { in: "tests/shiprocket-shipping-route.test.mjs", out: ".test-dist/tests/shiprocket-shipping-route.test.mjs" },
   { in: "tests/storefront-upgrade.test.mjs", out: ".test-dist/tests/storefront-upgrade.test.mjs" },
   { in: "tests/postgres-test-support.mjs", out: ".test-dist/tests/postgres-test-support.mjs" },
+  { in: "tests/postgres-test-database-gate.mjs", out: ".test-dist/tests/postgres-test-database-gate.mjs" },
   { in: "tests/postgres-sql.test.mjs", out: ".test-dist/tests/postgres-sql.test.mjs" },
 ];
 
@@ -64,6 +76,14 @@ for (const f of filesToCompile) {
   let code = fs.readFileSync(fullIn, "utf8");
 
   // Fix module aliases and file extensions for native node execution
+  if (f.in === "src/services/razorpay/refund-webhook-inbox.ts") {
+    code = code
+      .replace(/from\s+["']@\/lib\/db["']/g, 'from "../../../test-refund-webhook-inbox-deps.js"')
+      .replace(/from\s+["']@\/lib\/db\/orders["']/g, 'from "../../../test-refund-webhook-inbox-deps.js"')
+      .replace(/from\s+["']@\/lib\/db\/shiprocket-operation-guard["']/g, 'from "../../../test-refund-webhook-inbox-deps.js"')
+      .replace(/from\s+["']@\/lib\/order-status-machine["']/g, 'from "../../../test-refund-webhook-inbox-deps.js"')
+      .replace(/from\s+["']\.\/refund-webhook-inbox-policy["']/g, 'from "./refund-webhook-inbox-policy.js"');
+  }
   if (f.in.startsWith("src/services/")) {
     code = code
       .replace(/from\s+["']@\/data\/mock-data["']/g, 'from "../data/mock-data.js"')
@@ -86,9 +106,32 @@ for (const f of filesToCompile) {
         .replace(/from\s+["']@\/services\/refund-reconciliation["']/g, 'from "./refund-reconciliation.js"')
         .replace(/from\s+["']@\/lib\/db\/audit["']/g, 'from "../lib/db/audit.js"');
     }
+    if (f.in === "src/services/shiprocket/shipping-service.ts") {
+      code = code
+        .replace('from "../lib/db/index.js"', 'from "../../lib/db/index.js"')
+        .replace(/from\s+["']@\/lib\/db\/shiprocket-operation-guard["']/g, 'from "../../lib/db/shiprocket-operation-guard.js"')
+        .replace(/from\s+["']@\/lib\/shiprocket\/client["']/g, 'from "../../lib/shiprocket/client.js"');
+    }
+    if (f.in === "src/services/shiprocket/shipping-route-handler.ts") {
+      code = code
+        .replace(/from\s+["']next\/server["']/g, 'from "../../../test-next-server.js"')
+        .replace(/from\s+["']@\/lib\/auth\/admin-auth["']/g, 'from "../../../test-shiprocket-route-deps.js"')
+        .replace(/from\s+["']@\/lib\/shiprocket\/client["']/g, 'from "../../../test-shiprocket-route-deps.js"')
+        .replace(/from\s+["']@\/services\/shiprocket\/shipping-service["']/g, 'from "../../../test-shiprocket-route-deps.js"');
+    }
     if (f.in === "src/services/admin-notification-route.ts") {
       code = code.replace(/from\s+["']next\/server["']/g, 'from "../../test-next-server.js"');
     }
+  } else if (f.in === "src/services/shiprocket/shipping-route-handler.ts") {
+    const routeStubs = path.relative(path.dirname(fullOut), path.join(outDir, "test-shiprocket-route-deps.js")).replace(/\\/g, "/");
+    const nextStub = path.relative(path.dirname(fullOut), path.join(outDir, "test-next-server.js")).replace(/\\/g, "/");
+    const routeSpecifier = routeStubs.startsWith(".") ? routeStubs : `./${routeStubs}`;
+    const nextSpecifier = nextStub.startsWith(".") ? nextStub : `./${nextStub}`;
+    code = code
+      .replace(/from\s+["']next\/server["']/g, `from "${nextSpecifier}"`)
+      .replace(/from\s+["']@\/lib\/auth\/admin-auth["']/g, `from "${routeSpecifier}"`)
+      .replace(/from\s+["']@\/lib\/shiprocket\/client["']/g, `from "${routeSpecifier}"`)
+      .replace(/from\s+["']@\/services\/shiprocket\/shipping-service["']/g, `from "${routeSpecifier}"`);
   } else if (f.in.startsWith("src/lib/auth/")) {
     code = code.replace(/from\s+["']@\/lib\/db\/index["']/g, 'from "../db/index.js"');
   } else if (f.in.startsWith("src/lib/shipping/")) {
@@ -101,6 +144,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']@\/types["']/g, 'from "../../types/index.js"')
       .replace(/from\s+["']@\/lib\/order-status-machine["']/g, 'from "../order-status-machine.js"')
       .replace(/from\s+["']@\/lib\/policies["']/g, 'from "../policies.js"')
+      .replace(/from\s+["']\.\/shiprocket-operation-guard["']/g, 'from "./shiprocket-operation-guard.js"')
       .replace(/from\s+["']\.\/index["']/g, 'from "./index.js"');
   } else if (f.in.startsWith("src/data/")) {
   code = code
@@ -116,6 +160,10 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/inventory-product-catalog\.ts["']/g, 'from "../src/services/inventory-product-catalog.js"')
       .replace(/from\s+["']\.\.\/src\/services\/admin-orders-list\.ts["']/g, 'from "../src/services/admin-orders-list.js"')
       .replace(/from\s+["']\.\.\/src\/services\/checkout-payment-attempts\.ts["']/g, 'from "../src/services/checkout-payment-attempts.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/shiprocket\/client\.ts["']/g, 'from "../src/lib/shiprocket/client.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/shiprocket\/shipping-service\.ts["']/g, 'from "../src/services/shiprocket/shipping-service.js"')
+      .replace(/from\s+["']\.\.\/src\/app\/api\/admin\/orders\/\[id\]\/shipping\/route\.ts["']/g, 'from "../src/services/shiprocket/shipping-route-handler.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/shiprocket\/shipping-route-handler\.ts["']/g, 'from "../src/services/shiprocket/shipping-route-handler.js"')
       .replace(/from\s+["']\.\.\/src\/services\/mood-quotes\.ts["']/g, 'from "../src/services/mood-quotes.js"')
       .replace(/from\s+["']\.\.\/src\/services\/wear-your-mood-preview\.ts["']/g, 'from "../src/services/wear-your-mood-preview.js"')
       .replace(/from\s+["']\.\.\/src\/services\/customer-orders-api\.ts["']/g, 'from "../src/services/customer-orders-api.js"')
@@ -127,6 +175,8 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/contact-submission\.ts["']/g, 'from "../src/services/contact-submission.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation\.ts["']/g, 'from "../src/services/refund-reconciliation.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation-route\.ts["']/g, 'from "../src/services/refund-reconciliation-route.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/razorpay\/refund-webhook-inbox-policy\.ts["']/g, 'from "../src/services/razorpay/refund-webhook-inbox-policy.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/razorpay\/refund-webhook-inbox\.ts["']/g, 'from "../src/services/razorpay/refund-webhook-inbox.js"')
       .replace(/from\s+["']\.\.\/src\/services\/admin-notification-route\.ts["']/g, 'from "../src/services/admin-notification-route.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/policies\.ts["']/g, 'from "../src/lib/policies.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/support-contact\.ts["']/g, 'from "../src/lib/support-contact.js"')
@@ -164,10 +214,16 @@ fs.writeFileSync(
 );
 fs.writeFileSync(path.join(serverOnlyStub, "index.js"), "export {};\n");
 fs.writeFileSync(path.join(outDir, "test-next-server.js"), `export class NextResponse extends Response {\n  static json(body, init = {}) {\n    const headers = new Headers(init.headers);\n    headers.set("content-type", "application/json");\n    return new Response(JSON.stringify(body), { ...init, headers });\n  }\n}\n`);
+fs.writeFileSync(path.join(outDir, "test-shiprocket-route-deps.js"), `export async function requireAdminAuth() { return null; }\nexport function shiprocketEnabled() { return false; }\nexport class ShiprocketError extends Error {}\nexport async function assignShipmentAwb() {}\nexport async function createOrResumeShipment() {}\nexport async function generateShipmentLabel() {}\nexport async function scheduleShipmentPickup() {}\n`);
+fs.writeFileSync(path.join(outDir, "test-refund-webhook-inbox-deps.js"), `export function getDb() { throw new Error("Unexpected database access in inbox unit test"); }\nexport async function withTransaction(callback) { throw new Error("Unexpected default transaction in inbox unit test"); }\nexport async function recordRefund() { throw new Error("Unexpected refund mutation in inbox unit test"); }\nexport function hasUnresolvedShiprocketOperation() { return false; }\nexport function getRefundWebhookIdempotencyKey(id) { return "rzp_refund_" + id; }\nexport function shouldMarkOrderRefunded() { return false; }\n`);
 
 console.log("Transpiled test build ready in .test-dist. Running node test suite sequentially...");
 try {
   execSync("node --test tests/postgres-migration.test.mjs tests/postgres-import.test.mjs tests/postgres-migration-runner.test.mjs tests/postgres-sql.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --test tests/postgres-test-database-gate.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
@@ -219,7 +275,19 @@ try {
     stdio: "inherit",
     cwd: process.cwd(),
   });
+  execSync("node --conditions=react-server --test .test-dist/tests/refund-webhook-inbox.test.mjs .test-dist/tests/refund-webhook-inbox-policy.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
   execSync("node --conditions=react-server --test .test-dist/tests/notification-service.test.mjs .test-dist/tests/admin-notification-route.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --conditions=react-server --test .test-dist/tests/shiprocket-client.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --conditions=react-server --test .test-dist/tests/shiprocket-shipping-service.test.mjs .test-dist/tests/shiprocket-shipping-route.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });

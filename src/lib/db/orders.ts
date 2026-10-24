@@ -17,6 +17,7 @@ import {
 import type { CustomTShirtCustomization } from "@/types";
 import { getCancellationResultStatus, shouldMarkOrderRefunded } from "@/lib/order-status-machine";
 import { STORE_POLICIES } from "@/lib/policies";
+import { hasUnresolvedShiprocketOperation } from "./shiprocket-operation-guard";
 
 export function orderInventoryVariants<T extends { productId: string; size: string }>(items: T[]): T[] {
   return [...items].sort((a, b) =>
@@ -831,6 +832,9 @@ export async function requestOrderCancellation(orderId: string, reason: string):
   return withTransaction(async (db) => {
     const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(orderId);
     if (!order) return { success: false, error: "Order not found." };
+    if (hasUnresolvedShiprocketOperation(order.shiprocket_state)) {
+      return { success: false, error: "Shipment operation is in progress or requires reconciliation. Resolve it before requesting cancellation." };
+    }
     if (order.cancellation_requested) {
       return { success: false, error: "Cancellation has already been requested for this order." };
     }
@@ -879,6 +883,9 @@ export async function decideOrderCancellation(
     if (!order) return { success: false, error: "Order not found." };
     if (!order.cancellation_requested) {
       return { success: false, error: "There is no pending cancellation request for this order." };
+    }
+    if (approved && hasUnresolvedShiprocketOperation(order.shiprocket_state)) {
+      return { success: false, error: "Shipment operation is in progress or requires reconciliation. Resolve it before approving cancellation." };
     }
 
     const now = new Date().toISOString();
@@ -1161,11 +1168,16 @@ export async function reserveRefund(params: {
   initiatedBy: string;
 }): Promise<{ reservation: DbRefundRecord | null; reason?: "pending" | "exceeds_balance" | "order_changed" }> {
   return withTransaction(async (db) => {
-    const order = await db.prepare("SELECT id, payment_status, payment_method, razorpay_payment_id, total FROM orders WHERE id = ? FOR UPDATE")
-      .get<{ id: string; payment_status: string; payment_method: string; razorpay_payment_id: string | null; total: number }>(params.orderId);
+    const order = await db.prepare("SELECT id, payment_status, payment_method, razorpay_payment_id, total, shiprocket_state FROM orders WHERE id = ? FOR UPDATE")
+      .get<{ id: string; payment_status: string; payment_method: string; razorpay_payment_id: string | null; total: number; shiprocket_state: string | null }>(params.orderId);
     if (!order || order.payment_status !== "paid" || order.payment_method === "COD Advance" || order.razorpay_payment_id !== params.paymentId) {
       return { reservation: null, reason: "order_changed" };
     }
+    if (hasUnresolvedShiprocketOperation(order.shiprocket_state)) return { reservation: null, reason: "order_changed" };
+    const webhookEvent = await db.prepare(`SELECT event_key FROM razorpay_refund_webhook_inbox
+      WHERE (order_id = ? OR payment_id = ?) AND state IN ('received', 'deferred', 'quarantined') LIMIT 1`)
+      .get<{ event_key: string }>(params.orderId, params.paymentId);
+    if (webhookEvent) return { reservation: null, reason: "order_changed" };
     const existing = await db.prepare("SELECT id FROM refund_records WHERE order_id = ? AND status = 'pending' LIMIT 1")
       .get<{ id: string }>(params.orderId);
     if (existing) return { reservation: null, reason: "pending" };
@@ -1194,13 +1206,16 @@ export async function applyRefundReconciliation(params: {
   providerRefundId: string;
   providerStatus: "processed" | "failed" | "pending";
   failureReason?: string;
-}): Promise<{ outcome: "applied" | "unchanged" | "conflict" | "not_found"; refund?: DbRefundRecord }> {
+}): Promise<{ outcome: "applied" | "unchanged" | "conflict" | "not_found" | "deferred"; refund?: DbRefundRecord }> {
   return withTransaction(async (db) => {
     const order = await db.prepare("SELECT * FROM orders WHERE id = ? FOR UPDATE").get<DbOrder>(params.orderId);
     if (!order) return { outcome: "not_found" };
     const refund = await db.prepare("SELECT * FROM refund_records WHERE id = ? AND order_id = ? FOR UPDATE")
       .get<DbRefundRecord>(params.refundRecordId, params.orderId);
     if (!refund) return { outcome: "not_found" };
+    if (refund.status === "pending" && hasUnresolvedShiprocketOperation(order.shiprocket_state)) {
+      return { outcome: "deferred", refund };
+    }
 
     if (refund.status !== "pending") {
       if (refund.status === params.providerStatus && refund.razorpay_refund_id === params.providerRefundId) {

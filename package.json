@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "node tests/run-suite.mjs",
+    "shiprocket:auth-check": "node scripts/shiprocket-auth-diagnostic.mjs",
     "test:db-schema": "node --test tests/postgres-migration.test.mjs tests/postgres-import.test.mjs tests/postgres-migration-runner.test.mjs tests/postgres-sql.test.mjs",
     "setup-admin": "node scripts/run-create-admin.mjs",
     "db:backup": "node scripts/backup-sqlite.mjs",

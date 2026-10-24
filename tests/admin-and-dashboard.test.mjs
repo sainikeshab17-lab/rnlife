@@ -20,7 +20,6 @@ import {
   classifyRefundWebhook,
   shouldMarkOrderRefunded,
   getRefundWebhookIdempotencyKey,
-  isProcessedRefundEvent,
 } from "../src/lib/order-status-machine.ts";
 import { writeAuditLog, getAuditLogs } from "../src/lib/db/audit.ts";
 import {
@@ -97,27 +96,25 @@ describe("COD Advance refund policy", () => {
     assert.equal(shouldMarkOrderRefunded("Razorpay", "paid", 2000, 2000), true);
     assert.equal(getRefundWebhookIdempotencyKey("rfnd_same"), getRefundWebhookIdempotencyKey("rfnd_same"));
     const webhook = fs.readFileSync(path.join(process.cwd(), "src/app/api/webhooks/razorpay/route.ts"), "utf8");
-    assert.match(webhook, /SELECT \* FROM refund_records WHERE razorpay_refund_id = \? AND order_id = \?/);
-    assert.match(webhook, /ON CONFLICT \(idempotency_key\) DO UPDATE/);
+    const inbox = fs.readFileSync(path.join(process.cwd(), "src/services/razorpay/refund-webhook-inbox.ts"), "utf8");
+    assert.match(webhook, /receiveRazorpayRefundWebhook/);
+    assert.match(inbox, /ON CONFLICT DO NOTHING/);
+    assert.match(inbox, /getRefundWebhookIdempotencyKey\(event\.refundId\)/);
   });
 
-  test("refund completion waits for the processed event and a refund record is shared by route and webhook", () => {
-    assert.equal(isProcessedRefundEvent("refund.speed_changed", "processed"), false);
-    assert.equal(isProcessedRefundEvent("refund.processed", "pending"), false);
-    assert.equal(isProcessedRefundEvent("refund.processed", "processed"), true);
+  test("refund webhook status mismatches are durably classified and refund records are shared", () => {
     const route = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/refunds/route.ts"), "utf8");
     const webhook = fs.readFileSync(path.join(process.cwd(), "src/app/api/webhooks/razorpay/route.ts"), "utf8");
     assert.match(route, /reserveRefund\(/);
-    assert.match(route, /idempotencyKey: reservation\.idempotency_key/);
+    assert.match(route, /refundRecordId: reservation\.id/);
     assert.match(route, /refund outcome is uncertain/i);
-    assert.match(webhook, /pendingReservation\?\.idempotency_key/);
     assert.match(route, /if \(refundRec\.status === "processed"\)/);
-    assert.match(webhook, /isProcessedRefundEvent\(eventType, refundEntity\?\.status\)/);
-    assert.match(webhook, /existingRef\.idempotency_key/);
-    assert.match(webhook, /reconciledRefund\.status !== "processed"/);
-    assert.match(webhook, /refund_processed_event_state_conflict/);
-    assert.match(webhook, /failedTransition\.rowCount === 1/);
-    assert.match(route, /rzpResult\.status === "failed" \? "failed"/);
+    assert.match(webhook, /quarantineReason:\s*classifyRefundWebhook\(eventType, refundEntity\.status\)/);
+    assert.match(webhook, /stablePayloadFingerprint\(event\)/);
+    assert.match(webhook, /x-razorpay-event-id/);
+    assert.match(route, /providerStatus, failureReason/);
+    assert.match(webhook, /refund_durably_deferred/);
+    assert.match(route, /reconciliation\.outcome === "deferred"/);
     assert.match(route, /Razorpay confirmed that the refund failed/);
     const notifications = fs.readFileSync(path.join(process.cwd(), "src/services/notification-service.ts"), "utf8");
     assert.match(notifications, /idempotencyKey: `notif_rfnd_\$\{refundId\}`/);

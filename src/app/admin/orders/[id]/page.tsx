@@ -50,6 +50,9 @@ export default function AdminOrderDetailPage() {
   const [trackingNumber, setTrackingNumber] = useState("");
   const [trackingUrl, setTrackingUrl] = useState("");
   const [updatingTracking, setUpdatingTracking] = useState(false);
+  const [shiprocketEnabled, setShiprocketEnabled] = useState(false);
+  const [shippingBusy, setShippingBusy] = useState(false);
+  const [shippingMessage, setShippingMessage] = useState<string | null>(null);
 
   const fetchOrderDetail = async () => {
     setLoading(true);
@@ -59,6 +62,7 @@ export default function AdminOrderDetailPage() {
       if (!res.ok) throw new Error("Order not found or access denied.");
       const data = await res.json();
       setOrder(data.order);
+      setShiprocketEnabled(data.shiprocketEnabled === true);
       setCourierName(data.order.courier_name || "");
       setTrackingNumber(data.order.tracking_number || "");
       setTrackingUrl(data.order.tracking_url || "");
@@ -139,7 +143,34 @@ export default function AdminOrderDetailPage() {
     }
   };
 
+  const runShiprocketAction = async (action: "create" | "assign_awb" | "pickup" | "label") => {
+    const orderReference = order?.order_number || orderId;
+    const prompt = action === "create" ? `Create a LIVE Shiprocket provider order for RIGHTNOWLIFE order ${orderReference}? This changes the Shiprocket account but does not assign a courier or schedule pickup.` :
+      action === "assign_awb" ? `Assign a courier and AWB to the live Shiprocket shipment for order ${orderReference}?` :
+      action === "pickup" ? `Request a REAL courier pickup for order ${orderReference}? This can trigger fulfillment.` :
+        `Generate a label through Shiprocket for order ${orderReference}? This calls the live provider; it does not schedule pickup.`;
+    if (!window.confirm(prompt)) return;
+    setShippingBusy(true); setShippingMessage(null);
+    try {
+      const response = await fetch(`/api/admin/orders/${orderId}/shipping`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirmed: true }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Shiprocket operation failed.");
+      if (action === "label" && data.labelUrl) window.open(data.labelUrl, "_blank", "noopener,noreferrer");
+      setShippingMessage(action === "create" ? "Shiprocket order created. Assign its AWB as a separate step." :
+        action === "assign_awb" ? "AWB assigned." :
+        action === "pickup" ? "Pickup request submitted." : "Label generated.");
+      await fetchOrderDetail();
+    } catch (error) { setShippingMessage(error instanceof Error ? error.message : "Shiprocket operation failed."); }
+    finally { setShippingBusy(false); }
+  };
+
   const validNextStatuses = order ? getValidNextStatuses(order.order_status) : [];
+  const shiprocketCod = order ? ["COD", "Cash on Delivery"].includes(order.payment_method) : false;
+  const shiprocketOrderEligible = !!order &&
+    !["cancelled", "refunded", "refund_pending", "payment_failed", "delivered", "shipped"].includes(order.order_status) &&
+    (shiprocketCod ? ["pending_payment", "paid"].includes(order.payment_status) : order.payment_status === "paid");
 
   return (
     <AdminLayout
@@ -493,6 +524,24 @@ export default function AdminOrderDetailPage() {
                     <span>{updatingTracking ? "Saving..." : "Save Tracking & Notify"}</span>
                   </button>
                 </form>
+                <div className="mt-4 border-t border-neutral-200 pt-4 space-y-3">
+                  <p className="text-[11px] text-neutral-600">Shiprocket · {order.shiprocket_state || "not_created"}</p>
+                  {order.tracking_number && <p className="text-xs text-neutral-800">{order.courier_name || "Courier pending"} · AWB {order.tracking_number}</p>}
+                  {!shiprocketEnabled && <p className="text-xs text-neutral-600">Shiprocket actions are disabled by server configuration.</p>}
+                  {["creating", "unknown", "assigning_awb", "awb_unknown", "pickup_requesting", "pickup_unknown", "generating_label", "label_unknown"].includes(order.shiprocket_state || "") && <div role="alert" className="border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 space-y-1">
+                    <p className="font-bold">Provider outcome may be incomplete. Do not retry any Shiprocket action.</p>
+                    <p>An authorized operator must search Shiprocket using this exact RIGHTNOWLIFE order reference, compare recipient and shipment details, and record the provider state and evidence. If the result is still unclear, leave it blocked and ask an engineer to reconcile local IDs/state with a reviewed conditional update. Do not clear IDs or tracking data or submit a replacement order/pickup.</p>
+                  </div>}
+                  <div className="flex flex-wrap gap-2">
+                    {shiprocketEnabled && !order.shiprocket_order_id && !order.tracking_number && ["not_created", "failed"].includes(order.shiprocket_state || "not_created") && <button type="button" onClick={() => runShiprocketAction("create")} disabled={shippingBusy || !shiprocketOrderEligible} className="px-3 py-2 bg-black text-white text-[10px] font-bold uppercase disabled:opacity-50">Create Shiprocket Order</button>}
+                    {shiprocketEnabled && order.shiprocket_order_id && order.shiprocket_state === "order_created" && !order.tracking_number && <button type="button" onClick={() => runShiprocketAction("assign_awb")} disabled={shippingBusy} className="px-3 py-2 bg-black text-white text-[10px] font-bold uppercase disabled:opacity-50">Assign Courier &amp; AWB</button>}
+                    {shiprocketEnabled && order.shiprocket_shipment_id && order.tracking_number && order.shiprocket_state === "awb_assigned" && <button type="button" onClick={() => runShiprocketAction("pickup")} disabled={shippingBusy} className="px-3 py-2 border border-neutral-300 text-[10px] font-bold uppercase disabled:opacity-50">Request Pickup (Live)</button>}
+                    {shiprocketEnabled && order.shiprocket_shipment_id && order.tracking_number && ["awb_assigned", "pickup_requested"].includes(order.shiprocket_state || "") && <button type="button" onClick={() => runShiprocketAction("label")} disabled={shippingBusy} className="px-3 py-2 border border-neutral-300 text-[10px] font-bold uppercase disabled:opacity-50">Generate Label</button>}
+                    {order.shiprocket_label_url && <a href={order.shiprocket_label_url} target="_blank" rel="noreferrer" className="px-3 py-2 border border-neutral-300 text-[10px] font-bold uppercase">Open Label</a>}
+                  </div>
+                  {shippingMessage && <p role="status" className="text-xs text-neutral-700">{shippingMessage}</p>}
+                  {order.shiprocket_last_error && <p className="text-xs text-amber-800">{order.shiprocket_last_error}</p>}
+                </div>
               </div>
 
               {/* Customer Cancellation Request Decision Box */}

@@ -35,10 +35,23 @@ const checkoutAttemptExpiryMigration = await readFile(
   new URL("../supabase/migrations/20261023210000_checkout_attempt_reservation_expiry.sql", import.meta.url),
   "utf8"
 );
+const shiprocketMigration = await readFile(
+  new URL("../supabase/migrations/20261024120000_shiprocket_shipping.sql", import.meta.url),
+  "utf8"
+);
+const refundWebhookInboxMigration = await readFile(
+  new URL("../supabase/migrations/20261024130000_razorpay_refund_webhook_inbox.sql", import.meta.url),
+  "utf8"
+);
+const refundWebhookIdentityMigration = await readFile(
+  new URL("../supabase/migrations/20261024140000_razorpay_refund_inbox_identity_audit.sql", import.meta.url),
+  "utf8"
+);
 const checkoutAttemptRuntime = await readFile(new URL("../src/services/checkout-payment-attempts.ts", import.meta.url), "utf8");
 const checkoutCreateRoute = await readFile(new URL("../src/app/api/checkout/create-order/route.ts", import.meta.url), "utf8");
 const checkoutVerifyRoute = await readFile(new URL("../src/app/api/checkout/verify-payment/route.ts", import.meta.url), "utf8");
 const razorpayWebhookRoute = await readFile(new URL("../src/app/api/webhooks/razorpay/route.ts", import.meta.url), "utf8");
+const razorpayRefundInboxService = await readFile(new URL("../src/services/razorpay/refund-webhook-inbox.ts", import.meta.url), "utf8");
 const importer = await readFile(
   new URL("../scripts/import-sqlite-to-postgres.mjs", import.meta.url),
   "utf8"
@@ -55,6 +68,8 @@ const orderRuntime = await readFile(new URL("../src/lib/db/orders.ts", import.me
 const notificationRuntime = await readFile(new URL("../src/services/notification-service.ts", import.meta.url), "utf8");
 const customerOrdersPage = await readFile(new URL("../src/app/account/orders/page.tsx", import.meta.url), "utf8");
 const customerOrdersApi = await readFile(new URL("../src/app/api/orders/route.ts", import.meta.url), "utf8");
+const shiprocketService = await readFile(new URL("../src/services/shiprocket/shipping-service.ts", import.meta.url), "utf8");
+const shiprocketAdminRoute = await readFile(new URL("../src/services/shiprocket/shipping-route-handler.ts", import.meta.url), "utf8");
 
 test("the importer manifest covers all 16 target tables and their columns", () => {
   assert.equal(TABLES.length, 16);
@@ -244,4 +259,60 @@ test("import is non-destructive, locks an empty destination, and reconciles befo
   assert.doesNotMatch(importer, /ON CONFLICT/i);
   assert.match(importer, /await client\.query\(\s*`INSERT INTO/);
   assert.match(importer, /status: "rolled_back"/);
+});
+
+test("Shiprocket schema migration is additive and records unique provider references", () => {
+  assert.match(shiprocketMigration, /ADD COLUMN IF NOT EXISTS shiprocket_order_id BIGINT/);
+  assert.match(shiprocketMigration, /ADD COLUMN IF NOT EXISTS shiprocket_shipment_id BIGINT/);
+  assert.match(shiprocketMigration, /shiprocket_state TEXT NOT NULL DEFAULT 'not_created'/);
+  assert.match(shiprocketMigration, /CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_shiprocket_order_id/);
+  assert.match(shiprocketMigration, /CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_shiprocket_shipment_id/);
+  assert.doesNotMatch(shiprocketMigration, /\b(?:DROP|DELETE|TRUNCATE)\b/i);
+});
+
+test("Razorpay refund webhook inbox is durable, idempotent, and additive", () => {
+  assert.match(refundWebhookInboxMigration, /CREATE TABLE IF NOT EXISTS razorpay_refund_webhook_inbox/);
+  assert.match(refundWebhookInboxMigration, /event_key TEXT PRIMARY KEY/);
+  assert.match(refundWebhookInboxMigration, /state IN \('received', 'deferred', 'processed', 'quarantined'\)/);
+  assert.doesNotMatch(refundWebhookInboxMigration, /\b(?:DROP TABLE|DELETE FROM|TRUNCATE)\b/i);
+  assert.match(razorpayRefundInboxService, /ON CONFLICT DO NOTHING/);
+  assert.match(razorpayRefundInboxService, /SELECT \* FROM orders WHERE id = \? FOR UPDATE/);
+  assert.match(razorpayRefundInboxService, /targetStatus = deferred \? "pending"/);
+  assert.match(razorpayRefundInboxService, /40P01/);
+  assert.match(razorpayWebhookRoute, /refund_durably_deferred/);
+  assert.match(razorpayWebhookRoute, /receiveRazorpayRefundWebhook/);
+});
+
+test("Razorpay inbox identity migration deduplicates provider events and enforces terminal transitions", () => {
+  assert.match(refundWebhookIdentityMigration, /ADD COLUMN IF NOT EXISTS provider_event_id TEXT/);
+  assert.match(refundWebhookIdentityMigration, /CREATE UNIQUE INDEX IF NOT EXISTS idx_razorpay_refund_inbox_provider_event_id/);
+  assert.match(refundWebhookIdentityMigration, /CREATE TABLE IF NOT EXISTS razorpay_refund_webhook_attempts/);
+  assert.match(refundWebhookIdentityMigration, /prevent_razorpay_refund_webhook_attempt_mutation/);
+  assert.match(refundWebhookIdentityMigration, /OLD\.state = 'received'.*NEW\.state IN \('deferred', 'processed', 'quarantined'\)/s);
+  assert.match(refundWebhookIdentityMigration, /OLD\.state = 'deferred'.*NEW\.state IN \('processed', 'quarantined'\)/s);
+  assert.match(refundWebhookIdentityMigration, /RAISE EXCEPTION 'Illegal Razorpay refund inbox state transition/);
+  assert.doesNotMatch(refundWebhookIdentityMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE)\b/i);
+});
+
+test("Shiprocket stays isolated behind server authorization, payment checks, and idempotent claims", () => {
+  assert.match(shiprocketService, /import "server-only"/);
+  assert.match(shiprocketService, /order\.payment_status !== "paid"/);
+  assert.match(shiprocketService, /order\.payment_status !== "paid"/);
+  assert.match(shiprocketService, /\["pending_payment", "paid"\]\.includes\(order\.payment_status\)/);
+  assert.match(shiprocketService, /refund_pending/);
+  assert.match(shiprocketService, /\^\\d\{6\}\$/);
+  assert.match(shiprocketService, /tracking_number IS NULL/);
+  assert.match(shiprocketService, /export async function assignShipmentAwb/);
+  assert.match(shiprocketService, /creating: \["not_created", "failed"\]/);
+  assert.match(shiprocketService, /FOR UPDATE/);
+  assert.match(shiprocketService, /"unknown"/);
+  assert.match(shiprocketService, /"awb_unknown"/);
+  assert.match(shiprocketService, /shiprocket_state = 'pickup_requesting'/);
+  assert.doesNotMatch(shiprocketService, /order_status\s*=\s*'shipped'/i);
+  assert.match(shiprocketAdminRoute, /requireAdminAuth/);
+  assert.match(shiprocketAdminRoute, /admin\.role !== "admin"/);
+  assert.match(shiprocketAdminRoute, /deps\.enabled\(\)/);
+  assert.match(shiprocketAdminRoute, /body\.confirmed !== true/);
+  assert.match(shiprocketAdminRoute, /"assign_awb"/);
+  assert.match(shiprocketAdminRoute, /Invalid order ID/);
 });

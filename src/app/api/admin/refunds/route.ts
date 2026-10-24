@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb } from "@/lib/db/index";
-import { getOrderById, recordRefund, reserveRefund } from "@/lib/db/orders";
+import { applyRefundReconciliation, getOrderById, reserveRefund } from "@/lib/db/orders";
 import { createRazorpayRefund } from "@/lib/razorpay";
 import { writeAuditLog } from "@/lib/db/audit";
 import { sendRefundConfirmationEmail } from "@/services/notification-service";
-import { canInitiateRefund, shouldMarkOrderRefunded } from "@/lib/order-status-machine";
+import { canInitiateRefund } from "@/lib/order-status-machine";
 
 export const dynamic = "force-dynamic";
 
@@ -84,8 +84,6 @@ export async function POST(req: NextRequest) {
     }, { status });
   }
   const reservation = reserveResult.reservation;
-  const collected = order.total;
-
   // Invoke server-side Razorpay API
   const rzpResult = await createRazorpayRefund({
     paymentId: order.razorpay_payment_id!,
@@ -104,78 +102,35 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Record successful/pending refund
-  const refundRec = await recordRefund({
-    orderId: order.id,
-    returnId: returnId || null,
-    razorpayRefundId: rzpResult.refundId,
-    razorpayPaymentId: order.razorpay_payment_id,
-    amount,
-    status: rzpResult.status === "processed" ? "processed" : rzpResult.status === "failed" ? "failed" : "pending",
-    reason: reason || "Admin customer refund",
-    initiatedBy: admin.email,
-    idempotencyKey: reservation.idempotency_key,
+  if (!rzpResult.refundId) {
+    return NextResponse.json({ error: "Refund outcome is uncertain; retain the reservation and reconcile with Razorpay." }, { status: 502 });
+  }
+  const providerStatus = rzpResult.status === "processed" ? "processed" : rzpResult.status === "failed" ? "failed" : "pending";
+  const reconciliation = await applyRefundReconciliation({
+    orderId: order.id, refundRecordId: reservation.id, providerRefundId: rzpResult.refundId,
+    providerStatus, failureReason: providerStatus === "failed" ? "Razorpay confirmed refund failure." : undefined,
   });
-
-  if (refundRec.status === "failed") {
-    const processed = await db.prepare(`SELECT COALESCE(SUM(amount_paisa), 0) AS total
-      FROM refund_records WHERE order_id = ? AND status = 'processed'`).get<{ total: string | number }>(order.id);
-    const processedTotal = Number(processed?.total ?? 0) / 100;
-    const refunded = shouldMarkOrderRefunded(order.payment_method, order.payment_status, processedTotal, order.total);
-    await db.prepare(`UPDATE orders SET refund_status = ?, refund_id = ?, updated_at = ?
-      WHERE id = ? AND refund_status = 'pending'`).run(
-      refunded ? "refunded" : processedTotal > 0 ? "partially_refunded" : null,
-      refunded ? rzpResult.refundId || null : null,
-      new Date().toISOString(), order.id
-    );
-    return NextResponse.json({
-      success: false,
-      refund: refundRec,
-      error: "Razorpay confirmed that the refund failed. No refund was processed; a new attempt may be made.",
-    }, { status: 502 });
+  if (reconciliation.outcome === "deferred") {
+    return NextResponse.json({ error: "Refund result is durably reserved and deferred until shipment reconciliation completes." }, { status: 202 });
   }
-
-  const processedTotalRow = await db.prepare(`
-    SELECT COALESCE(SUM(amount_paisa), 0) AS total
-    FROM refund_records WHERE order_id = ? AND status = 'processed'
-  `).get<{ total: string | number }>(order.id);
+  if (!reconciliation.refund || ["conflict", "not_found"].includes(reconciliation.outcome)) {
+    return NextResponse.json({ error: "Refund result requires manual reconciliation; do not retry the refund." }, { status: 409 });
+  }
+  const refundRec = reconciliation.refund;
+  const processedTotalRow = await db.prepare("SELECT COALESCE(SUM(amount_paisa), 0) AS total FROM refund_records WHERE order_id = ? AND status = 'processed'").get<{ total: string | number }>(order.id);
   const processedTotal = Number(processedTotalRow?.total ?? 0) / 100;
-  const refundIsComplete = shouldMarkOrderRefunded(order.payment_method, order.payment_status, processedTotal, collected);
-  const now = new Date().toISOString();
-  if (refundIsComplete) {
-    await db.prepare(`
-      UPDATE orders
-      SET order_status = 'refunded', refund_status = 'refunded', refund_id = ?, updated_at = ?
-      WHERE id = ?
-    `).run(rzpResult.refundId || null, now, order.id);
-  } else if (refundRec.status === "processed") {
-    await db.prepare(`
-      UPDATE orders SET refund_status = 'partially_refunded', refund_id = ?, updated_at = ? WHERE id = ?
-    `).run(rzpResult.refundId || null, now, order.id);
-  } else {
-    await db.prepare(`
-      UPDATE orders SET refund_status = CASE
-        WHEN refund_status IN ('partially_refunded', 'refunded') THEN refund_status ELSE 'pending' END,
-        refund_id = ?, updated_at = ? WHERE id = ?
-    `).run(rzpResult.refundId || null, now, order.id);
+  if (refundRec.status === "failed") {
+    return NextResponse.json({ success: false, refund: refundRec,
+      error: "Razorpay confirmed that the refund failed. No refund was processed; a new attempt may be made." }, { status: 502 });
   }
-
-  // A return is complete only after the provider confirms the refund is processed.
   if (returnId && refundRec.status === "processed") {
-    await db.prepare(`
-      UPDATE returns
-      SET status = 'completed', updated_at = ?
-      WHERE id = ?
-    `).run(new Date().toISOString(), returnId);
+    await db.prepare("UPDATE returns SET status = 'completed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), returnId);
   }
-
-  // Never describe a pending provider refund as processed in customer email.
   if (refundRec.status === "processed") {
-    sendRefundConfirmationEmail(order, amount, rzpResult.refundId || refundRec.id).catch((error) => {
-      console.error(`[Refund] Processed refund notification failed for order ${order.id}.`, error);
+    sendRefundConfirmationEmail(order, amount, rzpResult.refundId).catch((error) => {
+      console.error("[Refund] Processed refund notification failed for order " + order.id + ".", error);
     });
   }
-
   await writeAuditLog({
     actor: admin.email,
     action: "refund_issued",

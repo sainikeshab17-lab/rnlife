@@ -26,7 +26,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const order = await fetchOrderWithDetails(id);
   if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
-  return NextResponse.json({ order });
+  const { shiprocketEnabled } = await import("@/lib/shiprocket/client");
+  return NextResponse.json({ order, shiprocketEnabled: shiprocketEnabled() });
 }
 
 /** PATCH /api/admin/orders/[id] — update tracking info, dates, and/or notes */

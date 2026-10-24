@@ -36,6 +36,12 @@ model Order {
   dispatchDate             DateTime? @map("dispatch_date") @db.Timestamptz(6)
   estimatedDeliveryDate    DateTime? @map("estimated_delivery_date") @db.Timestamptz(6)
   actualDeliveryDate       DateTime? @map("actual_delivery_date") @db.Timestamptz(6)
+  shiprocketOrderId        BigInt?   @map("shiprocket_order_id")
+  shiprocketShipmentId     BigInt?   @map("shiprocket_shipment_id")
+  shiprocketState          String    @default("not_created") @map("shiprocket_state")
+  shiprocketLabelUrl       String?   @map("shiprocket_label_url")
+  shiprocketLastError      String?   @map("shiprocket_last_error")
+  shiprocketUpdatedAt      DateTime? @map("shiprocket_updated_at") @db.Timestamptz(6)
   cancellationRequested   Int?      @default(0) @map("cancellation_requested")
   cancellationRequestedAt DateTime? @map("cancellation_requested_at") @db.Timestamptz(6)
   cancellationReason      String?   @map("cancellation_reason")
@@ -52,6 +58,7 @@ model Order {
   shippingEvents ShippingEvent[]
   returns        ReturnRequest[]
   refunds        RefundRecord[]
+  refundWebhookEvents RazorpayRefundWebhookInbox[]
 
   @@index([customerEmail])
   @@index([razorpayOrderId])
@@ -59,6 +66,8 @@ model Order {
   @@index([orderStatus])
   @@index([paymentStatus])
   @@index([createdAt(sort: Desc)])
+  @@unique([shiprocketOrderId])
+  @@unique([shiprocketShipmentId])
   @@map("orders")
 }
 
@@ -372,6 +381,45 @@ model RefundRecord {
   @@index([orderId])
   @@index([razorpayRefundId])
   @@map("refund_records")
+}
+
+model RazorpayRefundWebhookInbox {
+  eventKey      String    @id @map("event_key")
+  providerEventId String? @map("provider_event_id")
+  sourcePayloadHash String? @map("source_payload_hash")
+  eventType     String    @map("event_type")
+  refundId      String    @map("refund_id")
+  paymentId     String    @map("payment_id")
+  orderId       String?   @map("order_id")
+  amountPaisa   Int       @map("amount_paisa")
+  currency      String
+  providerStatus String   @map("provider_status")
+  state         String    @default("received")
+  attempts      Int       @default(0)
+  lastError     String?   @map("last_error")
+  receivedAt    DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  processedAt   DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  attemptHistory RazorpayRefundWebhookAttempt[]
+
+  @@index([state, receivedAt])
+  @@unique([providerEventId], map: "idx_razorpay_refund_inbox_provider_event_id")
+  @@map("razorpay_refund_webhook_inbox")
+}
+
+model RazorpayRefundWebhookAttempt {
+  id          BigInt   @id @default(autoincrement())
+  eventKey    String   @map("event_key")
+  outcome     String
+  reason      String?
+  attemptedAt DateTime @default(now()) @map("attempted_at") @db.Timestamptz(6)
+
+  event RazorpayRefundWebhookInbox @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+
+  @@index([eventKey, attemptedAt])
+  @@map("razorpay_refund_webhook_attempts")
 }
 
 model NotificationJob {

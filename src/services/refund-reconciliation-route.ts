@@ -94,6 +94,7 @@ export function createRefundReconciliationPost(deps = routeDependencies) {
     if (!applied) return NextResponse.json({ status: "uncertain", reservationRemainsPending: true }, { status: 202 });
 
     if (applied.outcome === "not_found") return NextResponse.json({ error: "Refund reservation not found." }, { status: 404 });
+    if (applied.outcome === "deferred") return NextResponse.json({ status: "deferred", error: "Shipment operation is unresolved; retry refund reconciliation after the shipment state is resolved." }, { status: 202 });
     if (applied.outcome === "conflict") {
       await deps.writeAuditLog({ actor: admin.email, action: "refund_reconciliation_state_conflict", entityType: "refund", entityId: reservation.id,
         metadata: { orderId: order.id, providerRefundId: resolution.refund.id, providerStatus: resolution.outcome, storedStatus: applied.refund?.status } });

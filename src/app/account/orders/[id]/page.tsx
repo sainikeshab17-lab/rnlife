@@ -149,7 +149,7 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                   Courier: {dbOrder.courier_name}
                 </span>
               )}
-              {isPaid && dbOrder.tracking_number ? (
+              {(isPaid || ["COD", "Cash on Delivery"].includes(dbOrder.payment_method)) && dbOrder.tracking_number ? (
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[#858585]">
                     AWB: <strong>{dbOrder.tracking_number}</strong>
@@ -167,7 +167,7 @@ export default async function OrderDetailPage({ params, searchParams }: OrderDet
                 </div>
               ) : (
                 <span className="text-xs font-mono text-[#858585]">
-                  AWB: {isPaid ? (dbOrder.razorpay_order_id ? `RNL-AIR-${dbOrder.order_number.slice(-4)}` : "ASSIGNING") : "Assigned after payment confirmation"}
+                  AWB: {isPaid ? (dbOrder.razorpay_order_id ? `RNL-AIR-${dbOrder.order_number.slice(-4)}` : "ASSIGNING") : "Assigned when order is ready for shipping"}
                 </span>
               )}
             </div>

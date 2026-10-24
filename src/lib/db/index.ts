@@ -128,6 +128,12 @@ export interface DbOrder {
   dispatch_date: string | null;
   estimated_delivery_date: string | null;
   actual_delivery_date: string | null;
+  shiprocket_order_id?: string | number | null;
+  shiprocket_shipment_id?: string | number | null;
+  shiprocket_state?: string;
+  shiprocket_label_url?: string | null;
+  shiprocket_last_error?: string | null;
+  shiprocket_updated_at?: string | null;
   cancellation_requested: number | null;
   cancellation_requested_at: string | null;
   cancellation_reason: string | null;

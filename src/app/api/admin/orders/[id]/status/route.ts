@@ -5,6 +5,7 @@ import { isValidAdminTransition, requiresRefundForOrder } from "@/lib/order-stat
 import { writeAuditLog } from "@/lib/db/audit";
 import { lockInventoryVariants } from "@/lib/db/orders";
 import { randomBytes } from "crypto";
+import { hasUnresolvedShiprocketOperation } from "@/lib/db/shiprocket-operation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,10 @@ export async function POST(
       .get<DbOrder>(id);
     if (!current || current.order_status !== order.order_status) {
       throw new Error("Order status changed while the update was being processed.");
+    }
+    if (["cancelled", "refunded", "refund_pending", "payment_failed", "delivered", "shipped"].includes(newStatus) &&
+        hasUnresolvedShiprocketOperation(current.shiprocket_state)) {
+      throw new Error("Shipment operation is in progress or requires reconciliation. Resolve it before changing order eligibility.");
     }
 
     await transaction.prepare(`
