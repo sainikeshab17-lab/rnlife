@@ -15,7 +15,11 @@ test("Shiprocket client requires credentials and never makes a request without t
   clearState();
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; throw new Error("must not call"); };
-  await assert.rejects(shiprocketRequest("/orders/show/1", "GET"), ShiprocketError);
+  await assert.rejects(shiprocketRequest("/orders/show/1", "GET"), error => {
+    assert.ok(error instanceof ShiprocketError);
+    assert.match(error.message, /SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD/);
+    return true;
+  });
   assert.equal(calls, 0);
   clearState();
 });
@@ -62,6 +66,26 @@ test("ambiguous network failures are marked and are not retried", async () => {
   clearState();
 });
 
+test("read-only request timeouts return a sanitized gateway timeout without retry", async () => {
+  clearState();
+  process.env.SHIPROCKET_EMAIL = "test@example.test";
+  process.env.SHIPROCKET_PASSWORD = "mock-password";
+  let calls = 0;
+  globalThis.fetch = async url => {
+    calls += 1;
+    if (String(url).endsWith("/auth/login")) return Response.json({ token: "mock-token" });
+    throw new Error("mock timeout");
+  };
+  await assert.rejects(shiprocketRequest("/courier/serviceability/?delivery_postcode=122002", "GET"), error => {
+    assert.equal(error.status, 504);
+    assert.equal(error.message, "Shiprocket read-only request timed out or failed.");
+    assert.equal(error.message.includes("mock timeout"), false);
+    return true;
+  });
+  assert.equal(calls, 2);
+  clearState();
+});
+
 test("rate limits are reported without provider response details or automatic retries", async () => {
   clearState();
   process.env.SHIPROCKET_EMAIL = "test@example.test";
@@ -76,6 +100,26 @@ test("rate limits are reported without provider response details or automatic re
     assert.equal(error.status, 429);
     assert.equal(error.message, "Shiprocket request failed (429).");
     assert.equal(error.message.includes("sensitive-provider-detail"), false);
+    return true;
+  });
+  assert.equal(calls, 2);
+  clearState();
+});
+
+test("provider server errors are marked ambiguous and are not retried", async () => {
+  clearState();
+  process.env.SHIPROCKET_EMAIL = "test@example.test";
+  process.env.SHIPROCKET_PASSWORD = "mock-password";
+  let calls = 0;
+  globalThis.fetch = async url => {
+    calls += 1;
+    if (String(url).endsWith("/auth/login")) return Response.json({ token: "mock-token" });
+    return Response.json({ message: "mock server detail" }, { status: 503 });
+  };
+  await assert.rejects(shiprocketRequest("/orders/create/adhoc", "POST", { order_id: "local-test" }), error => {
+    assert.equal(error.status, 503);
+    assert.equal(error.ambiguous, true);
+    assert.equal(error.message, "Shiprocket request failed (503).");
     return true;
   });
   assert.equal(calls, 2);

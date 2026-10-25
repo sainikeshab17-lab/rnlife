@@ -123,6 +123,37 @@ export function isValidTrackingUrl(url: string | null | undefined): boolean {
   }
 }
 
+function parseShiprocketLabelAllowedHosts(value: string | null | undefined): Set<string> {
+  if (!value) return new Set();
+  const hosts = value.split(",").map((host) => host.trim().toLowerCase());
+  if (!hosts.length || hosts.some((host) =>
+    !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)
+  )) return new Set();
+  return new Set(hosts);
+}
+
+export function hasValidShiprocketLabelHostAllowlist(value: string | null | undefined): boolean {
+  return parseShiprocketLabelAllowedHosts(value).size > 0;
+}
+
+/** Validate a Shiprocket label URL against exact, staging-verified HTTPS hosts. */
+export function isValidShiprocketLabelUrl(
+  value: string | null | undefined,
+  allowedHostsValue: string | null | undefined,
+): value is string {
+  if (!value || value.length > 4096) return false;
+  const allowedHosts = parseShiprocketLabelAllowedHosts(allowedHostsValue);
+  if (!allowedHosts.size) return false;
+
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password &&
+      (!parsed.port || parsed.port === "443") && allowedHosts.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Checks whether an order is eligible for customer-initiated cancellation
  */

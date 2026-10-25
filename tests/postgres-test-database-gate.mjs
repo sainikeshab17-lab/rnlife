@@ -35,6 +35,10 @@ export function validateTestDatabaseConfig(env) {
   if (!["postgres:", "postgresql:"].includes(parsed.protocol)) {
     throw new Error("PostgreSQL tests require a PostgreSQL URL.");
   }
+  // Reject URL options that could override the apparent loopback target.
+  if (parsed.search || parsed.hash || !/^\/[a-z0-9_.-]+$/i.test(parsed.pathname)) {
+    throw new Error("PostgreSQL test URL must name one database and contain no query or fragment options.");
+  }
   if (!isApprovedLoopback(parsed.hostname)) {
     throw new Error("PostgreSQL tests permit only an approved loopback test host.");
   }

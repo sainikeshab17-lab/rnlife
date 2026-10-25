@@ -7,6 +7,7 @@ import {
   scheduleShipmentPickup,
 } from "../src/services/shiprocket/shipping-service.ts";
 import { ShiprocketError } from "../src/lib/shiprocket/client.ts";
+import { prepareShiprocketShipment } from "../src/services/shiprocket/shipment-preparation.ts";
 
 const baseOrder = {
   id: "ord_test_123", order_number: "RNL-123", customer_name: "Buyer Example",
@@ -22,19 +23,22 @@ const address = {
   address_line1: "1 Test Street", address_line2: null, landmark: null, city: "Bengaluru",
   state: "Karnataka", pin_code: "560001", country: "India",
 };
-const items = [{ id: "item_1", order_id: baseOrder.id, product_name: "Test Shirt", sku: "RNL-SKU-1", quantity: 1, price: 999 }];
+const items = [{ id: "item_1", order_id: baseOrder.id, product_id: "product_1", product_name: "Test Shirt", sku: "RNL-SKU-1", quantity: 1, price: 999 }];
 const env = {
   SHIPROCKET_PICKUP_LOCATION: "RIGHTNOWLIFE WAREHOUSE",
+  SHIPROCKET_PICKUP_POSTCODE: "560001", SHIPROCKET_ITEM_WEIGHT_KG: "0.5",
+  SHIPROCKET_LABEL_ALLOWED_HOSTS: "labels.example.test",
   SHIPROCKET_PACKAGE_WEIGHT_KG: "0.5", SHIPROCKET_PACKAGE_LENGTH_CM: "20",
   SHIPROCKET_PACKAGE_BREADTH_CM: "15", SHIPROCKET_PACKAGE_HEIGHT_CM: "5",
 };
 
 class MockDb {
-  constructor({ order = {}, failOn = null, beforeLockedRead = null } = {}) {
+  constructor({ order = {}, failOn = null, beforeLockedRead = null, addressRecord = address } = {}) {
     this.order = { ...baseOrder, ...order };
     this.failOn = failOn;
     this.writes = [];
     this.beforeLockedRead = beforeLockedRead;
+    this.addressRecord = addressRecord;
   }
 
   prepare(sql) {
@@ -46,7 +50,7 @@ class MockDb {
           this.beforeLockedRead = null;
           await hook(this.order);
         }
-        if (normalized.includes("FROM order_addresses")) return { ...address };
+        if (normalized.includes("FROM order_addresses")) return this.addressRecord ? { ...this.addressRecord } : undefined;
         if (normalized.includes("FROM order_items")) return undefined;
         if (normalized.includes("shiprocket_state, shiprocket_order_id, shiprocket_shipment_id")) {
           return { shiprocket_state: this.order.shiprocket_state, shiprocket_order_id: this.order.shiprocket_order_id, shiprocket_shipment_id: this.order.shiprocket_shipment_id };
@@ -135,22 +139,28 @@ class MockDb {
   }
 }
 
-function setup({ order, failOn, response, envOverrides, beforeLockedRead } = {}) {
-  const db = new MockDb({ order, failOn, beforeLockedRead });
+function setup({ order, failOn, response, envOverrides, beforeLockedRead, addressRecord, enabled = true } = {}) {
+  const db = new MockDb({ order, failOn, beforeLockedRead, addressRecord });
   const calls = [];
+  const serviceEnv = { ...env, ...envOverrides };
   const deps = {
-    db, enabled: () => true, env: { ...env, ...envOverrides },
+    db, enabled: () => enabled, env: serviceEnv,
     transaction: async callback => callback(db),
+    prepare: orderId => prepareShiprocketShipment(orderId, { db, env: serviceEnv }),
     request: async (path, method, body) => {
       calls.push({ path, method, body });
       if (response instanceof Error) throw response;
       return response ?? (path === "/orders/create/adhoc"
         ? { order_id: 7001, shipment_id: 8001 }
         : path === "/courier/assign/awb"
-          ? { awb_assign_status: 1, response: { data: { awb_code: "SR123456789", courier_name: "Test Courier" } } }
+          ? { awb_assign_status: 1, response: { data: { shipment_id: 8001, awb_code: "SR123456789", courier_name: "Test Courier" } } }
         : path === "/courier/generate/label"
           ? { label_url: "https://labels.example.test/label.pdf" }
-          : { pickup_status: "scheduled" });
+        : { pickup_status: 1, response: {
+          pickup_scheduled_date: "2026-10-25 12:39:54",
+          pickup_token_number: "Reference No: TEST_PICKUP_TOKEN",
+          status: 3,
+        } });
     },
   };
   return { db, calls, deps };
@@ -165,14 +175,56 @@ test("provider order success persists IDs and does not assign an AWB", async () 
   assert.equal(order.shiprocket_state, "order_created");
   assert.ok(h.db.writes.some(write => write.sql.includes("shiprocket_order_id = ?")));
   assert.equal(order.tracking_number, null);
+  assert.equal(h.calls[0].body.weight, 0.5);
+});
+
+test("provider order creation requires a successful preparation result", async () => {
+  const h = setup();
+  h.deps.prepare = async () => { throw new ShiprocketError("preparation blocked", 409); };
+  await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), /preparation blocked/);
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.db.order.shiprocket_state, "not_created");
+});
+
+test("disabled integration blocks every lifecycle operation before database or provider access", async () => {
+  const h = setup({ enabled: false });
+  const actions = [
+    () => createOrResumeShipment(baseOrder.id, h.deps),
+    () => assignShipmentAwb(baseOrder.id, h.deps),
+    () => scheduleShipmentPickup(baseOrder.id, h.deps),
+    () => generateShipmentLabel(baseOrder.id, h.deps),
+  ];
+  for (const action of actions) await assert.rejects(action, /Shiprocket shipping is disabled/);
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.db.writes, []);
+});
+
+test("invalid shipping postcodes and missing addresses are rejected before provider calls", async () => {
+  for (const postcode of ["12345", "1234567", "12A456", "560001,560002", ""]) {
+    const h = setup({ addressRecord: { ...address, pin_code: postcode } });
+    await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), /address or recipient details are invalid/);
+    assert.deepEqual(h.calls, []);
+    assert.equal(h.db.order.shiprocket_state, "not_created");
+  }
+  const missing = setup({ addressRecord: null });
+  await assert.rejects(createOrResumeShipment(baseOrder.id, missing.deps), /Order address or items are missing/);
+  assert.deepEqual(missing.calls, []);
 });
 
 test("invalid package configuration is rejected before claiming order creation", async () => {
-  const h = setup({ envOverrides: { SHIPROCKET_PACKAGE_WEIGHT_KG: "0" } });
-  await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), /package configuration is invalid/);
+  const h = setup({ envOverrides: { SHIPROCKET_ITEM_WEIGHT_KG: "0" } });
+  await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), /SHIPROCKET_ITEM_WEIGHT_KG/);
   assert.equal(h.db.order.shiprocket_state, "not_created");
   assert.equal(h.db.writes.length, 0);
   assert.equal(h.calls.length, 0);
+});
+
+test("malformed provider order response becomes unknown and is not retried", async () => {
+  const h = setup({ response: { order_id: 7001, shipment_id: "bad" } });
+  await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), error => error.ambiguous === true);
+  assert.equal(h.db.order.shiprocket_state, "unknown");
+  await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), /uncertain outcome/);
+  assert.equal(h.calls.filter(call => call.path === "/orders/create/adhoc").length, 1);
 });
 
 test("provider acceptance followed by failed local persistence becomes blocked unknown", async () => {
@@ -244,6 +296,26 @@ test("concurrent AWB requests issue one request and persist the AWB once", async
   assert.equal(h.db.order.shiprocket_state, "awb_assigned");
 });
 
+test("malformed or mismatched AWB success responses become uncertain and cannot be retried", async () => {
+  const invalidResponses = [
+    { awb_assign_status: 1, response: { data: { shipment_id: 9999, awb_code: "SR123456789", courier_name: "Test Courier" } } },
+    { awb_assign_status: 1, response: { data: { shipment_id: 8001, awb_code: "", courier_name: "Test Courier" } } },
+    { awb_assign_status: 0, response: { data: { shipment_id: 8001, awb_code: "SR123456789", courier_name: "Test Courier" } } },
+    {},
+  ];
+  for (const response of invalidResponses) {
+    const h = setup({
+      order: { shiprocket_order_id: 7001, shiprocket_shipment_id: 8001, shiprocket_state: "order_created" },
+      response,
+    });
+    await assert.rejects(assignShipmentAwb(baseOrder.id, h.deps), /incomplete or mismatched AWB response/);
+    assert.equal(h.db.order.shiprocket_state, "awb_unknown");
+    assert.equal(h.db.order.tracking_number, null);
+    await assert.rejects(assignShipmentAwb(baseOrder.id, h.deps), /not ready for AWB assignment or needs reconciliation/);
+    assert.equal(h.calls.filter(call => call.path === "/courier/assign/awb").length, 1);
+  }
+});
+
 test("cancellation committed before provider-order claim blocks Shiprocket", async () => {
   const h = setup({ beforeLockedRead: async order => { order.cancellation_requested = 1; } });
   await assert.rejects(createOrResumeShipment(baseOrder.id, h.deps), /not eligible/);
@@ -297,6 +369,35 @@ test("pickup failure is surfaced and remains retryable without duplicate schedul
   assert.equal(h.calls.length, 1);
   assert.equal(h.db.order.shiprocket_state, "awb_assigned");
   assert.equal(h.db.order.tracking_number, "SR123456789");
+});
+
+test("pickup is persisted only after the documented successful response is validated", async () => {
+  const h = setup({ order: {
+    shiprocket_shipment_id: 8001, shiprocket_state: "awb_assigned", tracking_number: "SR123456789",
+  } });
+  const result = await scheduleShipmentPickup(baseOrder.id, h.deps);
+  assert.equal(result.pickup_status, 1);
+  assert.equal(result.response.status, 3);
+  assert.equal(h.db.order.shiprocket_state, "pickup_requested");
+});
+
+test("malformed pickup success responses become uncertain and cannot be retried", async () => {
+  const invalidResponses = [
+    {},
+    { pickup_status: 0, response: { pickup_scheduled_date: "2026-10-25 12:39:54", pickup_token_number: "token", status: 3 } },
+    { pickup_status: 1, response: { pickup_scheduled_date: "2026-10-25 12:39:54", pickup_token_number: "token", status: 2 } },
+    { pickup_status: 1, response: { pickup_scheduled_date: "2026-10-25 12:39:54", status: 3 } },
+  ];
+  for (const response of invalidResponses) {
+    const h = setup({
+      order: { shiprocket_shipment_id: 8001, shiprocket_state: "awb_assigned", tracking_number: "SR123456789" },
+      response,
+    });
+    await assert.rejects(scheduleShipmentPickup(baseOrder.id, h.deps), /incomplete pickup response/);
+    assert.equal(h.db.order.shiprocket_state, "pickup_unknown");
+    await assert.rejects(scheduleShipmentPickup(baseOrder.id, h.deps), /in progress or needs reconciliation/);
+    assert.equal(h.calls.filter(call => call.path === "/courier/generate/pickup").length, 1);
+  }
 });
 
 test("cancellation committed before pickup claim blocks Shiprocket", async () => {
@@ -380,6 +481,34 @@ test("label generation is claimed once and cannot be repeated after success", as
   assert.equal(h.db.order.shiprocket_state, "label_ready");
   await assert.rejects(generateShipmentLabel(baseOrder.id, h.deps), /label already exists/);
   assert.deepEqual(h.calls.map(call => call.path), ["/courier/generate/label"]);
+});
+
+test("label generation requires an exact host allowlist before calling Shiprocket", async () => {
+  const h = setup({
+    order: { shiprocket_shipment_id: 8001, shiprocket_state: "awb_assigned", tracking_number: "SR123456789" },
+    envOverrides: { SHIPROCKET_LABEL_ALLOWED_HOSTS: "" },
+  });
+  await assert.rejects(generateShipmentLabel(baseOrder.id, h.deps), /label host allowlist is not configured/);
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.db.order.shiprocket_state, "awb_assigned");
+});
+
+test("label generation rejects malformed allowlist entries before calling Shiprocket", async () => {
+  for (const value of ["*.example.test", "https://labels.example.test", "labels.example.test/path", "127.0.0.1"]) {
+    const h = setup({ envOverrides: { SHIPROCKET_LABEL_ALLOWED_HOSTS: value } });
+    await assert.rejects(generateShipmentLabel(baseOrder.id, h.deps), /SHIPROCKET_LABEL_ALLOWED_HOSTS must be a comma-separated list/);
+    assert.equal(h.calls.length, 0);
+  }
+});
+
+test("untrusted provider label URLs are not stored or returned", async () => {
+  const h = setup({
+    order: { shiprocket_shipment_id: 8001, shiprocket_state: "awb_assigned", tracking_number: "SR123456789" },
+    response: { label_url: "https://attacker.example.test/phishing.pdf" },
+  });
+  await assert.rejects(generateShipmentLabel(baseOrder.id, h.deps), /untrusted or incomplete label URL/);
+  assert.equal(h.db.order.shiprocket_label_url, undefined);
+  assert.equal(h.db.order.shiprocket_state, "label_unknown");
 });
 
 test("ineligible status at label claim blocks provider call", async () => {

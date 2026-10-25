@@ -39,12 +39,20 @@ const shiprocketMigration = await readFile(
   new URL("../supabase/migrations/20261024120000_shiprocket_shipping.sql", import.meta.url),
   "utf8"
 );
+const shiprocketLifecycleConstraintsMigration = await readFile(
+  new URL("../supabase/migrations/20261025120000_shiprocket_lifecycle_constraints.sql", import.meta.url),
+  "utf8"
+);
 const refundWebhookInboxMigration = await readFile(
   new URL("../supabase/migrations/20261024130000_razorpay_refund_webhook_inbox.sql", import.meta.url),
   "utf8"
 );
 const refundWebhookIdentityMigration = await readFile(
   new URL("../supabase/migrations/20261024140000_razorpay_refund_inbox_identity_audit.sql", import.meta.url),
+  "utf8"
+);
+const adminLoginRateLimitsMigration = await readFile(
+  new URL("../supabase/migrations/20261024150000_admin_login_rate_limits.sql", import.meta.url),
   "utf8"
 );
 const checkoutAttemptRuntime = await readFile(new URL("../src/services/checkout-payment-attempts.ts", import.meta.url), "utf8");
@@ -270,6 +278,17 @@ test("Shiprocket schema migration is additive and records unique provider refere
   assert.doesNotMatch(shiprocketMigration, /\b(?:DROP|DELETE|TRUNCATE)\b/i);
 });
 
+test("Shiprocket lifecycle constraints preserve existing rows for audit and guard future writes", () => {
+  assert.match(shiprocketLifecycleConstraintsMigration, /orders_shiprocket_state_check/);
+  for (const state of ["not_created", "failed", "creating", "unknown", "order_created", "assigning_awb", "awb_unknown", "awb_assigned", "pickup_requesting", "pickup_unknown", "pickup_requested", "generating_label", "label_unknown", "label_ready"]) {
+    assert.match(shiprocketLifecycleConstraintsMigration, new RegExp(`'${state}'`));
+  }
+  assert.match(shiprocketLifecycleConstraintsMigration, /CHECK \(shiprocket_order_id IS NULL OR shiprocket_order_id > 0\) NOT VALID/);
+  assert.match(shiprocketLifecycleConstraintsMigration, /CHECK \(shiprocket_shipment_id IS NULL OR shiprocket_shipment_id > 0\) NOT VALID/);
+  assert.match(shiprocketLifecycleConstraintsMigration, /pg_constraint/);
+  assert.doesNotMatch(shiprocketLifecycleConstraintsMigration, /\b(?:DROP|DELETE|TRUNCATE|UPDATE)\b/i);
+});
+
 test("Razorpay refund webhook inbox is durable, idempotent, and additive", () => {
   assert.match(refundWebhookInboxMigration, /CREATE TABLE IF NOT EXISTS razorpay_refund_webhook_inbox/);
   assert.match(refundWebhookInboxMigration, /event_key TEXT PRIMARY KEY/);
@@ -292,6 +311,13 @@ test("Razorpay inbox identity migration deduplicates provider events and enforce
   assert.match(refundWebhookIdentityMigration, /OLD\.state = 'deferred'.*NEW\.state IN \('processed', 'quarantined'\)/s);
   assert.match(refundWebhookIdentityMigration, /RAISE EXCEPTION 'Illegal Razorpay refund inbox state transition/);
   assert.doesNotMatch(refundWebhookIdentityMigration, /\b(?:DELETE FROM|TRUNCATE|DROP TABLE)\b/i);
+});
+
+test("admin login rate-limit migration stores opaque buckets and denies Supabase client roles", () => {
+  assert.match(adminLoginRateLimitsMigration, /CREATE TABLE IF NOT EXISTS admin_login_rate_limits/);
+  assert.match(adminLoginRateLimitsMigration, /bucket_hash TEXT PRIMARY KEY CHECK/);
+  assert.match(adminLoginRateLimitsMigration, /ALTER TABLE admin_login_rate_limits ENABLE ROW LEVEL SECURITY/);
+  assert.match(adminLoginRateLimitsMigration, /REVOKE ALL ON TABLE admin_login_rate_limits FROM anon, authenticated/);
 });
 
 test("Shiprocket stays isolated behind server authorization, payment checks, and idempotent claims", () => {

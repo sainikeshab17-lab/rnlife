@@ -15,7 +15,9 @@ export class ShiprocketError extends Error {
 function credentials() {
   const email = process.env.SHIPROCKET_EMAIL;
   const password = process.env.SHIPROCKET_PASSWORD;
-  if (!email || !password) throw new ShiprocketError("Shiprocket credentials are not configured.");
+  if (!email?.trim() || !password) {
+    throw new ShiprocketError("Set server-only SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD before enabling a Shiprocket request.", 503);
+  }
   return { email, password };
 }
 
@@ -47,6 +49,9 @@ export async function shiprocketRequest<T>(path: string, method: "GET" | "POST",
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), cache: "no-store", signal: AbortSignal.timeout(15_000),
     });
   } catch {
+    if (method === "GET") {
+      throw new ShiprocketError("Shiprocket read-only request timed out or failed.", 504, true);
+    }
     throw new ShiprocketError("Shiprocket request outcome is unknown. Reconcile the order before retrying.", undefined, true);
   }
   if (response.status === 401 && retryAuth) {
@@ -60,4 +65,9 @@ export async function shiprocketRequest<T>(path: string, method: "GET" | "POST",
 
 export function shiprocketEnabled() {
   return process.env.SHIPROCKET_ENABLED === "true";
+}
+
+/** Read-only courier lookup is independently gated and never enables lifecycle mutations. */
+export function shiprocketServiceabilityEnabled() {
+  return process.env.SHIPROCKET_SERVICEABILITY_ENABLED === "true";
 }

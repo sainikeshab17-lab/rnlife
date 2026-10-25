@@ -42,7 +42,9 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ order: stripGuestToken(order) });
+    const customerOrder = stripGuestToken(order);
+    delete customerOrder.shiprocket_label_url;
+    return NextResponse.json({ order: customerOrder });
   } catch (err: unknown) {
     console.error("Error in GET /api/orders/[id]:", err);
     return NextResponse.json({ error: "Failed to fetch order details" }, { status: 500 });

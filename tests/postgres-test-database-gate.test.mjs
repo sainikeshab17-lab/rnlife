@@ -35,6 +35,11 @@ test("rejects production-like names and non-loopback hosts", () => {
   assert.throws(() => validateTestDatabaseConfig(approved({
     TEST_DATABASE_URL: "postgresql://user:pass@db.example.test:5432/rightnowlife_test",
   })));
+  for (const suffix of ["?host=db.example.test", "#fragment", "/rightnowlife_test/extra"]) {
+    assert.throws(() => validateTestDatabaseConfig(approved({
+      TEST_DATABASE_URL: `postgresql://user:pass@localhost:5432/rightnowlife_test${suffix}`,
+    })));
+  }
 });
 
 test("requires each approval and an explicit URL before database use", () => {

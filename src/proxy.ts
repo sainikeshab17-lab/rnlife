@@ -1,9 +1,16 @@
 
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getAdminLoginProxyHeaders } from "@/lib/auth/admin-login-rate-limit";
 
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  let requestHeaders = getAdminLoginProxyHeaders(
+    request.headers,
+    request.nextUrl.pathname,
+    process.env.NODE_ENV,
+    request.nextUrl.hostname,
+  );
+  let response = NextResponse.next({ request: { headers: requestHeaders } });
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -22,7 +29,13 @@ export async function proxy(request: NextRequest) {
           request.cookies.set(name, value);
         });
 
-        response = NextResponse.next({ request });
+        requestHeaders = getAdminLoginProxyHeaders(
+          request.headers,
+          request.nextUrl.pathname,
+          process.env.NODE_ENV,
+          request.nextUrl.hostname,
+        );
+        response = NextResponse.next({ request: { headers: requestHeaders } });
 
         cookiesToSet.forEach(({ name, value, options }) => {
           response.cookies.set(name, value, options);

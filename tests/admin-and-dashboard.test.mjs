@@ -11,6 +11,9 @@ import {
   getAdminByEmail,
   createSession,
   revokeSession,
+  validateSession,
+  getSessionCookieOptions,
+  ADMIN_COOKIE_NAME,
 } from "../src/lib/auth/admin-auth.ts";
 import {
   isValidAdminTransition,
@@ -235,6 +238,14 @@ describe("Phase 3: Secure Admin Authentication & Password Hashing", () => {
     assert.strictEqual(verifyPassword("", hashed), false);
   });
 
+  test("Rejects malformed PBKDF2 parameters before deriving a password hash", () => {
+    const valid = hashPassword("SecretAdminPass@2026");
+    const [, , salt, hash] = valid.split("$");
+    assert.equal(verifyPassword("SecretAdminPass@2026", `pbkdf2$999999999$${salt}$${hash}`), false);
+    assert.equal(verifyPassword("SecretAdminPass@2026", `pbkdf2$100000junk$${salt}$${hash}`), false);
+    assert.equal(verifyPassword("SecretAdminPass@2026", `pbkdf2$100000$${salt}$${"z".repeat(128)}`), false);
+  });
+
   test("Rejects creation of admin user with password under 12 characters", async () => {
     const shortResult = await createAdminUser("short@rnl.in", "Short", "weak123");
     assert.strictEqual(shortResult.success, false);
@@ -277,6 +288,43 @@ describe("Phase 3: Secure Admin Authentication & Password Hashing", () => {
 
     // Revocation clears the session
     await revokeSession(rawToken);
+  });
+
+  test("session cookie attributes stay host-only and development-compatible", () => {
+    const options = getSessionCookieOptions();
+    assert.equal(options.httpOnly, true);
+    assert.equal(options.sameSite, "strict");
+    assert.equal(options.path, "/");
+    assert.equal(options.domain, undefined);
+    assert.equal(options.secure, process.env.NODE_ENV === "production");
+    assert.equal(ADMIN_COOKIE_NAME, "rnl_admin_session");
+  });
+
+  test("session validator rejects a missing cookie before database access", async () => {
+    const req = { cookies: { get: () => undefined } };
+    assert.equal(await validateSession(req), null);
+  });
+
+  databaseTest("session validator accepts the issued cookie and rejects invalid or revoked sessions", async () => {
+    const priorSecret = process.env.ADMIN_SESSION_SECRET;
+    process.env.ADMIN_SESSION_SECRET = "disposable-test-session-secret-32-bytes-minimum";
+    let token;
+    try {
+      const email = `session_validate_${Date.now()}@rightnowlife.in`;
+      await createAdminUser(email, "Session Validator", "SecurePassphrase123#");
+      const admin = await getAdminByEmail(email);
+      assert.ok(admin);
+      token = await createSession(admin.id);
+      const req = value => ({ cookies: { get: name => name === ADMIN_COOKIE_NAME && value ? { value } : undefined } });
+      assert.equal((await validateSession(req(token)))?.id, admin.id);
+      assert.equal(await validateSession(req("invalid-session-cookie-value")), null);
+      await revokeSession(token);
+      assert.equal(await validateSession(req(token)), null);
+    } finally {
+      if (token) await revokeSession(token).catch(() => {});
+      if (priorSecret === undefined) delete process.env.ADMIN_SESSION_SECRET;
+      else process.env.ADMIN_SESSION_SECRET = priorSecret;
+    }
   });
 });
 

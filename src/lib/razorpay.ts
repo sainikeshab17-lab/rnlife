@@ -185,14 +185,12 @@ export async function createRazorpayRefund({
   notes,
   receipt,
 }: CreateRefundParams): Promise<RazorpayRefundResult> {
-  // If running in development/test without real credentials, return safe simulated refund
+  // A simulated refund must never be reported as a successful provider refund:
+  // the caller persists successful results as money returned to the customer.
   if (!RAZORPAY_KEY_SECRET) {
-    const simRefundId = `rfnd_sim_${crypto.randomBytes(8).toString("hex")}`;
     return {
-      success: true,
-      refundId: simRefundId,
-      amount: amountPaisa || 99900,
-      status: "processed",
+      success: false,
+      error: "Razorpay server credentials are not configured.",
     };
   }
 

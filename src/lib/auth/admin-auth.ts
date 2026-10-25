@@ -39,7 +39,12 @@ export function verifyPassword(password: string, stored: string): boolean {
   try {
     const parts = stored.split("$");
     if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
-    const iterations = parseInt(parts[1], 10);
+    // Hashes are generated locally with fixed parameters. Do not let a
+    // malformed or database-corrupted value choose an unbounded PBKDF2 cost.
+    if (parts[1] !== String(PBKDF2_ITERATIONS) || !/^[a-f0-9]{32}$/.test(parts[2]) || !/^[a-f0-9]{128}$/.test(parts[3])) {
+      return false;
+    }
+    const iterations = PBKDF2_ITERATIONS;
     const salt = parts[2];
     const storedHashHex = parts[3];
     const derived = pbkdf2Sync(password, salt, iterations, PBKDF2_KEYLEN, PBKDF2_DIGEST);
@@ -118,7 +123,14 @@ export async function validateSession(req: NextRequest): Promise<DbAdminUser | n
     uupdated: string;
   }>(tokenHash, new Date().toISOString());
 
-  if (!session) return null;
+  if (!session) {
+    if (process.env.NODE_ENV === "development") {
+      // Never log the cookie, token hash, or account data. This distinguishes
+      // a delivered cookie with no valid DB session from a missing cookie.
+      console.info("[admin/auth] Session rejected (cookie has no active database session).");
+    }
+    return null;
+  }
 
   return {
     id: session.uid,

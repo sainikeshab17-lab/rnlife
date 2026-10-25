@@ -1,7 +1,9 @@
 import "server-only";
 import { getDb, withTransaction, type DbConnection, type DbOrder, type DbOrderAddress, type DbOrderItem } from "@/lib/db";
 import { shiprocketRequest, shiprocketEnabled, ShiprocketError } from "@/lib/shiprocket/client";
+import { hasValidShiprocketLabelHostAllowlist, isValidShiprocketLabelUrl } from "@/lib/policies";
 import type { ShiprocketCreateOrderResponse, ShiprocketOrderInput, ShiprocketAwbResponse } from "@/lib/shiprocket/types";
+import { prepareShiprocketShipment } from "@/services/shiprocket/shipment-preparation";
 
 type ShippingDependencies = {
   db: DbConnection;
@@ -9,17 +11,15 @@ type ShippingDependencies = {
   enabled: typeof shiprocketEnabled;
   env: NodeJS.ProcessEnv;
   transaction: typeof withTransaction;
+  prepare: (orderId: string) => ReturnType<typeof prepareShiprocketShipment>;
 };
 
-const runtimeDependencies = (): ShippingDependencies => ({
-  db: getDb(), request: shiprocketRequest, enabled: shiprocketEnabled, env: process.env, transaction: withTransaction,
-});
-
-const numberEnv = (name: string, env: NodeJS.ProcessEnv) => {
-  const raw = env[name];
-  const value = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(value) || value <= 0) throw new ShiprocketError("Shiprocket package configuration is invalid.");
-  return value;
+const runtimeDependencies = (): ShippingDependencies => {
+  const db = getDb();
+  return {
+    db, request: shiprocketRequest, enabled: shiprocketEnabled, env: process.env, transaction: withTransaction,
+    prepare: orderId => prepareShiprocketShipment(orderId, { db, env: process.env }),
+  };
 };
 
 async function requireEligibleOrder(db: DbConnection, orderId: string) {
@@ -50,6 +50,16 @@ const allowedPriorStates: Record<string, string[]> = {
   pickup_requesting: ["awb_assigned"], generating_label: ["awb_assigned", "pickup_requested"],
 };
 
+function isSuccessfulPickupResponse(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const response = (value as Record<string, unknown>).response;
+  if (!response || typeof response !== "object" || Array.isArray(response)) return false;
+  const pickup = response as Record<string, unknown>;
+  return (value as Record<string, unknown>).pickup_status === 1 && pickup.status === 3 &&
+    typeof pickup.pickup_scheduled_date === "string" && pickup.pickup_scheduled_date.trim().length > 0 && pickup.pickup_scheduled_date.length <= 80 &&
+    typeof pickup.pickup_token_number === "string" && pickup.pickup_token_number.trim().length > 0 && pickup.pickup_token_number.length <= 200;
+}
+
 /** Row lock serializes the eligibility check and durable operation reservation with cancellation/refund writers. */
 async function claimEligibleOperation(orderId: string, nextState: keyof typeof allowedPriorStates, deps: ShippingDependencies) {
   return deps.transaction(async (tx) => {
@@ -79,6 +89,22 @@ export async function createOrResumeShipment(orderId: string, deps = runtimeDepe
   if (!deps.enabled()) throw new ShiprocketError("Shiprocket shipping is disabled.");
   const { db } = deps;
   const order = await requireEligibleOrder(db, orderId);
+  const persistedState = order.shiprocket_state ?? "";
+  if (persistedState === "unknown" || persistedState === "creating") {
+    throw new ShiprocketError("Previous Shiprocket order creation has an uncertain outcome. Reconcile it before retrying.", 409);
+  }
+  if (order.shiprocket_order_id != null && order.shiprocket_shipment_id != null &&
+      ["order_created", "awb_assigned", "pickup_requested", "label_ready"].includes(persistedState)) {
+    return db.prepare("SELECT * FROM orders WHERE id = ?").get<DbOrder>(orderId);
+  }
+  if (persistedState !== "not_created" && persistedState !== "failed") {
+    throw new ShiprocketError("Shipment operation is already in progress or requires reconciliation.", 409);
+  }
+  if (order.shiprocket_order_id != null || order.shiprocket_shipment_id != null || order.tracking_number) {
+    throw new ShiprocketError("Shipment identifiers or tracking already exist; reconcile before creating another shipment.", 409);
+  }
+  const prepared = await deps.prepare(orderId);
+  if (prepared.orderId !== orderId) throw new ShiprocketError("Shipment preparation did not match the requested order.", 409);
   const cod = ["COD", "Cash on Delivery"].includes(order.payment_method);
   const address = await db.prepare("SELECT * FROM order_addresses WHERE order_id = ?").get<DbOrderAddress>(orderId);
   const items = await db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY id").all<DbOrderItem>(orderId);
@@ -110,10 +136,10 @@ export async function createOrResumeShipment(orderId: string, deps = runtimeDepe
     const orderDate = new Date(order.created_at);
     if (!Number.isFinite(orderDate.getTime())) throw new ShiprocketError("Order date is invalid for Shiprocket.", 400);
     const packageDimensions = {
-      length: numberEnv("SHIPROCKET_PACKAGE_LENGTH_CM", deps.env),
-      breadth: numberEnv("SHIPROCKET_PACKAGE_BREADTH_CM", deps.env),
-      height: numberEnv("SHIPROCKET_PACKAGE_HEIGHT_CM", deps.env),
-      weight: numberEnv("SHIPROCKET_PACKAGE_WEIGHT_KG", deps.env),
+      length: prepared.dimensions.lengthCm,
+      breadth: prepared.dimensions.breadthCm,
+      height: prepared.dimensions.heightCm,
+      weight: prepared.weightKg,
     };
     await claimEligibleOperation(orderId, "creating", deps);
     const [first, ...rest] = address.full_name.trim().split(/\s+/);
@@ -133,8 +159,8 @@ export async function createOrResumeShipment(orderId: string, deps = runtimeDepe
     if (rest.length) payload.billing_customer_name = `${first} ${rest.join(" ")}`;
     try {
       const response = await deps.request<ShiprocketCreateOrderResponse>("/orders/create/adhoc", "POST", payload);
-      if (typeof response.order_id !== "number" || !Number.isSafeInteger(response.order_id) ||
-          typeof response.shipment_id !== "number" || !Number.isSafeInteger(response.shipment_id)) {
+      if (typeof response.order_id !== "number" || !Number.isSafeInteger(response.order_id) || response.order_id <= 0 ||
+          typeof response.shipment_id !== "number" || !Number.isSafeInteger(response.shipment_id) || response.shipment_id <= 0) {
         throw new ShiprocketError("Shiprocket returned an incomplete order response.", undefined, true);
       }
       const persisted = await db.prepare(`UPDATE orders SET shiprocket_order_id = ?, shiprocket_shipment_id = ?, shiprocket_state = 'order_created',
@@ -168,16 +194,15 @@ export async function assignShipmentAwb(orderId: string, deps = runtimeDependenc
       if (!Number.isSafeInteger(shipmentId)) throw new ShiprocketError("Stored Shiprocket shipment ID is invalid.", 409);
       const awb = await deps.request<ShiprocketAwbResponse>("/courier/assign/awb", "POST", { shipment_id: shipmentId });
       const data = awb.response?.data;
-      if (awb.awb_assign_status === 1 && typeof data?.awb_code === "string" && /^[A-Za-z0-9-]{4,40}$/.test(data.awb_code)) {
+      if (awb.awb_assign_status === 1 && data?.shipment_id === shipmentId &&
+          typeof data.awb_code === "string" && /^[A-Za-z0-9-]{4,40}$/.test(data.awb_code) &&
+          (data.courier_name == null || (typeof data.courier_name === "string" && data.courier_name.trim().length > 0 && data.courier_name.length <= 120))) {
         const saved = await db.prepare(`UPDATE orders SET tracking_number = ?, courier_name = ?, tracking_url = 'https://www.shiprocket.in/shipment-tracking/', shiprocket_state = 'awb_assigned',
           shiprocket_updated_at = NOW(), updated_at = NOW() WHERE id = ? AND shiprocket_state = 'assigning_awb' AND tracking_number IS NULL`)
           .run(data.awb_code, data.courier_name ?? null, orderId);
         if (saved.rowCount !== 1) throw new ShiprocketError("Shiprocket assigned an AWB but local persistence needs reconciliation.", undefined, true);
       } else {
-        await db.prepare(`UPDATE orders SET shiprocket_state = 'order_created', shiprocket_last_error = ?,
-          shiprocket_updated_at = NOW(), updated_at = NOW() WHERE id = ? AND shiprocket_state = 'assigning_awb'`)
-          .run("AWB assignment was not confirmed by Shiprocket.", orderId);
-        throw new ShiprocketError("AWB assignment was not confirmed by Shiprocket.", 502);
+        throw new ShiprocketError("Shiprocket returned an incomplete or mismatched AWB response; reconcile before retrying.", undefined, true);
       }
     } catch (error) {
       const ambiguous = !(error instanceof ShiprocketError) || error.ambiguous;
@@ -201,6 +226,9 @@ export async function scheduleShipmentPickup(orderId: string, deps = runtimeDepe
   await claimEligibleOperation(orderId, "pickup_requesting", deps);
   try {
     const result = await deps.request<Record<string, unknown>>("/courier/generate/pickup", "POST", { shipment_id: [shipmentId] });
+    if (!isSuccessfulPickupResponse(result)) {
+      throw new ShiprocketError("Shiprocket returned an incomplete pickup response; reconcile before retrying.", undefined, true);
+    }
     const saved = await db.prepare("UPDATE orders SET shiprocket_state = 'pickup_requested', shiprocket_updated_at = NOW(), updated_at = NOW() WHERE id = ? AND shiprocket_state = 'pickup_requesting'").run(orderId);
     if (saved.rowCount !== 1) throw new ShiprocketError("Shiprocket accepted pickup but local persistence needs reconciliation.", undefined, true);
     return result;
@@ -215,6 +243,13 @@ export async function scheduleShipmentPickup(orderId: string, deps = runtimeDepe
 
 export async function generateShipmentLabel(orderId: string, deps = runtimeDependencies()) {
   if (!deps.enabled()) throw new ShiprocketError("Shiprocket shipping is disabled.");
+  const labelHosts = deps.env.SHIPROCKET_LABEL_ALLOWED_HOSTS;
+  if (!labelHosts?.trim()) {
+    throw new ShiprocketError("Shiprocket label host allowlist is not configured. Set SHIPROCKET_LABEL_ALLOWED_HOSTS to exact HTTPS hostnames verified in staging.", 503);
+  }
+  if (!hasValidShiprocketLabelHostAllowlist(labelHosts)) {
+    throw new ShiprocketError("SHIPROCKET_LABEL_ALLOWED_HOSTS must be a comma-separated list of exact DNS hostnames without schemes, paths, wildcards, or ports.", 503);
+  }
   const { db } = deps;
   await requireEligibleOrder(db, orderId);
   const row = await db.prepare("SELECT shiprocket_shipment_id, shiprocket_state, shiprocket_label_url FROM orders WHERE id = ?")
@@ -229,8 +264,10 @@ export async function generateShipmentLabel(orderId: string, deps = runtimeDepen
   await claimEligibleOperation(orderId, "generating_label", deps);
   try {
     const result = await deps.request<{ label_url?: string }>("/courier/generate/label", "POST", { shipment_id: [shipmentId] });
-    const url = typeof result.label_url === "string" && /^https:\/\//i.test(result.label_url) ? result.label_url : null;
-    if (!url) throw new ShiprocketError("Shiprocket returned an incomplete label response; reconcile before retrying.", undefined, true);
+    const url = isValidShiprocketLabelUrl(result.label_url, deps.env.SHIPROCKET_LABEL_ALLOWED_HOSTS)
+      ? result.label_url
+      : null;
+    if (!url) throw new ShiprocketError("Shiprocket returned an untrusted or incomplete label URL; reconcile before retrying.", undefined, true);
     const saved = await db.prepare(`UPDATE orders SET shiprocket_label_url = ?, shiprocket_state = 'label_ready',
       shiprocket_updated_at = NOW(), updated_at = NOW() WHERE id = ? AND shiprocket_state = 'generating_label'`).run(url, orderId);
     if (saved.rowCount !== 1) throw new ShiprocketError("Shiprocket returned a label but local persistence needs reconciliation.", undefined, true);

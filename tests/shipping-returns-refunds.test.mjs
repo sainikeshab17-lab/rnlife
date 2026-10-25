@@ -3,6 +3,7 @@ import assert from "node:assert";
 import { databaseTest } from "./postgres-test-support.mjs";
 import { getDb } from "../src/lib/db/index.ts";
 import {
+  isValidShiprocketLabelUrl,
   isValidTrackingUrl,
 } from "../src/lib/policies.ts";
 import {
@@ -39,6 +40,16 @@ describe("Phase 4: Shipping, Fulfilment & URL Validation", () => {
     assert.strictEqual(isValidTrackingUrl("ftp://files.example.com"), false);
     assert.strictEqual(isValidTrackingUrl(""), false);
     assert.strictEqual(isValidTrackingUrl("not-a-url"), false);
+  });
+
+  test("Shiprocket label URLs require HTTPS and an exact configured host", () => {
+    const allowlist = "labels.shiprocket.example, cdn.shiprocket.example";
+    assert.equal(isValidShiprocketLabelUrl("https://labels.shiprocket.example/order.pdf?sig=abc", allowlist), true);
+    assert.equal(isValidShiprocketLabelUrl("https://sub.labels.shiprocket.example/order.pdf", allowlist), false);
+    assert.equal(isValidShiprocketLabelUrl("http://labels.shiprocket.example/order.pdf", allowlist), false);
+    assert.equal(isValidShiprocketLabelUrl("https://user@labels.shiprocket.example/order.pdf", allowlist), false);
+    assert.equal(isValidShiprocketLabelUrl("https://labels.shiprocket.example.evil.test/order.pdf", allowlist), false);
+    assert.equal(isValidShiprocketLabelUrl("https://labels.shiprocket.example/order.pdf", ""), false);
   });
 
   test("Shipping provider abstraction formats AWB tracking URLs correctly", () => {
@@ -497,7 +508,7 @@ describe("Phase 4: Refund Safety & Record Tracking", () => {
     assert.equal(overBalance.reason, "exceeds_balance");
   });
 
-  test("Simulated server-side Razorpay refund works in test/dev mode", {
+  test("Missing Razorpay credentials never report a simulated refund as processed", {
     skip: RAZORPAY_KEY_SECRET === "rzp_test_placeholder_secret"
       ? false
       : "provider-facing refund call is disabled when Razorpay credentials are configured",
@@ -508,7 +519,8 @@ describe("Phase 4: Refund Safety & Record Tracking", () => {
       notes: { orderNumber: "RNL-TEST-123" },
     });
 
-    assert.strictEqual(res.success, true);
-    assert.ok(res.refundId?.startsWith("rfnd_sim_"));
+    assert.strictEqual(res.success, false);
+    assert.equal(res.refundId, undefined);
+    assert.match(res.error ?? "", /credentials are not configured/i);
   });
 });

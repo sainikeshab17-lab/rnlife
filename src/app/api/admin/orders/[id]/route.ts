@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/auth/admin-auth";
 import { getDb, DbOrder, DbOrderItem, DbOrderAddress, DbOrderStatusHistory } from "@/lib/db/index";
 import { writeAuditLog } from "@/lib/db/audit";
+import { isValidShiprocketLabelUrl } from "@/lib/policies";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,16 @@ async function fetchOrderWithDetails(orderId: string) {
   return { ...order, items, address, history };
 }
 
+function withValidatedLabelUrl<T extends { shiprocket_label_url?: string | null }>(order: T): T {
+  return {
+    ...order,
+    shiprocket_label_url: isValidShiprocketLabelUrl(
+      order.shiprocket_label_url,
+      process.env.SHIPROCKET_LABEL_ALLOWED_HOSTS,
+    ) ? order.shiprocket_label_url : null,
+  };
+}
+
 /** GET /api/admin/orders/[id] */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdminAuth(req);
@@ -27,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
   const { shiprocketEnabled } = await import("@/lib/shiprocket/client");
-  return NextResponse.json({ order, shiprocketEnabled: shiprocketEnabled() });
+  return NextResponse.json({ order: withValidatedLabelUrl(order), shiprocketEnabled: shiprocketEnabled() });
 }
 
 /** PATCH /api/admin/orders/[id] — update tracking info, dates, and/or notes */
@@ -120,5 +131,5 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   });
 
   const updated = await fetchOrderWithDetails(id);
-  return NextResponse.json({ order: updated });
+  return NextResponse.json({ order: updated ? withValidatedLabelUrl(updated) : null });
 }
