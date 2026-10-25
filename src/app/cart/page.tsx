@@ -41,7 +41,7 @@ export default function CartPage() {
               YOUR BAG ({itemCount})
             </h1>
             <p className="text-xs text-neutral-500 mt-1">
-              Graphic tees are ₹999; custom quote tees are ₹1,999. Complimentary express air shipping on all orders.
+              Graphic tees are ₹999; custom quote tees are ₹1,299. Free Shipping on every order.
             </p>
           </div>
 
@@ -78,11 +78,11 @@ export default function CartPage() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
             {/* Left Items Column (8 cols) */}
             <div className="lg:col-span-8 space-y-4">
-              {/* Free Express Shipping Banner */}
+              {/* Free Shipping Banner */}
               <div className="p-4 bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-3">
                 <Truck className="w-5 h-5 text-emerald-700 shrink-0" />
                 <p>
-                  <strong>FREE Express Air Shipping</strong> applies to your order. Delivery in 2–4 business days across India.
+                  <strong>Free Shipping</strong> applies to your order.
                 </p>
               </div>
 
@@ -190,7 +190,7 @@ export default function CartPage() {
                     <span className="font-semibold text-black">{formatINR(subtotal)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Express Air Shipping</span>
+                    <span>Free Shipping</span>
                     <span className="font-semibold text-[#079447]">
                       FREE (₹0)
                     </span>

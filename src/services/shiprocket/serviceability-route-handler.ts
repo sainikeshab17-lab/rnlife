@@ -29,12 +29,34 @@ export function createShiprocketServiceabilityPost(deps: ServiceabilityRouteDepe
       return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
     }
     const parsed = body as Record<string, unknown>;
-    if (parsed.confirmed !== true || typeof parsed.deliveryPostcode !== "string" || typeof parsed.cod !== "boolean") {
-      return NextResponse.json({ error: "Explicit confirmation, deliveryPostcode, and a boolean cod value are required." }, { status: 400 });
+    const rawDimensions = parsed.dimensionsCm;
+    let dimensionsCm: ShiprocketServiceabilityInput["dimensionsCm"];
+    if (rawDimensions !== undefined) {
+      if (!rawDimensions || typeof rawDimensions !== "object" || Array.isArray(rawDimensions)) {
+        return NextResponse.json({ error: "Package dimensions must include positive length, breadth, and height values in cm." }, { status: 400 });
+      }
+      const dimensions = rawDimensions as Record<string, unknown>;
+      if ([dimensions.length, dimensions.breadth, dimensions.height].some(value => typeof value !== "number" || !Number.isFinite(value) || value <= 0)) {
+        return NextResponse.json({ error: "Package dimensions must include positive length, breadth, and height values in cm." }, { status: 400 });
+      }
+      dimensionsCm = {
+        length: dimensions.length as number,
+        breadth: dimensions.breadth as number,
+        height: dimensions.height as number,
+      };
+    }
+    if (parsed.confirmed !== true || typeof parsed.deliveryPostcode !== "string" || typeof parsed.cod !== "boolean" ||
+        (parsed.weightKg !== undefined && (typeof parsed.weightKg !== "number" || !Number.isFinite(parsed.weightKg) || parsed.weightKg <= 0))) {
+      return NextResponse.json({ error: "Explicit confirmation, deliveryPostcode, boolean cod, and positive package measurements are required." }, { status: 400 });
     }
 
     try {
-      const result = await deps.check({ deliveryPostcode: parsed.deliveryPostcode, cod: parsed.cod } satisfies ShiprocketServiceabilityInput);
+      const result = await deps.check({
+        deliveryPostcode: parsed.deliveryPostcode,
+        cod: parsed.cod,
+        ...(parsed.weightKg === undefined ? {} : { weightKg: parsed.weightKg as number }),
+        ...(dimensionsCm ? { dimensionsCm } : {}),
+      } satisfies ShiprocketServiceabilityInput);
       return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
       const status = error instanceof ShiprocketError ? error.status ?? 502 : 502;

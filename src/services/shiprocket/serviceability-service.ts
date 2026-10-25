@@ -1,7 +1,12 @@
 import "server-only";
 import { ShiprocketError, shiprocketRequest } from "@/lib/shiprocket/client";
 
-export type ShiprocketServiceabilityInput = { deliveryPostcode: string; cod: boolean };
+export type ShiprocketServiceabilityInput = {
+  deliveryPostcode: string;
+  cod: boolean;
+  weightKg?: number;
+  dimensionsCm?: { length: number; breadth: number; height: number };
+};
 export type ShiprocketCourierOption = {
   courierId: number;
   courierName: string;
@@ -81,9 +86,17 @@ export async function checkShiprocketServiceability(
     throw new ShiprocketError("A six-digit delivery postcode and COD selection are required.", 400);
   }
 
-  const weight = positiveNumber(deps.env.SHIPROCKET_PACKAGE_WEIGHT_KG, "SHIPROCKET_PACKAGE_WEIGHT_KG");
+  const weight = input.weightKg === undefined
+    ? positiveNumber(deps.env.SHIPROCKET_PACKAGE_WEIGHT_KG, "SHIPROCKET_PACKAGE_WEIGHT_KG")
+    : positiveInputNumber(input.weightKg, "Package weight");
   const dimensionNames = ["SHIPROCKET_PACKAGE_LENGTH_CM", "SHIPROCKET_PACKAGE_BREADTH_CM", "SHIPROCKET_PACKAGE_HEIGHT_CM"] as const;
-  const dimensions = dimensionNames.map(name => optionalPositiveNumber(deps.env[name], name));
+  const dimensions = input.dimensionsCm
+    ? [
+        positiveInputNumber(input.dimensionsCm.length, "Package length"),
+        positiveInputNumber(input.dimensionsCm.breadth, "Package breadth"),
+        positiveInputNumber(input.dimensionsCm.height, "Package height"),
+      ]
+    : dimensionNames.map(name => optionalPositiveNumber(deps.env[name], name));
   if (dimensions.some(value => value !== undefined) && dimensions.some(value => value === undefined)) {
     throw new ShiprocketError("Configure all three package dimensions or leave all three blank.", 503);
   }
@@ -105,4 +118,11 @@ export async function checkShiprocketServiceability(
   if (!Array.isArray(available)) throw new ShiprocketError("Shiprocket returned an invalid serviceability response.", 502);
   const couriers = available.map(normalizeCourier);
   return { serviceable: couriers.length > 0, couriers };
+}
+
+function positiveInputNumber(value: number, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new ShiprocketError(`${label} must be a positive number.`, 400);
+  }
+  return value;
 }

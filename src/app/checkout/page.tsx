@@ -928,7 +928,7 @@ export default function CheckoutPage() {
 
                   <div className="flex justify-between">
 
-                    <span>Express Air Shipping</span>
+                    <span>Free Shipping</span>
 
                     <span className="font-semibold text-[#111111]">
 
@@ -1866,7 +1866,7 @@ export default function CheckoutPage() {
 
                   <div className="flex justify-between">
 
-                    <span>Express Air Shipping</span>
+                    <span>Free Shipping</span>
 
                     <span className="font-semibold text-[#111111]">
 
@@ -1892,7 +1892,7 @@ export default function CheckoutPage() {
 
                   <p>• Fixed pricing: Strictly ₹999 per T-shirt (GST included).</p>
 
-                  <p>• Complimentary express air shipping on all orders (₹0).</p>
+                  <p>• Free Shipping on all orders (₹0).</p>
 
                   <p>• Exchange requests may be submitted within {STORE_POLICIES.returns.windowDays} days after delivery and are reviewed under our Returns & Exchanges Policy.</p>
 

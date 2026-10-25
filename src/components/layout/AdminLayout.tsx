@@ -21,6 +21,7 @@ import {
   FileText,
   RotateCcw,
   Star,
+  Truck,
 } from "lucide-react";
 
 interface AdminLayoutProps {
@@ -67,6 +68,7 @@ export function AdminLayout({
   const navLinks = [
     { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
     { label: "Order Operations", href: "/admin/orders", icon: ShoppingBag },
+    { label: "Shipping Serviceability", href: "/admin/shipping/serviceability", icon: Truck },
     { label: "Returns & Exchanges", href: "/admin/returns", icon: RotateCcw },
     { label: "Product Reviews", href: "/admin/reviews", icon: Star },
     { label: "Notification Queue", href: "/admin/notifications", icon: FileText },

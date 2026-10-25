@@ -44,6 +44,32 @@ test("serviceability route requires explicit confirmation and dispatches only th
   assert.deepEqual(h.calls, [{ deliveryPostcode: "122002", cod: false }]);
 });
 
+test("serviceability route accepts validated package measurements and rejects invalid measurements", async () => {
+  const h = setup();
+  const invalidBodies = [
+    { confirmed: true, deliveryPostcode: "122002", cod: false, weightKg: 0 },
+    { confirmed: true, deliveryPostcode: "122002", cod: false, dimensionsCm: { length: 20, breadth: 0, height: 5 } },
+    { confirmed: true, deliveryPostcode: "122002", cod: false, dimensionsCm: { length: 20, breadth: 15 } },
+  ];
+  for (const body of invalidBodies) assert.equal((await h.invoke(body)).status, 400);
+  assert.deepEqual(h.calls, []);
+
+  const response = await h.invoke({
+    confirmed: true,
+    deliveryPostcode: "122002",
+    cod: false,
+    weightKg: 0.75,
+    dimensionsCm: { length: 21, breadth: 16, height: 6 },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(h.calls, [{
+    deliveryPostcode: "122002",
+    cod: false,
+    weightKg: 0.75,
+    dimensionsCm: { length: 21, breadth: 16, height: 6 },
+  }]);
+});
+
 test("serviceability route hides unknown provider error details", async () => {
   const h = setup({ error: new Error("sensitive provider error") });
   const response = await h.invoke({ confirmed: true, deliveryPostcode: "122002", cod: false });

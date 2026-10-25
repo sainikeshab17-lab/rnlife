@@ -41,6 +41,37 @@ test("serviceability requests courier options and returns only validated provide
   }] });
 });
 
+test("explicit positive parcel measurements override the server defaults for the read-only quote", async () => {
+  const h = setup({ envOverrides: {
+    SHIPROCKET_PACKAGE_WEIGHT_KG: "0.4",
+    SHIPROCKET_PACKAGE_LENGTH_CM: "10",
+    SHIPROCKET_PACKAGE_BREADTH_CM: "10",
+    SHIPROCKET_PACKAGE_HEIGHT_CM: "10",
+  } });
+  await checkShiprocketServiceability({
+    deliveryPostcode: "122002",
+    cod: false,
+    weightKg: 0.75,
+    dimensionsCm: { length: 21, breadth: 16, height: 6 },
+  }, h.deps);
+  const query = new URL(`https://api.test${h.calls[0].path}`).searchParams;
+  assert.equal(query.get("weight"), "0.75");
+  assert.equal(query.get("length"), "21");
+  assert.equal(query.get("breadth"), "16");
+  assert.equal(query.get("height"), "6");
+});
+
+test("invalid explicit parcel measurements fail before a provider request", async () => {
+  for (const input of [
+    { deliveryPostcode: "122002", cod: false, weightKg: 0 },
+    { deliveryPostcode: "122002", cod: false, dimensionsCm: { length: 20, breadth: 0, height: 5 } },
+  ]) {
+    const h = setup();
+    await assert.rejects(checkShiprocketServiceability(input, h.deps), /positive number/);
+    assert.deepEqual(h.calls, []);
+  }
+});
+
 test("unavailable delivery postcode returns an empty non-serviceable result", async () => {
   const h = setup();
   assert.deepEqual(await checkShiprocketServiceability({ deliveryPostcode: "999999", cod: false }, h.deps), {

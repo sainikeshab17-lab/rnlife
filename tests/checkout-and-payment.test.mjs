@@ -34,6 +34,37 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
     assert.equal(CheckoutItemSchema.safeParse({ productId: "rnl-custom-quote-tee", size: "M", quantity: 1, customization: { ...customDetails, font: "comic" } }).success, false);
   });
 
+  test("client shipping charges and grand totals do not affect trusted checkout pricing", () => {
+    const request = CreateCheckoutOrderSchema.safeParse({
+      customerName: "Test Customer",
+      customerEmail: "customer@example.test",
+      customerPhone: "9876543210",
+      address: {
+        fullName: "Test Customer", phone: "9876543210", addressLine1: "12 Test Street",
+        city: "Pune", state: "Maharashtra", pinCode: "411001", country: "India",
+      },
+      items: [{ productId: "rnl-design-01", size: "M", quantity: 1, color: "As pictured" }],
+      shipping: 5000,
+      total: 1,
+      grandTotal: 1,
+    });
+
+    assert.equal(request.success, true);
+    if (request.success) {
+      assert.equal("shipping" in request.data, false);
+      assert.equal("total" in request.data, false);
+      assert.equal("grandTotal" in request.data, false);
+      const calculated = calculateTrustedOrderPricing(request.data.items);
+      assert.equal(calculated.success, true);
+      if (calculated.success) {
+        assert.deepEqual({ subtotal: calculated.pricing.subtotal, shipping: calculated.pricing.shipping,
+          discount: calculated.pricing.discount, total: calculated.pricing.total },
+        { subtotal: 999, shipping: 0, discount: 0, total: 999 });
+        assert.equal(Math.round(calculated.pricing.total * 100), 99_900);
+      }
+    }
+  });
+
   test("catalog tees remain ₹999 stock items and COD Advance is ₹200 once per order", () => {
     for (let n = 1; n <= 8; n += 1) {
       const id = `rnl-design-${String(n).padStart(2, "0")}`;
@@ -474,6 +505,8 @@ describe("Separate checkout payment attempts", () => {
       purpose: "full_payment", expectedAmountPaisa: 99_900, snapshot });
     assert.equal(created.status, "created");
     assert.equal(created.attempt?.attempt_status, "pending");
+    assert.equal(created.attempt?.expected_amount_paisa, Math.round(snapshot.total * 100));
+    assert.equal(created.attempt?.checkout_snapshot.shipping, 0);
     assert.equal(await getDb().prepare("SELECT COUNT(*) AS n FROM orders WHERE customer_email = ?").get(email).then((row) => Number(row.n)), 0);
 
     const replay = await createCheckoutPaymentAttempt({ idempotencyKey: key, requestHash: hash,
@@ -497,6 +530,10 @@ describe("Separate checkout payment attempts", () => {
     const order = await getOrderById(converted.orderId);
     assert.equal(order.payment_status, "paid");
     assert.equal(order.is_confirmed, true);
+    assert.equal(order.subtotal, 999);
+    assert.equal(order.shipping, 0);
+    assert.equal(order.discount, 0);
+    assert.equal(order.total, 999);
     assert.equal(await getDb().prepare("SELECT COUNT(*) AS n FROM orders WHERE id = ?").get(order.id).then((row) => Number(row.n)), 1);
   });
 
