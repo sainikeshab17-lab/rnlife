@@ -51,6 +51,7 @@ const filesToCompile = [
   { in: "src/services/contact-submission.ts", out: ".test-dist/src/services/contact-submission.js" },
   { in: "src/services/refund-reconciliation.ts", out: ".test-dist/src/services/refund-reconciliation.js" },
   { in: "src/services/refund-reconciliation-route.ts", out: ".test-dist/src/services/refund-reconciliation-route.js" },
+  { in: "src/services/whatsapp-webhook.ts", out: ".test-dist/src/services/whatsapp-webhook.js" },
   { in: "src/services/razorpay/refund-webhook-inbox-policy.ts", out: ".test-dist/src/services/razorpay/refund-webhook-inbox-policy.js" },
   { in: "src/services/razorpay/refund-webhook-inbox.ts", out: ".test-dist/src/services/razorpay/refund-webhook-inbox.js" },
   { in: "tests/checkout-and-payment.test.mjs", out: ".test-dist/tests/checkout-and-payment.test.mjs" },
@@ -65,6 +66,7 @@ const filesToCompile = [
   { in: "tests/shipping-returns-refunds.test.mjs", out: ".test-dist/tests/shipping-returns-refunds.test.mjs" },
   { in: "tests/refund-reconciliation.test.mjs", out: ".test-dist/tests/refund-reconciliation.test.mjs" },
   { in: "tests/refund-reconciliation-route.test.mjs", out: ".test-dist/tests/refund-reconciliation-route.test.mjs" },
+  { in: "tests/whatsapp-webhook.test.mjs", out: ".test-dist/tests/whatsapp-webhook.test.mjs" },
   { in: "tests/refund-webhook-inbox.test.mjs", out: ".test-dist/tests/refund-webhook-inbox.test.mjs" },
   { in: "tests/refund-webhook-inbox-policy.test.mjs", out: ".test-dist/tests/refund-webhook-inbox-policy.test.mjs" },
   { in: "tests/notification-service.test.mjs", out: ".test-dist/tests/notification-service.test.mjs" },
@@ -247,6 +249,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/contact-submission\.ts["']/g, 'from "../src/services/contact-submission.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation\.ts["']/g, 'from "../src/services/refund-reconciliation.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation-route\.ts["']/g, 'from "../src/services/refund-reconciliation-route.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/whatsapp-webhook\.ts["']/g, 'from "../src/services/whatsapp-webhook.js"')
       .replace(/from\s+["']\.\.\/src\/services\/razorpay\/refund-webhook-inbox-policy\.ts["']/g, 'from "../src/services/razorpay/refund-webhook-inbox-policy.js"')
       .replace(/from\s+["']\.\.\/src\/services\/razorpay\/refund-webhook-inbox\.ts["']/g, 'from "../src/services/razorpay/refund-webhook-inbox.js"')
       .replace(/from\s+["']\.\.\/src\/services\/admin-notification-route\.ts["']/g, 'from "../src/services/admin-notification-route.js"')
@@ -358,6 +361,10 @@ try {
     cwd: process.cwd(),
   });
   execSync("node --conditions=react-server --test .test-dist/tests/refund-reconciliation-route.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --conditions=react-server --test .test-dist/tests/whatsapp-webhook.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });
