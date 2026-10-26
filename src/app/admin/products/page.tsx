@@ -38,6 +38,8 @@ interface AdminProduct {
   updated_at: string | null;
 }
 
+type ProductGenderOption = "Men" | "Women" | "Unisex";
+
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +56,9 @@ export default function AdminProductsPage() {
   const [creatingRecordId, setCreatingRecordId] = useState<string | null>(null);
   const [pendingStorefrontSlug, setPendingStorefrontSlug] = useState<Record<string, string>>({});
   const [candidateSelection, setCandidateSelection] = useState<Record<string, string>>({});
+  const [reviewedDraftGenders, setReviewedDraftGenders] = useState<Record<string, ProductGenderOption[]>>({});
+  const [reviewedDraftChoices, setReviewedDraftChoices] = useState<Record<string, boolean>>({});
+  const [configurationFeedback, setConfigurationFeedback] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -108,17 +113,22 @@ export default function AdminProductsPage() {
   };
 
   const toggleGender = async (product: AdminProduct, gender: "Men" | "Women" | "Unisex") => {
-    setSavingGenderId(product.id);
     const current = product.genders ?? [];
     const genders = current.includes(gender) ? current.filter((value) => value !== gender) : [...current, gender];
+    if (current.includes(gender) && genders.length === 0 && !window.confirm(`Remove the last gender option from ${product.name}? The product will no longer show a gender selector.`)) return;
+    setSavingGenderId(product.id);
     try {
       const response = await fetch(`/api/admin/products?id=${encodeURIComponent(product.id)}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ genders }),
       });
-      if (!response.ok) throw new Error("Failed to update gender options. Apply the gender migration first.");
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Failed to update gender options. Check that the gender schema migration is applied.");
+      }
       await fetchProducts();
+      setConfigurationFeedback((current) => ({ ...current, [product.storefront_slug ?? product.slug]: { ok: true, message: `Saved gender options: ${genders.length ? genders.join(" + ") : "no selector"}.` } }));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to update gender options.");
+      setConfigurationFeedback((current) => ({ ...current, [product.storefront_slug ?? product.slug]: { ok: false, message: error instanceof Error ? error.message : "Failed to update gender options." } }));
     } finally {
       setSavingGenderId(null);
     }
@@ -146,37 +156,44 @@ export default function AdminProductsPage() {
   };
 
   const linkCandidate = async (storefrontProduct: Product, databaseProduct: AdminProduct) => {
-    if (!window.confirm(`Link ${databaseProduct.name} (${databaseProduct.slug}, SKU ${databaseProduct.sku}) to ${storefrontProduct.slug}? Only the storefront mapping will change.`)) return;
+    const genders = reviewedDraftGenders[storefrontProduct.slug] ?? databaseProduct.genders ?? [];
+    if (!window.confirm(`Link ${databaseProduct.name} (${databaseProduct.slug}, SKU ${databaseProduct.sku}) to ${storefrontProduct.slug} and save gender options [${genders.join(", ") || "none"}]? Existing product details, inventory, and orders will remain unchanged. Only the storefront mapping and gender options will change.`)) return;
     setSavingMappingId(databaseProduct.id);
     try {
       const response = await fetch(`/api/admin/products?id=${encodeURIComponent(databaseProduct.id)}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storefront_slug: storefrontProduct.slug }),
+        body: JSON.stringify({ storefront_slug: storefrontProduct.slug, genders }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Unable to link this product.");
       await fetchProducts();
+      setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: true, message: `Linked and saved ${genders.length ? genders.join(" + ") : "no gender selector"}.` } }));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Unable to link this product.");
+      setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: false, message: error instanceof Error ? error.message : "Unable to link this product." } }));
     } finally {
       setSavingMappingId(null);
     }
   };
 
   const createStorefrontRecord = async (storefrontProduct: Product) => {
+    if (!reviewedDraftChoices[storefrontProduct.slug]) {
+      setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: false, message: "Review and choose gender options, or explicitly select No gender selector, before creating the draft." } }));
+      return;
+    }
+    const genders = reviewedDraftGenders[storefrontProduct.slug] ?? [];
     const candidates = products.filter((row) => row.slug === storefrontProduct.slug || row.storefront_slug === storefrontProduct.slug || row.sku?.toUpperCase() === storefrontProduct.sku.toUpperCase() || row.name.trim().toLowerCase() === storefrontProduct.name.trim().toLowerCase());
     if (candidates.length) {
       alert(`Possible existing database match found: ${candidates.map((row) => `${row.name} (${row.slug}, SKU ${row.sku})`).join("; ")}. Link that record instead of creating a duplicate.`);
       return;
     }
-    const confirmed = window.confirm(`Create an inactive database product record from the existing storefront details for ${storefrontProduct.name}?\n\nSlug: ${storefrontProduct.slug}\nSKU: ${storefrontProduct.sku}\nPrice: ${formatINR(storefrontProduct.price)}\n\nThis does not activate the record or change inventory or existing orders. Gender options remain empty until you configure them below.`);
+    const confirmed = window.confirm(`Create an inactive database product record from the canonical storefront details for ${storefrontProduct.name}?\n\nStorefront slug: ${storefrontProduct.slug}\nSKU: ${storefrontProduct.sku}\nPrice: ${formatINR(storefrontProduct.price)}\nGender options: ${genders.join(", ") || "No gender selector"}\n\nThis does not activate the record or create inventory or alter existing orders.`);
     if (!confirmed) return;
     setCreatingRecordId(storefrontProduct.id);
     try {
       const response = await fetch("/api/admin/products", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: storefrontProduct.name, slug: storefrontProduct.slug, description: storefrontProduct.description,
+          name: storefrontProduct.name, slug: storefrontProduct.slug, storefront_slug: storefrontProduct.slug, description: storefrontProduct.description,
           category: storefrontProduct.category, sku: storefrontProduct.sku, price: storefrontProduct.price,
           collection_slug: storefrontProduct.collectionSlug, tagline: storefrontProduct.tagline,
           fit: storefrontProduct.fit, gsm: storefrontProduct.gsm, sleeve: storefrontProduct.sleeve,
@@ -186,15 +203,16 @@ export default function AdminProductsPage() {
           images: storefrontProduct.colors.flatMap((color) => color.images),
           sizes: storefrontProduct.sizes, colors: storefrontProduct.colors.map((color) => color.name),
           color_variants: storefrontProduct.colors.map((color) => ({ name: color.name, hex: color.hex })),
-          genders: [], stock: 0, is_active: false,
+          genders, stock: 0, is_active: false,
         }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Unable to create storefront record.");
       setPendingStorefrontSlug((previous) => ({ ...previous, [result.product.id]: storefrontProduct.slug }));
       await fetchProducts();
+      setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: true, message: `Inactive draft created and linked with ${genders.length ? genders.join(" + ") : "no gender selector"}.` } }));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Unable to create storefront record.");
+      setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: false, message: error instanceof Error ? error.message : "Unable to create storefront record." } }));
     } finally {
       setCreatingRecordId(null);
     }
@@ -211,7 +229,7 @@ export default function AdminProductsPage() {
   return (
     <AdminLayout
       title="Global Product Catalog"
-      subtitle="Complete oversight of the eight authentic RIGHTNOWLIFE streetwear silhouettes. Selling price is strictly locked at ₹999 on the server."
+      subtitle="Manage canonical storefront mappings and product gender options. Product pricing remains locked at ₹999."
       actions={
         <button
           onClick={fetchProducts}
@@ -223,6 +241,7 @@ export default function AdminProductsPage() {
         </button>
       }
     >
+      <a href="#storefront-product-configuration" className="mb-4 inline-flex border border-neutral-900 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide hover:bg-neutral-900 hover:text-white">Configure storefront products &amp; gender</a>
       <div className="bg-white border border-neutral-200 shadow-sm space-y-4">
         {/* Notice of Locked Pricing */}
         <div className="p-4 bg-neutral-50 border-b border-neutral-200 flex items-center justify-between text-xs">
@@ -266,31 +285,53 @@ export default function AdminProductsPage() {
           </div>
         </div>
 
-        {loading ? <p role="status" className="border-b border-neutral-200 p-4 text-xs text-neutral-500">Checking database records before allowing product reconciliation…</p> : productsLoadError ? <p role="alert" className="border-b border-red-200 bg-red-50 p-4 text-xs text-red-800">Database products could not be loaded. Reconciliation and record creation are disabled until the list can be verified.</p> : <section aria-labelledby="storefront-reconciliation-title" className="border-b border-neutral-200 bg-amber-50/60 p-4 sm:p-5">
-          <h3 id="storefront-reconciliation-title" className="text-xs font-black uppercase tracking-widest text-neutral-900">Storefront product reconciliation</h3>
-          <p className="mt-1 max-w-4xl text-[11px] leading-relaxed text-neutral-600">Link an existing database row without changing its slug, price, images, inventory, or order history. If no matching row exists, an admin can create an inactive record from the canonical storefront details; this does not populate the inventory table.</p>
+        <section id="storefront-product-configuration" aria-labelledby="storefront-reconciliation-title" className="scroll-mt-24 border-b border-neutral-200 bg-amber-50/60 p-4 sm:p-5">
+          <h3 id="storefront-reconciliation-title" className="text-sm font-black uppercase tracking-widest text-neutral-900">Storefront Products &amp; Gender Configuration</h3>
+          <p className="mt-1 max-w-4xl text-[11px] leading-relaxed text-neutral-600">Each canonical storefront product appears here whether or not a database row exists. Review gender options individually. Linking an existing row changes only its storefront mapping and selected gender options. Draft creation uses canonical details, stays inactive, and creates no inventory.</p>
+          {loading && <p role="status" className="mt-3 text-xs text-neutral-500">Checking database mappings…</p>}
+          {productsLoadError && <p role="alert" className="mt-3 border border-red-200 bg-red-50 p-3 text-xs text-red-800">Database products could not be loaded. The canonical catalog is shown below, but mappings, gender options, and draft creation are disabled until the database list can be verified.</p>}
           <div className="mt-3 grid gap-2 md:grid-cols-2">
             {PRODUCTS.map((storefrontProduct) => {
-              const linked = products.find((row) => row.slug === storefrontProduct.slug || row.storefront_slug === storefrontProduct.slug);
+              const linkedMatches = products.filter((row) => row.slug === storefrontProduct.slug || row.storefront_slug === storefrontProduct.slug);
+              const linked = linkedMatches.length === 1 ? linkedMatches[0] : undefined;
               const candidates = products.filter((row) => row.slug !== storefrontProduct.slug && row.storefront_slug !== storefrontProduct.slug && (row.sku?.toUpperCase() === storefrontProduct.sku.toUpperCase() || row.name.trim().toLowerCase() === storefrontProduct.name.trim().toLowerCase()));
+              const selectedCandidate = candidates.find((row) => row.id === candidateSelection[storefrontProduct.slug]);
+              const existingConfiguration = linked ?? selectedCandidate;
+              const genderSelection = reviewedDraftGenders[storefrontProduct.slug] ?? existingConfiguration?.genders ?? [];
+              const status = configurationFeedback[storefrontProduct.slug];
               return <div key={storefrontProduct.id} className="flex flex-col gap-2 border border-neutral-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <p className="truncate text-[11px] font-bold text-neutral-900">{storefrontProduct.name}</p>
                   <p className="mt-0.5 font-mono text-[10px] text-neutral-500">{storefrontProduct.slug} · {storefrontProduct.sku}</p>
-                  {linked ? <p className="mt-1 text-[10px] text-emerald-800">Linked to database slug: {linked.slug}</p> : candidates.length ? <p className="mt-1 text-[10px] text-amber-800">Possible match: {candidates.map((row) => `${row.name} (${row.slug})`).join(", ")}. Link the existing row below.</p> : <p className="mt-1 text-[10px] text-neutral-500">No exact slug, name, or SKU match found.</p>}
+                  {productsLoadError ? <p className="mt-1 text-[10px] font-bold text-red-700">Database mapping status unavailable.</p> : linkedMatches.length > 1 ? <p role="alert" className="mt-1 text-[10px] font-bold text-red-700">Duplicate mapping detected. Gender edits and draft creation are blocked until an administrator resolves the duplicate rows.</p> : linked ? <p className="mt-1 text-[10px] text-emerald-800">Mapped to {linked.slug} · {linked.is_active ? "Active" : "Draft / inactive"}</p> : candidates.length ? <p className="mt-1 text-[10px] text-amber-800">Unmapped · possible existing record needs review: {candidates.map((row) => `${row.name} (${row.slug})`).join(", ")}</p> : <p className="mt-1 text-[10px] text-neutral-500">Unmapped · no exact slug, name, or SKU match found.</p>}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label={`Gender configuration for ${storefrontProduct.name}`}>
+                    <span className="mr-1 text-[10px] font-bold uppercase tracking-wide">Gender options</span>
+                    {(["Men", "Women", "Unisex"] as const).map((gender) => <button key={gender} type="button" aria-pressed={genderSelection.includes(gender)} disabled={loading || productsLoadError || Boolean(linked && savingGenderId === linked.id)} onClick={() => {
+                      if (linked) { void toggleGender(linked, gender); return; }
+                      setReviewedDraftChoices((current) => ({ ...current, [storefrontProduct.slug]: true }));
+                      setReviewedDraftGenders((current) => {
+                        const values = current[storefrontProduct.slug] ?? existingConfiguration?.genders ?? [];
+                        return { ...current, [storefrontProduct.slug]: values.includes(gender) ? values.filter((value) => value !== gender) : [...values, gender] };
+                      });
+                      setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: true, message: "Review the selected options, then link the existing record or create an inactive draft." } }));
+                    }} className={`border px-2 py-1 text-[10px] font-bold uppercase ${genderSelection.includes(gender) ? "border-black bg-black text-white" : "border-neutral-300 bg-white text-neutral-700 hover:border-black"}`}>{gender}</button>)}
+                    {!linked && <button type="button" disabled={loading || productsLoadError} aria-pressed={reviewedDraftChoices[storefrontProduct.slug] === true && genderSelection.length === 0} onClick={() => { setReviewedDraftChoices((current) => ({ ...current, [storefrontProduct.slug]: true })); setReviewedDraftGenders((current) => ({ ...current, [storefrontProduct.slug]: [] })); setConfigurationFeedback((current) => ({ ...current, [storefrontProduct.slug]: { ok: true, message: "No gender selector selected. Confirm this only if the product should remain unconfigured." } })); }} className={`border px-2 py-1 text-[10px] font-bold uppercase ${reviewedDraftChoices[storefrontProduct.slug] && genderSelection.length === 0 ? "border-black bg-black text-white" : "border-neutral-300 bg-white text-neutral-700 hover:border-black"}`}>No gender selector</button>}
+                    <span className="ml-1 text-[10px] text-neutral-500">{genderSelection.length ? genderSelection.join(" + ") : linked ? "No selector configured" : reviewedDraftChoices[storefrontProduct.slug] ? "No selector selected" : "Review required"}</span>
+                  </div>
+                  {status && <p role={status.ok ? "status" : "alert"} className={`mt-1 text-[10px] ${status.ok ? "text-emerald-800" : "text-red-700"}`}>{status.message}</p>}
                 </div>
-                {!linked && candidates.length > 0 && <div className="flex shrink-0 items-center gap-1.5">
-                  <select aria-label={`Existing database match for ${storefrontProduct.name}`} value={candidateSelection[storefrontProduct.id] ?? ""} onChange={(event) => setCandidateSelection((previous) => ({ ...previous, [storefrontProduct.id]: event.target.value }))} className="max-w-56 border border-neutral-300 bg-white px-2 py-2 text-[10px]">
+                {linkedMatches.length === 0 && candidates.length > 0 && <div className="flex shrink-0 items-center gap-1.5">
+                  <select aria-label={`Existing database match for ${storefrontProduct.name}`} disabled={loading || productsLoadError} value={candidateSelection[storefrontProduct.slug] ?? ""} onChange={(event) => { setCandidateSelection((previous) => ({ ...previous, [storefrontProduct.slug]: event.target.value })); const candidate = candidates.find((row) => row.id === event.target.value); if (candidate) { setReviewedDraftGenders((previous) => ({ ...previous, [storefrontProduct.slug]: candidate.genders ?? [] })); setReviewedDraftChoices((previous) => ({ ...previous, [storefrontProduct.slug]: true })); } }} className="max-w-56 border border-neutral-300 bg-white px-2 py-2 text-[10px]">
                     <option value="">Choose existing record</option>
                     {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.slug} · {candidate.sku}</option>)}
                   </select>
-                  <button type="button" disabled={!candidateSelection[storefrontProduct.id] || savingMappingId === candidateSelection[storefrontProduct.id]} onClick={() => { const candidate = candidates.find((row) => row.id === candidateSelection[storefrontProduct.id]); if (candidate) void linkCandidate(storefrontProduct, candidate); }} className="border border-neutral-900 px-2 py-2 text-[10px] font-bold uppercase disabled:opacity-50">Link</button>
+                  <button type="button" disabled={loading || productsLoadError || !selectedCandidate || savingMappingId === selectedCandidate?.id} onClick={() => { if (selectedCandidate) void linkCandidate(storefrontProduct, selectedCandidate); }} className="border border-neutral-900 px-2 py-2 text-[10px] font-bold uppercase disabled:opacity-50">Link &amp; Save</button>
                 </div>}
-                {!linked && candidates.length === 0 && <button type="button" disabled={creatingRecordId === storefrontProduct.id} onClick={() => void createStorefrontRecord(storefrontProduct)} className="shrink-0 border border-neutral-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide disabled:opacity-50">{creatingRecordId === storefrontProduct.id ? "Creating…" : "Review & Create Draft Record"}</button>}
+                {linkedMatches.length === 0 && candidates.length === 0 && <button type="button" disabled={loading || productsLoadError || creatingRecordId === storefrontProduct.id || !reviewedDraftChoices[storefrontProduct.slug]} onClick={() => void createStorefrontRecord(storefrontProduct)} className="shrink-0 border border-neutral-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide disabled:opacity-50">{creatingRecordId === storefrontProduct.id ? "Creating…" : "Review & Create Draft"}</button>}
               </div>;
             })}
           </div>
-        </section>}
+        </section>
 
         {/* Product Cards List */}
         {loading ? (

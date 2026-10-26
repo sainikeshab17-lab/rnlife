@@ -73,7 +73,7 @@ export function AdminLayout({
     { label: "Product Reviews", href: "/admin/reviews", icon: Star },
     { label: "Notification Queue", href: "/admin/notifications", icon: FileText },
     { label: "Warehouse Inventory", href: "/admin/inventory", icon: Boxes },
-    { label: "Catalog Products", href: "/admin/products", icon: Package },
+    { label: "Storefront Products & Gender", href: "/admin/products#storefront-product-configuration", icon: Package },
     { label: "Collections & Drops", href: "/admin/collections", icon: Layers },
     { label: "Audit Logs", href: "/admin/audit-logs", icon: FileText },
     { label: "Staff & Roles", href: "/admin/staff", icon: Users },

@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 const ProductSchema = z.object({
   name: z.string().trim().min(1).max(200),
   slug: z.string().trim().min(1).max(220),
+  storefront_slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
   description: z.string().max(10000).nullable().optional(),
   category: z.string().trim().min(1).max(100),
   collection_slug: z.string().trim().min(1).max(100).nullable().optional(),
@@ -25,7 +26,7 @@ const ProductSchema = z.object({
   compare_at_price: z.coerce.number().finite().min(0).nullable().optional(),
   images: z.array(z.string().url().or(z.string().regex(/^\/products\/[A-Za-z0-9/_\-.]+$/))).max(20).optional(),
   sizes: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
-  genders: z.array(z.enum(["Men", "Women", "Unisex"])).max(3).optional(),
+  genders: z.array(z.enum(["Men", "Women", "Unisex"])).max(3).refine((values) => new Set(values).size === values.length, "Gender options cannot contain duplicates.").optional(),
   colors: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
   color_variants: z.array(z.object({ name: z.string().trim().min(1).max(100), hex: z.string().regex(/^#[0-9a-fA-F]{6}$/) })).max(30).optional(),
   stock: z.coerce.number().int().min(0).max(100000).optional(),
@@ -106,22 +107,26 @@ export async function POST(req: NextRequest) {
     }
 
     const input = parsed.data;
+    if (input.storefront_slug && !PRODUCTS.some((product) => product.slug === input.storefront_slug)) {
+      return NextResponse.json({ error: "Choose a canonical storefront product." }, { status: 400 });
+    }
     const supabase = createAdminSupabaseClient();
 
     // Guard both canonical keys before insert so an admin does not create a second
     // database row for a storefront product that already exists under another slug.
-    const [slugMatch, skuMatch, nameMatch] = await Promise.all([
-      supabase.from("products").select("id,name,slug,sku,storefront_slug").or(`slug.eq.${input.slug},storefront_slug.eq.${input.slug}`).limit(2),
+    const slugsToCheck = [...new Set([input.slug, input.storefront_slug].filter((slug): slug is string => Boolean(slug)))];
+    const [slugMatches, skuMatch, nameMatch] = await Promise.all([
+      Promise.all(slugsToCheck.map((slug) => supabase.from("products").select("id,name,slug,sku,storefront_slug").or(`slug.eq.${slug},storefront_slug.eq.${slug}`).limit(2))),
       input.sku ? supabase.from("products").select("id,name,slug,sku,storefront_slug").eq("sku", input.sku).limit(1) : Promise.resolve({ data: [], error: null }),
       supabase.from("products").select("id,name,slug,sku,storefront_slug").eq("name", input.name).limit(1),
     ]);
-    const duplicate = [slugMatch, skuMatch, nameMatch].some((result) => result.error);
+    const duplicate = [...slugMatches, skuMatch, nameMatch].some((result) => result.error);
     if (duplicate) {
       console.error("[admin/products POST] Unable to check for an existing product before insert.");
       return NextResponse.json({ error: "Could not safely check for an existing product. Try again." }, { status: 503 });
     }
     const candidates = new Map<string, { id: string; name: string; slug: string; sku: string | null; storefront_slug: string | null }>();
-    for (const result of [slugMatch, skuMatch, nameMatch]) {
+    for (const result of [...slugMatches, skuMatch, nameMatch]) {
       for (const row of result.data ?? []) candidates.set(row.id, row);
     }
     if (candidates.size) {
@@ -136,6 +141,7 @@ export async function POST(req: NextRequest) {
       .insert({
         name: input.name,
         slug: input.slug,
+        storefront_slug: input.storefront_slug ?? null,
         description: input.description ?? null,
         category: input.category,
         collection_slug: input.collection_slug ?? null,
