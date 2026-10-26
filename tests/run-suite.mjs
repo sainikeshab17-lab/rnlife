@@ -47,6 +47,7 @@ const filesToCompile = [
   { in: "src/services/razorpay-order-recovery.ts", out: ".test-dist/src/services/razorpay-order-recovery.js" },
   { in: "src/services/order-payment-state.ts", out: ".test-dist/src/services/order-payment-state.js" },
   { in: "src/services/notification-service.ts", out: ".test-dist/src/services/notification-service.js" },
+  { in: "src/services/twilio-whatsapp.ts", out: ".test-dist/src/services/twilio-whatsapp.js" },
   { in: "src/services/admin-notification-route.ts", out: ".test-dist/src/services/admin-notification-route.js" },
   { in: "src/services/contact-submission.ts", out: ".test-dist/src/services/contact-submission.js" },
   { in: "src/services/refund-reconciliation.ts", out: ".test-dist/src/services/refund-reconciliation.js" },
@@ -70,6 +71,7 @@ const filesToCompile = [
   { in: "tests/refund-webhook-inbox.test.mjs", out: ".test-dist/tests/refund-webhook-inbox.test.mjs" },
   { in: "tests/refund-webhook-inbox-policy.test.mjs", out: ".test-dist/tests/refund-webhook-inbox-policy.test.mjs" },
   { in: "tests/notification-service.test.mjs", out: ".test-dist/tests/notification-service.test.mjs" },
+  { in: "tests/twilio-whatsapp.test.mjs", out: ".test-dist/tests/twilio-whatsapp.test.mjs" },
   { in: "tests/admin-notification-route.test.mjs", out: ".test-dist/tests/admin-notification-route.test.mjs" },
   { in: "tests/shiprocket-client.test.mjs", out: ".test-dist/tests/shiprocket-client.test.mjs" },
   { in: "tests/shiprocket-serviceability.test.mjs", out: ".test-dist/tests/shiprocket-serviceability.test.mjs" },
@@ -173,6 +175,12 @@ for (const f of filesToCompile) {
     if (f.in === "src/services/admin-notification-route.ts") {
       code = code.replace(/from\s+["']next\/server["']/g, 'from "../../test-next-server.js"');
     }
+    if (f.in === "src/services/twilio-whatsapp.ts") {
+      code = code.replace(/from\s+["']@\/lib\/db["']/g, 'from "../lib/db/index.js"');
+    }
+    if (f.in === "src/services/notification-service.ts") {
+      code = code.replace(/from\s+["']@\/services\/twilio-whatsapp["']/g, 'from "./twilio-whatsapp.js"');
+    }
   } else if (f.in === "src/services/shiprocket/shipping-route-handler.ts") {
     const routeStubs = path.relative(path.dirname(fullOut), path.join(outDir, "test-shiprocket-route-deps.js")).replace(/\\/g, "/");
     const nextStub = path.relative(path.dirname(fullOut), path.join(outDir, "test-next-server.js")).replace(/\\/g, "/");
@@ -246,6 +254,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/razorpay-order-recovery\.ts["']/g, 'from "../src/services/razorpay-order-recovery.js"')
       .replace(/from\s+["']\.\.\/src\/services\/order-payment-state\.ts["']/g, 'from "../src/services/order-payment-state.js"')
       .replace(/from\s+["']\.\.\/src\/services\/notification-service\.ts["']/g, 'from "../src/services/notification-service.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/twilio-whatsapp\.ts["']/g, 'from "../src/services/twilio-whatsapp.js"')
       .replace(/from\s+["']\.\.\/src\/services\/contact-submission\.ts["']/g, 'from "../src/services/contact-submission.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation\.ts["']/g, 'from "../src/services/refund-reconciliation.js"')
       .replace(/from\s+["']\.\.\/src\/services\/refund-reconciliation-route\.ts["']/g, 'from "../src/services/refund-reconciliation-route.js"')
@@ -373,6 +382,10 @@ try {
     cwd: process.cwd(),
   });
   execSync("node --conditions=react-server --test .test-dist/tests/notification-service.test.mjs .test-dist/tests/admin-notification-route.test.mjs", {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  });
+  execSync("node --conditions=react-server --test .test-dist/tests/twilio-whatsapp.test.mjs", {
     stdio: "inherit",
     cwd: process.cwd(),
   });

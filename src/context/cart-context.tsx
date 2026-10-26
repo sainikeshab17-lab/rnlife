@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { CartItem, CustomTShirtCustomization, TShirtSize, TShirtFit } from "@/types";
+import { CartItem, CustomTShirtCustomization, ProductGender, TShirtSize, TShirtFit } from "@/types";
 import { useToast } from "./toast-context";
 
 interface CartContextType {
@@ -21,6 +21,7 @@ interface CartContextType {
     productSlug: string;
     productName: string;
     color: string;
+    gender?: ProductGender;
     size: TShirtSize;
     price: number;
     image: string;
@@ -80,6 +81,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       productSlug: string;
       productName: string;
       color: string;
+      gender?: ProductGender;
       size: TShirtSize;
       price: number;
       image: string;
@@ -90,13 +92,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const qty = product.quantity || 1;
       const sku = product.customization
         ? `${product.productId}-${product.customization.font}-${product.size}`
-        : `${product.productId}-${product.color.toUpperCase().replace(/\s+/g, "")}-${product.size}`;
+        : `${product.productId}-${product.color.toUpperCase().replace(/\s+/g, "")}-${product.gender ?? ""}-${product.size}`;
       const authoritativePrice = product.customization ? 1299 : 999;
       const designKey = JSON.stringify(product.customization ?? null);
 
       setItems((prev) => {
         const existingIdx = prev.findIndex(
-          (i) => i.productId === product.productId && i.color === product.color && i.size === product.size &&
+          (i) => i.productId === product.productId && i.color === product.color && i.gender === product.gender && i.size === product.size &&
             JSON.stringify(i.customization ?? null) === designKey
         );
 
@@ -113,6 +115,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           productSlug: product.productSlug,
           productName: product.productName,
           color: product.color,
+          ...(product.gender ? { gender: product.gender } : {}),
           size: product.size,
           price: authoritativePrice,
           image: product.image,

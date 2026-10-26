@@ -55,6 +55,10 @@ const adminLoginRateLimitsMigration = await readFile(
   new URL("../supabase/migrations/20261024150000_admin_login_rate_limits.sql", import.meta.url),
   "utf8"
 );
+const twilioWhatsAppMigration = await readFile(
+  new URL("../supabase/migrations/20261026120000_twilio_whatsapp_order_notifications.sql", import.meta.url),
+  "utf8"
+);
 const checkoutAttemptRuntime = await readFile(new URL("../src/services/checkout-payment-attempts.ts", import.meta.url), "utf8");
 const checkoutCreateRoute = await readFile(new URL("../src/app/api/checkout/create-order/route.ts", import.meta.url), "utf8");
 const checkoutVerifyRoute = await readFile(new URL("../src/app/api/checkout/verify-payment/route.ts", import.meta.url), "utf8");
@@ -318,6 +322,15 @@ test("admin login rate-limit migration stores opaque buckets and denies Supabase
   assert.match(adminLoginRateLimitsMigration, /bucket_hash TEXT PRIMARY KEY CHECK/);
   assert.match(adminLoginRateLimitsMigration, /ALTER TABLE admin_login_rate_limits ENABLE ROW LEVEL SECURITY/);
   assert.match(adminLoginRateLimitsMigration, /REVOKE ALL ON TABLE admin_login_rate_limits FROM anon, authenticated/);
+});
+
+test("Twilio WhatsApp notifications extend the existing outbox with channel and template metadata", () => {
+  assert.match(twilioWhatsAppMigration, /ALTER TABLE notification_jobs/i);
+  assert.match(twilioWhatsAppMigration, /ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email'/i);
+  assert.match(twilioWhatsAppMigration, /recipient_phone TEXT/i);
+  assert.match(twilioWhatsAppMigration, /content_sid TEXT/i);
+  assert.match(twilioWhatsAppMigration, /content_variables JSONB/i);
+  assert.doesNotMatch(twilioWhatsAppMigration, /CREATE TABLE/i);
 });
 
 test("Shiprocket stays isolated behind server authorization, payment checks, and idempotent claims", () => {

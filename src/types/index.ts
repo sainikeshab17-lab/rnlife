@@ -3,6 +3,7 @@ import type { ProductCategory } from "@/data/product-categories";
 export type TShirtFit = "Oversized" | "Relaxed" | "Regular";
 
 export type TShirtSize = "XS" | "S" | "M" | "L" | "XL" | "XXL";
+export type ProductGender = "Men" | "Women" | "Unisex";
 
 export interface ColorVariant {
   name: string;
@@ -26,6 +27,7 @@ export interface Product {
   fit: TShirtFit;
   colors: ColorVariant[];
   sizes: TShirtSize[];
+  genders?: ProductGender[];
   fabricComposition: string;
   gsm: number;
   printTechnique?: string;
@@ -59,6 +61,7 @@ export interface CartItem {
   productSlug: string;
   productName: string;
   color: string;
+  gender?: ProductGender;
   size: TShirtSize;
   price: number;
   image: string;

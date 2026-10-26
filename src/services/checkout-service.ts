@@ -30,6 +30,7 @@ export const CheckoutItemSchema = z.object({
     .min(1, "Quantity must be at least 1")
     .max(10, "Quantity cannot exceed 10 per design"),
   color: z.string().default("As pictured"),
+  gender: z.enum(["Men", "Women", "Unisex"]).optional(),
   customization: CustomizationSchema.optional(),
 }).strict();
 
@@ -93,6 +94,7 @@ export interface VerifiedCheckoutItem {
   productSlug: string;
   productName: string;
   color: string;
+  gender?: "Men" | "Women" | "Unisex";
   size: TShirtSize;
   price: number;
   quantity: number;
@@ -180,6 +182,13 @@ export function calculateTrustedOrderPricing(
         error: `Size ${item.size} is not available for ${trustedProduct.name}`,
       };
     }
+    const configuredGenders = trustedProduct.genders ?? [];
+    if (configuredGenders.length > 0 && !item.gender) {
+      return { success: false, error: `Please select a gender for ${trustedProduct.name}.` };
+    }
+    if (item.gender && !configuredGenders.includes(item.gender)) {
+      return { success: false, error: `Gender ${item.gender} is not available for ${trustedProduct.name}.` };
+    }
 
     // Always use authoritative fixed price: ₹999
     const fixedPrice = 999;
@@ -195,6 +204,7 @@ export function calculateTrustedOrderPricing(
       productSlug: trustedProduct.slug,
       productName: trustedProduct.name,
       color: matchedColor?.name || "As pictured",
+      ...(item.gender ? { gender: item.gender } : {}),
       size: item.size,
       price: fixedPrice,
       quantity: item.quantity,

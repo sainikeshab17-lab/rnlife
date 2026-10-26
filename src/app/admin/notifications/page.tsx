@@ -59,7 +59,7 @@ export default function AdminNotificationsPage() {
       alert(data.alreadySent
         ? "This notification was already accepted previously. No duplicate was sent."
         : data.providerAccepted
-          ? "Email accepted by the provider. Delivery is not confirmed; check the job status."
+          ? `${data.result?.provider === "twilio" ? "WhatsApp" : "Email"} accepted by the provider. Delivery is not confirmed; check the job status.`
           : data.message || "Retry did not send the notification. Review the job status and error details.");
     } catch (err: any) {
       alert(err.message);
@@ -73,6 +73,7 @@ export default function AdminNotificationsPage() {
     const q = searchQuery.toLowerCase().trim();
     return (
       job.recipient_email.toLowerCase().includes(q) ||
+      (job.recipient_phone?.toLowerCase().includes(q) ?? false) ||
       job.event_type.toLowerCase().includes(q) ||
       job.subject.toLowerCase().includes(q) ||
       (job.order_id && job.order_id.toLowerCase().includes(q))
@@ -102,7 +103,7 @@ export default function AdminNotificationsPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search recipient email, event type, or subject..."
+              placeholder="Search recipient, event type, or subject..."
               className="w-full pl-9 pr-3 py-1.5 text-xs border border-neutral-300 focus:border-black outline-none"
             />
           </div>
@@ -156,10 +157,10 @@ export default function AdminNotificationsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-[#111111]">{job.recipient_name || "Customer"}</div>
-                      <div className="text-neutral-500 font-mono text-[11px]">{job.recipient_email}</div>
+                      <div className="text-neutral-500 font-mono text-[11px]">{job.channel === "whatsapp" ? job.recipient_phone : job.recipient_email}</div>
                     </td>
                     <td className="px-4 py-3 text-neutral-800 max-w-xs truncate">
-                      {job.subject}
+                      {job.channel === "whatsapp" ? "WhatsApp order confirmation" : job.subject}
                     </td>
                     <td className="px-4 py-3">
                       <span

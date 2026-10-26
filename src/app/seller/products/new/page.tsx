@@ -45,6 +45,7 @@ export default function NewProductPage() {
     "L",
     "XL",
   ]);
+  const [selectedGenders, setSelectedGenders] = useState<Array<"Men" | "Women" | "Unisex">>([]);
 
   const [colors, setColors] = useState([
     { name: "Pitch Black", hex: "#111111" },
@@ -255,6 +256,7 @@ export default function NewProductPage() {
       print_technique: printTechnique,
       images: [frontImage.trim(), backImage.trim()].filter(Boolean),
       sizes: selectedSizes,
+      genders: selectedGenders,
       colors: colors.map((color) => color.name.trim()),
       color_variants: colors.map((color) => ({
         name: color.name.trim(),
@@ -590,6 +592,15 @@ export default function NewProductPage() {
                     )
                   )}
                 </div>
+              </div>
+
+              {/* Colors */}
+              <div className="space-y-2 pt-2">
+                <label className={`${labelClass} block`}>Gender Variants (optional)</label>
+                <div className="flex flex-wrap gap-2">
+                  {(["Men", "Women", "Unisex"] as const).map((gender) => <button key={gender} type="button" aria-pressed={selectedGenders.includes(gender)} onClick={() => setSelectedGenders((prev) => prev.includes(gender) ? prev.filter((item) => item !== gender) : [...prev, gender])} className={`px-3 py-2 text-xs font-bold border ${selectedGenders.includes(gender) ? "bg-black text-white border-black" : "border-neutral-300 hover:border-black"}`}>{gender}</button>)}
+                </div>
+                <p className="text-xs text-neutral-500">Leave empty for products without gender selection.</p>
               </div>
 
               {/* Colors */}

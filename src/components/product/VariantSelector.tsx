@@ -11,7 +11,7 @@ import {
   CheckCircle2,
   Package,
 } from "lucide-react";
-import { Product, TShirtSize } from "@/types";
+import { Product, ProductGender, TShirtSize } from "@/types";
 import { formatINR } from "@/lib/utils";
 import { useCart } from "@/context/cart-context";
 import { useWishlist } from "@/context/wishlist-context";
@@ -32,6 +32,8 @@ export function VariantSelector({
   onSelectColor,
 }: VariantSelectorProps) {
   const [selectedSize, setSelectedSize] = useState<TShirtSize | null>(null);
+  const [selectedGender, setSelectedGender] = useState<ProductGender | null>(null);
+  const [genderError, setGenderError] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [sizeError, setSizeError] = useState(false);
   const [isSizeGuideOpen, setIsSizeGuideOpen] = useState(false);
@@ -44,6 +46,7 @@ export function VariantSelector({
   const router = useRouter();
 
   const currentColor = product.colors[selectedColorIdx] || product.colors[0];
+  const genders = product.genders ?? [];
   const isFavorited = isInWishlist(product.id);
 
   useEffect(() => {
@@ -65,6 +68,11 @@ export function VariantSelector({
   const hasAnyStock = Object.values(availability).some((count) => count > 0);
 
   const handleAddToBag = () => {
+    if (genders.length > 0 && !selectedGender) {
+      setGenderError(true);
+      toast({ type: "error", title: "Please Select a Gender", message: "Choose a gender option before adding this product to your bag." });
+      return;
+    }
     if (!selectedSize) {
       setSizeError(true);
       toast({
@@ -86,6 +94,7 @@ export function VariantSelector({
       productSlug: product.slug,
       productName: product.name,
       color: currentColor.name,
+      ...(selectedGender ? { gender: selectedGender } : {}),
       size: selectedSize,
       price: product.price,
       image: currentColor.images[0] || product.colors[0].images[0],
@@ -161,6 +170,14 @@ export function VariantSelector({
         )}
       </div>
 
+      {/* Color Selection */}
+      {genders.length > 0 && <div className="space-y-2">
+        <div className="text-xs uppercase tracking-wider font-bold text-[#111111]">GENDER</div>
+        <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap">
+          {genders.map((gender) => <button key={gender} type="button" onClick={() => { setSelectedGender(gender); setGenderError(false); }} aria-pressed={selectedGender === gender} className={`chip-morph min-h-11 px-4 text-xs uppercase font-bold tracking-wider border transition-all ${selectedGender === gender ? "bg-[#111111] text-white border-[#111111] -translate-y-0.5 shadow-sm" : "bg-white text-[#111111] border-[#E5E5E5] hover:border-[#111111]"}`}>{gender}</button>)}
+        </div>
+        {genderError && <p role="alert" className="text-xs text-[#F5141C]">Please select a gender before adding to bag.</p>}
+      </div>}
       {/* Color Selection */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs">

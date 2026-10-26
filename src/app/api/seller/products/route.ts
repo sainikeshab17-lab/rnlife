@@ -23,6 +23,7 @@ const ProductSchema = z.object({
   print_technique: z.string().max(300).nullable().optional(),
   images: z.array(z.string().min(1)).max(20).optional(),
   sizes: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
+  genders: z.array(z.enum(["Men", "Women", "Unisex"])).max(3).optional(),
   colors: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
   color_variants: z.array(
     z.object({

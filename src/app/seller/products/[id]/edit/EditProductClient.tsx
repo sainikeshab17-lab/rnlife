@@ -21,6 +21,7 @@ export function EditProductClient({ initialProduct }: { initialProduct: Product 
   const [fit, setFit] = useState<TShirtFit>(initialProduct.fit);
   const [gsm, setGsm] = useState(initialProduct.gsm.toString());
   const [stock, setStock] = useState(initialProduct.stock.toString());
+  const [genders, setGenders] = useState<Array<"Men" | "Women" | "Unisex">>(initialProduct.genders ?? []);
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -39,6 +40,7 @@ export function EditProductClient({ initialProduct }: { initialProduct: Product 
         fit,
         gsm: Number(gsm),
         stock: Number(stock),
+        genders,
       };
 
       const res = await fetch(`/api/seller/products?id=${encodeURIComponent(initialProduct.id)}`, {
@@ -225,6 +227,13 @@ export function EditProductClient({ initialProduct }: { initialProduct: Product 
                     className="w-full px-3 py-2 text-xs border border-neutral-300 focus:border-black outline-none font-mono"
                   />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[11px] uppercase tracking-wider font-bold text-neutral-700">Gender Variants (optional)</label>
+                <div className="flex flex-wrap gap-2">
+                  {(["Men", "Women", "Unisex"] as const).map((gender) => <button key={gender} type="button" aria-pressed={genders.includes(gender)} onClick={() => setGenders((prev) => prev.includes(gender) ? prev.filter((item) => item !== gender) : [...prev, gender])} className={`px-3 py-2 text-xs font-bold border ${genders.includes(gender) ? "bg-black text-white border-black" : "border-neutral-300 hover:border-black"}`}>{gender}</button>)}
+                </div>
+                <p className="text-[10px] text-neutral-500">Leave empty to keep this product gender-neutral without a selector.</p>
               </div>
             </div>
           </div>

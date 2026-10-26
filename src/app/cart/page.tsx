@@ -118,6 +118,7 @@ export default function CartPage() {
                           <span>Size: <strong>{item.size}</strong></span>
                           <span>•</span>
                           <span>Color: <strong>{item.color}</strong></span>
+                          {item.gender && <span>Gender: <strong>{item.gender}</strong></span>}
                         </div>
                         <p className="text-xs font-mono font-bold text-neutral-700 pt-1">
                           ₹{item.customization ? "1,999" : "999"} per item

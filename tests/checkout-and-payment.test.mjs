@@ -10,8 +10,41 @@ import {
   createCheckoutRequestHash,
   generateOrderNumber,
 } from "../src/services/checkout-service.ts";
+import { PRODUCTS } from "../src/data/mock-data.ts";
+import fs from "node:fs";
 
 describe("Wear Your Mood and COD Advance pricing contracts", () => {
+  test("configured gender is required, validated and persisted in trusted checkout items; legacy products stay optional", () => {
+    const product = PRODUCTS.find((entry) => entry.id === "rnl-design-01");
+    assert.ok(product);
+    const original = product.genders;
+    product.genders = ["Men", "Women"];
+    try {
+      const base = { productId: product.id, size: "M", quantity: 1, color: product.colors[0].name };
+      assert.equal(calculateTrustedOrderPricing([base]).success, false);
+      const selected = calculateTrustedOrderPricing([{ ...base, gender: "Women" }]);
+      assert.equal(selected.success, true);
+      if (selected.success) assert.equal(selected.pricing.items[0].gender, "Women");
+      assert.equal(calculateTrustedOrderPricing([{ ...base, gender: "Unisex" }]).success, false);
+    } finally {
+      if (original === undefined) delete product.genders;
+      else product.genders = original;
+    }
+    assert.equal(calculateTrustedOrderPricing([{ productId: product.id, size: "M", quantity: 1, color: "As pictured" }]).success, true);
+  });
+
+  test("gender option controls, cart identity, checkout and order persistence are wired", () => {
+    const selector = fs.readFileSync("src/components/product/VariantSelector.tsx", "utf8");
+    const cart = fs.readFileSync("src/context/cart-context.tsx", "utf8");
+    const checkout = fs.readFileSync("src/app/checkout/page.tsx", "utf8");
+    const orders = fs.readFileSync("src/lib/db/orders.ts", "utf8");
+    assert.match(selector, /aria-pressed=\{selectedGender === gender\}/);
+    assert.match(selector, /genders\.length > 0 && !selectedGender/);
+    assert.match(cart, /i\.gender === product\.gender/);
+    assert.match(checkout, /gender: item\.gender/);
+    assert.match(orders, /customization, gender/);
+  });
+
   const customDetails = {
     type: "quote_tshirt", mood: "confident", quote: "I choose my own way", quoteStyle: "deep",
     font: "serif", printColor: "ocean", placement: "center",

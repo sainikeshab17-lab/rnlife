@@ -67,7 +67,9 @@ export function createAdminNotificationHandlers(deps: AdminNotificationRouteDepe
           message: result.alreadySent
             ? "This notification was already accepted previously; no duplicate was sent."
             : result.sent
-              ? "The provider accepted the email request; delivery is not confirmed."
+              ? result.provider === "twilio"
+                ? "Twilio accepted the WhatsApp request; delivery is not confirmed."
+                : "The provider accepted the email request; delivery is not confirmed."
               : "The notification was not sent. Review its status before retrying.",
         });
       } catch (error) {

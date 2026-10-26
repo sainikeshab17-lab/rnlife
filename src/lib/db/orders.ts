@@ -170,6 +170,7 @@ export interface CreateOrderParams {
     productSlug: string;
     productName: string;
     color: string;
+    gender?: "Men" | "Women" | "Unisex";
     size: string;
     price: number;
     quantity: number;
@@ -229,8 +230,8 @@ export async function createPendingOrder(params: CreateOrderParams, connection?:
   const insertItem = db.prepare(`
     INSERT INTO order_items (
       id, order_id, product_id, product_slug, product_name,
-      color, size, price, quantity, image, sku, fit, fulfillment_type, customization
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+      color, size, price, quantity, image, sku, fit, fulfillment_type, customization, gender
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
   `);
 
   for (const item of params.items) {
@@ -249,7 +250,8 @@ export async function createPendingOrder(params: CreateOrderParams, connection?:
       item.sku,
       item.fit,
       item.fulfillmentType ?? "stock",
-      item.customization ? JSON.stringify(item.customization) : null
+      item.customization ? JSON.stringify(item.customization) : null,
+      item.gender ?? null
     );
   }
 

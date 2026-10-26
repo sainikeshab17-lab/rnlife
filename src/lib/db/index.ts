@@ -152,6 +152,7 @@ export interface DbOrderItem {
   product_slug: string;
   product_name: string;
   color: string;
+  gender: "Men" | "Women" | "Unisex" | null;
   size: string;
   price: number;
   quantity: number;
@@ -304,6 +305,10 @@ export interface DbRefundRecord {
 export interface DbNotificationJob {
   id: string;
   order_id: string | null;
+  channel?: "email" | "whatsapp";
+  recipient_phone?: string | null;
+  content_sid?: string | null;
+  content_variables?: Record<string, string> | null;
   event_type: string;
   recipient_email: string;
   recipient_name: string | null;

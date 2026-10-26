@@ -187,6 +187,7 @@ export default function CheckoutPage() {
       size: item.size,
       quantity: item.quantity,
       color: item.color || "As pictured",
+      ...(item.gender ? { gender: item.gender } : {}),
       customization: item.customization,
     })),
   });

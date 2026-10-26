@@ -1,5 +1,6 @@
 import { getDb, DbNotificationJob, OrderWithDetails, type DbConnection } from "@/lib/db";
 import { randomUUID } from "crypto";
+import { processTwilioWhatsAppJob, sendPaidOrderWhatsApp } from "@/services/twilio-whatsapp";
 
 const RESEND_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
@@ -29,7 +30,7 @@ function safeTrackingHref(value: string): string | null {
 export interface EmailSendResult {
   sent: boolean;
   alreadySent?: boolean;
-  provider: "smtp" | "resend" | "none";
+  provider: "smtp" | "resend" | "twilio" | "none";
   messageId?: string;
   error?: string;
 }
@@ -106,6 +107,13 @@ export async function processNotificationJob(
 
   if (!job) {
     return { sent: false, provider: "none", error: "Notification job not found." };
+  }
+  if (job.channel === "whatsapp") {
+    const result = await processTwilioWhatsAppJob(jobId, {
+      db, manualRetry: options.manualRetry, fetcher: options.fetcher,
+    });
+    return { sent: result.sent, alreadySent: result.status === "sent" && job.status === "sent",
+      provider: "twilio", messageId: job.provider_message_id ?? undefined, error: result.error };
   }
   const currentTime = (options.now ?? (() => new Date()))();
   const now = currentTime.toISOString();
@@ -369,10 +377,19 @@ export async function sendSellerNewOrderNotification(order: OrderWithDetails): P
  * Dispatch all order notifications (Customer, Admin, Seller)
  */
 export async function dispatchAllOrderNotifications(order: OrderWithDetails): Promise<{ persisted: number; failed: number }> {
+  const whatsapp = sendPaidOrderWhatsApp(order).then((result) => {
+    if (result.error || result.status === "failed" || result.status === "unknown") {
+      console.error(`[WhatsApp] Order confirmation ${result.status} for order ${order.id}.`);
+    }
+  }).catch(() => {
+    // WhatsApp delivery must never undo a verified order or payment.
+    console.error(`[WhatsApp] Order confirmation processing failed for order ${order.id}.`);
+  });
   const results = await Promise.allSettled([
     sendOrderConfirmationEmail(order),
     sendAdminNewOrderNotification(order),
     sendSellerNewOrderNotification(order),
+    whatsapp,
   ]);
 
   let persisted = 0;

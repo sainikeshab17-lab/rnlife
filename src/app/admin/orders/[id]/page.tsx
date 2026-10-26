@@ -302,7 +302,7 @@ export default function AdminOrderDetailPage() {
                           {item.product_name}
                         </p>
                         <p className="text-[11px] text-neutral-500">
-                          Size: <strong>{item.size}</strong> • Color: {item.color} • Qty: {item.quantity}
+                          Size: <strong>{item.size}</strong> • Color: {item.color}{item.gender ? ` • Gender: ${item.gender}` : ""} • Qty: {item.quantity}
                         </p>
                         <span className="text-[10px] text-emerald-700 font-mono font-bold block">
                           Locked Unit Price: {formatINR(item.price)}

@@ -183,7 +183,7 @@ export function CartDrawer() {
                     </div>
 
                     <p className="text-[11px] text-neutral-500 mt-0.5">
-                      {item.size} / {item.color}
+                      {item.size} / {item.color}{item.gender ? ` / ${item.gender}` : ""}
                     </p>
                     {item.customization && <p className="mt-1 text-[11px] text-neutral-600">“{item.customization.quote}” · {item.customization.font} · {item.customization.printColor} · {item.customization.placement}</p>}
                     <p className="text-[11px] font-mono text-neutral-400">
