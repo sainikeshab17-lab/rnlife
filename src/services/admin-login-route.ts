@@ -26,19 +26,12 @@ export function createAdminLoginPost(deps: Dependencies = runtimeDependencies())
   return async function POST(req: NextRequest) {
     try {
       const ipResolution = deps.resolveClientIp(req.headers);
-      if (ipResolution.clientIp === null) {
-        if (ipResolution.reason === "development_proxy_missing") {
-          console.error("[admin/login] Local client IP injection is missing; start the loopback-only server with npm run dev.");
-        } else if (ipResolution.reason === "header_unconfigured") {
-          console.error("[admin/login] ADMIN_LOGIN_TRUSTED_IP_HEADER is unset; configure a custom header overwritten by the trusted production ingress.");
-        } else if (ipResolution.reason === "header_invalid") {
-          console.error("[admin/login] ADMIN_LOGIN_TRUSTED_IP_HEADER must name a custom x-* header other than X-Forwarded-For or X-Real-IP.");
-        } else {
-          console.error("[admin/login] The configured trusted ingress IP header is missing, malformed, or contains multiple addresses.");
-        }
-        return NextResponse.json({ error: "Admin login is temporarily unavailable." }, { status: 503 });
-      }
       const clientIp = ipResolution.clientIp;
+      if (clientIp === null && ipResolution.reason !== "ip_unavailable") {
+        // Ignore malformed or spoofable IP headers and retain email throttling.
+        // No unverified value is stored or used as a shared IP identity.
+        console.warn("[admin/login] Trusted client IP unavailable; using account-based rate limiting only.");
+      }
       const contentLength = Number(req.headers.get("content-length") ?? 0);
       if (Number.isFinite(contentLength) && contentLength > 8192) return NextResponse.json({ error: "Login request is too large." }, { status: 413 });
       const rawBody = await req.text();
@@ -75,6 +68,23 @@ export function createAdminLoginPost(deps: Dependencies = runtimeDependencies())
         console.error(`[admin/login] Admin credential lookup failed (PostgreSQL code ${databaseCode}).`);
         return NextResponse.json({ error: "Admin login is temporarily unavailable." }, { status: 503 });
       }
+      if (!admin && clientIp === null) {
+        // With no trusted source IP, unknown email strings must not allow an
+        // attacker to evade the limiter by trying a fresh identity each time.
+        // This separate bucket applies only to unknown identities; registered
+        // administrators continue to use their own email bucket.
+        try {
+          const unknownIdentityAttempt = await deps.claimAttempt(null, null);
+          if (!unknownIdentityAttempt.allowed) {
+            return NextResponse.json({ error: "Too many login attempts. Try again later." }, {
+              status: 429, headers: { "Retry-After": String(unknownIdentityAttempt.retryAfterSeconds) },
+            });
+          }
+        } catch (error) {
+          console.error(`[admin/login] ${deps.getRateLimitDiagnostic(error)}`);
+          return NextResponse.json({ error: "Admin login is temporarily unavailable." }, { status: 503 });
+        }
+      }
       const dummyHash = "pbkdf2$100000$0000000000000000$0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
       const passwordValid = deps.verifyPassword(password, admin?.password_hash ?? dummyHash);
       if (!admin || !passwordValid) {
@@ -90,7 +100,7 @@ export function createAdminLoginPost(deps: Dependencies = runtimeDependencies())
 
       let rawToken: string;
       try {
-        rawToken = await deps.createSession(admin.id, clientIp, req.headers.get("user-agent") ?? undefined);
+        rawToken = await deps.createSession(admin.id, clientIp ?? undefined, req.headers.get("user-agent") ?? undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
         const databaseCode = error && typeof error === "object" && "code" in error ? String(error.code) : null;

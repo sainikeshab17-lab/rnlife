@@ -8,15 +8,15 @@ Leave `ADMIN_LOGIN_TRUSTED_IP_HEADER` blank in local `.env.local`; the developme
 
 ## Production ingress
 
-Production does not accept the development-only header. Set `ADMIN_LOGIN_TRUSTED_IP_HEADER` to the name of one custom `x-*` header supplied by the ingress. The ingress must remove any client-supplied copy and overwrite it on every request with one IP literal. Comma-separated chains, malformed values, missing configuration, `X-Forwarded-For`, and `X-Real-IP` are rejected. If the repository does not contain the actual hosting/ingress configuration, verify these behaviors in the hosting platform before setting the variable; do not infer them from the mere presence of an IP header.
+On Vercel, no `ADMIN_LOGIN_TRUSTED_IP_HEADER` setting is required. When `VERCEL=1`, the limiter uses the platform-provided `x-vercel-forwarded-for` value if it is one valid IP literal. Vercel documents that it overwrites `X-Forwarded-For` at its platform boundary to prevent IP spoofing. The app does not trust `X-Forwarded-For`, `X-Real-IP`, or arbitrary custom headers directly.
 
-No hosting platform or ingress manifest is present in this repository, so there is no platform-specific header rule to provide here. Until the actual ingress contract is confirmed, production login intentionally returns `503`.
+For a different host, or a verified proxy in front of Vercel, `ADMIN_LOGIN_TRUSTED_IP_HEADER` remains an optional override. Set it only to a custom `x-*` header that trusted ingress strips from incoming requests and overwrites with one IP literal. If no trusted IP is available, login continues with account/email rate limiting and a shared unknown-identity bucket for unmatched emails; it does not fail solely because the IP header is unavailable. `ADMIN_SESSION_SECRET` and PostgreSQL limiter storage remain required.
 
 ## Diagnose an HTTP 503
 
 The route logs a sanitized reason without header values or secrets:
 
-- Trusted IP configuration messages refer to `ADMIN_LOGIN_TRUSTED_IP_HEADER` (production) or the local Next proxy (`npm run dev`).
+- Trusted IP diagnostics mean the platform/ingress IP was missing or malformed; account/email rate limiting still runs.
 - `ADMIN_SESSION_SECRET` messages mean it is missing or shorter than 32 characters.
 - PostgreSQL code `42P01` identifies the missing `admin_login_rate_limits` table and names the migration to apply.
 - A `DATABASE_URL` message refers to the application's runtime PostgreSQL connection. Migration tooling instead reads `DIRECT_URL`; both should be verified against the same intended non-production Supabase project without printing either URL.

@@ -91,13 +91,12 @@ test("admin login returns the unavailable response and sanitized diagnostics for
   });
   const cases = [
     {
-      name: "untrusted IP configuration",
-      deps: { ...common, resolveClientIp: () => ({ clientIp: null, reason: "header_unconfigured" }) },
-      log: "ADMIN_LOGIN_TRUSTED_IP_HEADER is unset",
-    },
-    {
       name: "rate-limit storage failure",
-      deps: { ...common, claimAttempt: async () => { throw new Error("private database detail"); } },
+      deps: {
+        ...common,
+        resolveClientIp: () => ({ clientIp: null, reason: "ip_unavailable" }),
+        claimAttempt: async () => { throw new Error("private database detail"); },
+      },
       log: "PostgreSQL rate-limit storage is unavailable (database code 08006).",
     },
     {
@@ -132,6 +131,66 @@ test("admin login returns the unavailable response and sanitized diagnostics for
       console.error = originalError;
     }
   }
+});
+
+test("production login succeeds without the optional IP header and still reserves an email bucket", async () => {
+  let claimed;
+  const login = createAdminLoginPost({
+    getAdminByEmail: async email => email === admin.email ? admin : null,
+    verifyPassword: () => true,
+    createSession: async () => "production-test-session-token-32-bytes",
+    getSessionCookieOptions: () => ({ httpOnly: true, secure: true, sameSite: "strict", path: "/", maxAge: 86400 }),
+    cookieName: "rnl_admin_session",
+    claimAttempt: async (email, ip) => {
+      claimed = { email, ip };
+      return { allowed: true, complete: async () => {} };
+    },
+    getRateLimitDiagnostic: () => "database unavailable",
+    resolveClientIp: () => ({ clientIp: null, reason: "ip_unavailable" }),
+    writeAuditLog: async () => {},
+  });
+  const response = await login(new Request("https://store.example/api/admin/login", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: admin.email, password: "correct-test-password" }),
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(claimed, { email: admin.email, ip: null });
+  assert.match(response.headers.get("set-cookie"), /Secure/);
+});
+
+test("unknown emails cannot bypass account throttling by varying identities when IP is unavailable", async () => {
+  const attempts = new Map();
+  let passwordVerifications = 0;
+  const login = createAdminLoginPost({
+    getAdminByEmail: async () => null,
+    verifyPassword: () => { passwordVerifications += 1; return false; },
+    createSession: async () => "must-not-create-a-session",
+    getSessionCookieOptions: () => ({ httpOnly: true, secure: true, sameSite: "strict", path: "/", maxAge: 86400 }),
+    cookieName: "rnl_admin_session",
+    claimAttempt: async email => {
+      const key = email ?? "unknown-email-fallback";
+      const count = (attempts.get(key) ?? 0) + 1;
+      attempts.set(key, count);
+      return count >= 10 ? { allowed: false, retryAfterSeconds: 900 } : { allowed: true, complete: async () => {} };
+    },
+    getRateLimitDiagnostic: () => "database unavailable",
+    resolveClientIp: () => ({ clientIp: null, reason: "ip_unavailable" }),
+    writeAuditLog: async () => {},
+  });
+
+  for (let index = 0; index < 9; index += 1) {
+    const response = await login(new Request("https://store.example/api/admin/login", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: `unknown-${index}@example.test`, password: "incorrect-test-password" }),
+    }));
+    assert.equal(response.status, 401);
+  }
+  const blocked = await login(new Request("https://store.example/api/admin/login", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "another-unknown@example.test", password: "incorrect-test-password" }),
+  }));
+  assert.equal(blocked.status, 429);
+  assert.equal(passwordVerifications, 9);
 });
 
 test("invalid credentials are audited and rejected without issuing a session cookie", async () => {

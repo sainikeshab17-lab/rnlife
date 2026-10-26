@@ -91,6 +91,17 @@ test("PostgreSQL pool is process-reused, conservative, and releases transaction 
   assert.match(diagnostics, /category: "capacity"/);
 });
 
+test("admin login treats client IP as optional while requiring the email rate-limit bucket", async () => {
+  const limiter = await readFile("src/lib/auth/admin-login-rate-limit.ts", "utf8");
+  const route = await readFile("src/services/admin-login-route.ts", "utf8");
+  assert.match(limiter, /platform === "1"[\s\S]*x-vercel-forwarded-for/);
+  assert.match(limiter, /clientIp \? \[\{ kind: "ip"/);
+  assert.match(limiter, /kind: "email", value: email\?\.trim\(\)\.toLowerCase\(\) \|\| "__missing_email__"/);
+  assert.match(route, /claimAttempt\(email && email\.length <= 254 \? email : null, clientIp\)/);
+  assert.doesNotMatch(route, /ADMIN_LOGIN_TRUSTED_IP_HEADER is unset/);
+  assert.match(route, /attempt = await deps\.claimAttempt[\s\S]*passwordValid = deps\.verifyPassword/);
+});
+
 test("inventory query errors are shown as unavailable and never turn missing stock into positive stock", async () => {
   const api = await readFile("src/app/api/products/[productId]/inventory/route.ts", "utf8");
   const detail = await readFile("src/components/product/VariantSelector.tsx", "utf8");

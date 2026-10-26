@@ -81,13 +81,14 @@ export function getAdminLoginProxyHeaders(
 }
 
 export type AdminLoginClientIpResolution =
-  | { clientIp: string; source: "development_proxy" | "trusted_ingress" }
-  | { clientIp: null; reason: "development_proxy_missing" | "header_unconfigured" | "header_invalid" | "header_value_invalid" };
+  | { clientIp: string; source: "development_proxy" | "trusted_ingress" | "vercel_platform" }
+  | { clientIp: null; reason: "development_proxy_missing" | "header_invalid" | "header_value_invalid" | "ip_unavailable" };
 
 export function resolveTrustedAdminLoginClientIp(
   headers: HeadersReader,
   configuredHeader = process.env.ADMIN_LOGIN_TRUSTED_IP_HEADER,
   nodeEnv = process.env.NODE_ENV,
+  platform = process.env.VERCEL,
 ): AdminLoginClientIpResolution {
   if (nodeEnv === "development") {
     const developmentIp = headers.get(ADMIN_LOGIN_DEV_IP_HEADER);
@@ -96,8 +97,13 @@ export function resolveTrustedAdminLoginClientIp(
       : { clientIp: null, reason: "development_proxy_missing" };
   }
 
-  if (!configuredHeader?.trim()) return { clientIp: null, reason: "header_unconfigured" };
-  const headerName = configuredHeader.trim().toLowerCase();
+  // A configured custom header is trusted only when the deployment ingress is
+  // explicitly set up to strip and overwrite it. Vercel provides its own
+  // system header and overwrites X-Forwarded-For at the platform boundary.
+  const vercelPlatformHeader = platform === "1" && !configuredHeader?.trim();
+  if (!configuredHeader?.trim() && !vercelPlatformHeader) return { clientIp: null, reason: "ip_unavailable" };
+  const headerName = vercelPlatformHeader ? "x-vercel-forwarded-for" : configuredHeader!.trim().toLowerCase();
+  const source = vercelPlatformHeader ? "vercel_platform" as const : "trusted_ingress" as const;
   if (!/^x-[a-z0-9-]{1,62}$/.test(headerName) || headerName === "x-forwarded-for" || headerName === "x-real-ip") {
     return { clientIp: null, reason: "header_invalid" };
   }
@@ -106,7 +112,7 @@ export function resolveTrustedAdminLoginClientIp(
   if (!value || value !== value.trim() || value.includes(",") || isIP(value) === 0) {
     return { clientIp: null, reason: "header_value_invalid" };
   }
-  return { clientIp: value, source: "trusted_ingress" };
+  return { clientIp: value, source };
 }
 
 /**
@@ -117,8 +123,9 @@ export function getTrustedAdminLoginClientIp(
   headers: HeadersReader,
   configuredHeader = process.env.ADMIN_LOGIN_TRUSTED_IP_HEADER,
   nodeEnv = process.env.NODE_ENV,
+  platform = process.env.VERCEL,
 ): string | null {
-  return resolveTrustedAdminLoginClientIp(headers, configuredHeader, nodeEnv).clientIp;
+  return resolveTrustedAdminLoginClientIp(headers, configuredHeader, nodeEnv, platform).clientIp;
 }
 
 function wrapStorageError(error: unknown): AdminLoginRateLimitError {
@@ -140,13 +147,13 @@ function wrapStorageError(error: unknown): AdminLoginRateLimitError {
  */
 export async function claimAdminLoginAttempt(
   email: string | null,
-  clientIp: string,
+  clientIp: string | null,
   dependencies: AdminLoginRateLimitDependencies = {
     secret: process.env.ADMIN_SESSION_SECRET ?? "",
     transaction: withTransaction,
   },
 ): Promise<AdminLoginAttempt> {
-  if (isIP(clientIp) === 0) throw new Error("A trusted client IP is required for admin login throttling.");
+  if (clientIp !== null && isIP(clientIp) === 0) throw new Error("A trusted client IP is required for IP-based admin login throttling.");
   if (email !== null && (email.length > 254 || !email.trim())) {
     throw new Error("A bounded email identity is required for admin login throttling.");
   }
@@ -155,9 +162,12 @@ export async function claimAdminLoginAttempt(
   }
 
   const limits = dependencies.limits ?? getAdminLoginRateLimitConfig();
+  // Every request gets an email identity bucket, including malformed requests.
+  // Missing email uses a separate malformed-input bucket; it is never treated
+  // as an admin identity. Without a trusted IP, only this email bucket applies.
   const identities = [
-    { kind: "ip", value: clientIp, limit: limits.ipAttemptLimit },
-    ...(email === null ? [] : [{ kind: "email", value: email.trim().toLowerCase(), limit: limits.emailAttemptLimit }]),
+    ...(clientIp ? [{ kind: "ip", value: clientIp, limit: limits.ipAttemptLimit }] : []),
+    { kind: "email", value: email?.trim().toLowerCase() || "__missing_email__", limit: limits.emailAttemptLimit },
   ];
   const buckets = identities
     .map(({ kind, value, limit }) => ({

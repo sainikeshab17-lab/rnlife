@@ -93,13 +93,32 @@ describe("admin login rate limiting", () => {
     });
 
     assert.equal(getTrustedAdminLoginClientIp(headers, "x-edge-client-ip", "production"), "2001:db8::1");
-    assert.deepEqual(resolveTrustedAdminLoginClientIp(headers, undefined, "production"), { clientIp: null, reason: "header_unconfigured" });
+    assert.deepEqual(resolveTrustedAdminLoginClientIp(headers, undefined, "production", "0"), { clientIp: null, reason: "ip_unavailable" });
+    assert.deepEqual(resolveTrustedAdminLoginClientIp(headers, undefined, "production", "1"), { clientIp: null, reason: "header_value_invalid" });
     assert.deepEqual(resolveTrustedAdminLoginClientIp(headers, "x-forwarded-for", "production"), { clientIp: null, reason: "header_invalid" });
     assert.deepEqual(resolveTrustedAdminLoginClientIp(headers, "x-real-ip", "production"), { clientIp: null, reason: "header_invalid" });
     assert.deepEqual(resolveTrustedAdminLoginClientIp(new Headers({ "x-edge-client-ip": "198.51.100.7, 10.0.0.1" }), "x-edge-client-ip", "production"), { clientIp: null, reason: "header_value_invalid" });
     assert.deepEqual(resolveTrustedAdminLoginClientIp(new Headers({ "x-edge-client-ip": "not-an-ip" }), "x-edge-client-ip", "production"), { clientIp: null, reason: "header_value_invalid" });
     assert.deepEqual(resolveTrustedAdminLoginClientIp(headers, "forwarded", "production"), { clientIp: null, reason: "header_invalid" });
     assert.deepEqual(resolveTrustedAdminLoginClientIp({ get: () => " 198.51.100.7" }, "x-edge-client-ip", "production"), { clientIp: null, reason: "header_value_invalid" });
+  });
+
+  test("uses Vercel's platform-overwritten IP header only on Vercel and ignores spoofed alternatives", () => {
+    const vercelHeaders = new Headers({
+      "x-vercel-forwarded-for": "198.51.100.25",
+      "x-forwarded-for": "203.0.113.9",
+      "x-real-ip": "203.0.113.10",
+      "x-client-ip": "203.0.113.11",
+    });
+    assert.deepEqual(resolveTrustedAdminLoginClientIp(vercelHeaders, undefined, "production", "1"), {
+      clientIp: "198.51.100.25", source: "vercel_platform",
+    });
+    assert.deepEqual(resolveTrustedAdminLoginClientIp(vercelHeaders, undefined, "production", undefined), {
+      clientIp: null, reason: "ip_unavailable",
+    });
+    assert.deepEqual(resolveTrustedAdminLoginClientIp(new Headers({ "x-vercel-forwarded-for": "198.51.100.25, 10.0.0.1" }), undefined, "production", "1"), {
+      clientIp: null, reason: "header_value_invalid",
+    });
   });
 
   test("local development proxy overwrites browser headers with a loopback bucket and production ignores it", () => {
@@ -115,7 +134,7 @@ describe("admin login rate limiting", () => {
 
     const productionHeaders = getAdminLoginProxyHeaders(hostileHeaders, "/api/admin/login", "production", "localhost");
     assert.deepEqual(resolveTrustedAdminLoginClientIp(productionHeaders, undefined, "production"), {
-      clientIp: null, reason: "header_unconfigured",
+      clientIp: null, reason: "ip_unavailable",
     });
     assert.equal(getTrustedAdminLoginClientIp(developmentHeaders, undefined, "production"), null);
   });
@@ -156,6 +175,36 @@ describe("admin login rate limiting", () => {
     const otherAccount = await claimAdminLoginAttempt("other@example.test", "198.51.100.10", dependencies);
     assert.equal(otherAccount.allowed, true);
     assert.ok([...database.buckets.keys()].every((key) => /^[a-f0-9]{64}$/.test(key)));
+  });
+
+  test("account attempts remain rate limited with no trusted IP and normalized emails cannot be varied", async () => {
+    const { dependencies, database } = memoryDependencies();
+    for (let index = 0; index < 9; index += 1) {
+      assert.equal((await claimAdminLoginAttempt("Admin@Example.test", null, dependencies)).allowed, true);
+    }
+    assert.equal((await claimAdminLoginAttempt("  admin@example.test  ", null, dependencies)).allowed, false);
+    assert.equal(database.buckets.size, 1);
+  });
+
+  test("a trusted Vercel IP contributes its own shared rate-limit bucket", async () => {
+    const { dependencies, database } = memoryDependencies();
+    const resolved = resolveTrustedAdminLoginClientIp(
+      new Headers({ "x-vercel-forwarded-for": "198.51.100.99" }), undefined, "production", "1",
+    );
+    assert.equal(resolved.clientIp, "198.51.100.99");
+    const limitedDependencies = { ...dependencies, limits: { emailAttemptLimit: 50, ipAttemptLimit: 2, windowMinutes: 15 } };
+    assert.equal((await claimAdminLoginAttempt("first@example.test", resolved.clientIp, limitedDependencies)).allowed, true);
+    assert.equal((await claimAdminLoginAttempt("second@example.test", resolved.clientIp, limitedDependencies)).allowed, false);
+    assert.equal(database.buckets.size, 2);
+  });
+
+  test("missing email requests still consume a bounded account identity bucket without a client IP", async () => {
+    const { dependencies, database } = memoryDependencies();
+    for (let index = 0; index < 9; index += 1) {
+      assert.equal((await claimAdminLoginAttempt(null, null, dependencies)).allowed, true);
+    }
+    assert.equal((await claimAdminLoginAttempt(null, null, dependencies)).allowed, false);
+    assert.equal(database.buckets.size, 1);
   });
 
   test("configured high-volume shared IP allowance protects legitimate admin logins while accounts stay throttled", async () => {
