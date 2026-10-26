@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PRODUCTS, SIZE_CHART_OVERSIZED, SIZE_CHART_RELAXED, SIZE_CHART_REGULAR, SIZE_CHART_INDUSTRY_REFERENCE, getVisibleProductCategories } from "../src/data/mock-data.js";
 import { calculateSizeAvailability } from "../src/services/product-inventory-availability.js";
+import { isTransientDatabaseCapacityError, readInventoryWithRetry } from "../src/services/inventory-read.js";
 import { confirmGenderSelection, genderDisplayLabel, parseGenderOptionsResponse } from "../src/lib/gender-options.js";
 
 test("eight canonical designs keep their configured IDs and prices with distinct descriptions", () => {
@@ -48,17 +49,48 @@ test("size stock distinguishes sellable, sold-out, unconfigured, and invalid inv
   assert.throws(() => calculateSizeAvailability(["S"], [{ size: "S", stock: -1, reserved: 0 }]), /invalid stock values/i);
 });
 
+test("inventory reads retry only once for transient pool capacity failures", async () => {
+  let calls = 0;
+  const rows = await readInventoryWithRetry(async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("max clients reached in session mode"), { code: "XX000" });
+    return [{ size: "S", stock: 10, reserved: 2 }];
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(rows, [{ size: "S", stock: 10, reserved: 2 }]);
+  assert.equal(isTransientDatabaseCapacityError(Object.assign(new Error("denied"), { code: "53300" })), true);
+
+  calls = 0;
+  await assert.rejects(readInventoryWithRetry(async () => {
+    calls += 1;
+    throw Object.assign(new Error("max clients reached in session mode"), { code: "XX000" });
+  }), /max clients reached/);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  await assert.rejects(readInventoryWithRetry(async () => {
+    calls += 1;
+    throw Object.assign(new Error("column reserved does not exist"), { code: "42703" });
+  }), /column reserved/);
+  assert.equal(calls, 1);
+});
+
 test("inventory query errors are shown as unavailable and never turn missing stock into positive stock", async () => {
   const api = await readFile("src/app/api/products/[productId]/inventory/route.ts", "utf8");
   const detail = await readFile("src/components/product/VariantSelector.tsx", "utf8");
   const card = await readFile("src/components/product/ProductCard.tsx", "utf8");
   const reservation = await readFile("src/lib/db/orders.ts", "utf8");
+  const inventoryReader = await readFile("src/app/api/products/[productId]/inventory/route.ts", "utf8");
   assert.match(api, /rows\.length === 0[\s\S]*status: 503/);
   assert.match(api, /calculateSizeAvailability/);
   assert.match(detail, /availabilityError[\s\S]*Stock availability could not be checked/);
   assert.match(card, /availabilityError[\s\S]*Stock availability is unavailable/);
   assert.doesNotMatch(reservation, /VALUES \(\?, \?, 20, 0\)/);
   assert.match(reservation, /Stock is not configured for one or more selected sizes/);
+  assert.match(inventoryReader, /readInventoryWithRetry/);
+  assert.match(inventoryReader, /SELECT size, stock, reserved FROM inventory WHERE product_id = \?/);
+  assert.match(inventoryReader, /status: 503/);
+  assert.match(inventoryReader, /database_capacity/);
 });
 
 test("product-card quick add uses configured genders and does not bypass confirmation", async () => {

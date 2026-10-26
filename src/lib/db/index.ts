@@ -54,15 +54,27 @@ function getPool(): Pool {
   }
 
   if (!globalThis.rightnowlifePostgresPool) {
-    const max = Number.parseInt(process.env.PG_POOL_MAX ?? "10", 10);
-    if (!Number.isInteger(max) || max < 1) {
+    const configuredMax = Number.parseInt(process.env.PG_POOL_MAX ?? "2", 10);
+    if (!Number.isInteger(configuredMax) || configuredMax < 1) {
       throw new Error("PG_POOL_MAX must be a positive integer.");
+    }
+    const max = Math.min(configuredMax, 2);
+    if (configuredMax > max) {
+      console.warn("[database] PG_POOL_MAX exceeds the safe per-process limit and is capped at 2.");
+    }
+    try {
+      const databaseUrl = new URL(connectionString);
+      if (databaseUrl.hostname.endsWith(".pooler.supabase.com") && databaseUrl.port === "5432") {
+        console.warn("[database] Supabase session pooler detected. Multi-instance deployments should use the transaction pooler endpoint on port 6543.");
+      }
+    } catch {
+      // The PostgreSQL driver reports malformed connection strings without logging credentials.
     }
     globalThis.rightnowlifePostgresPool = new Pool({
       connectionString,
       max,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 5_000,
+      connectionTimeoutMillis: 5_000,
       application_name: "rightnowlife",
     });
     globalThis.rightnowlifePostgresPool.on("error", (error) => {

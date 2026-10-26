@@ -40,6 +40,7 @@ const filesToCompile = [
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
   { in: "src/services/inventory-product-catalog.ts", out: ".test-dist/src/services/inventory-product-catalog.js" },
   { in: "src/services/product-inventory-availability.ts", out: ".test-dist/src/services/product-inventory-availability.js" },
+  { in: "src/services/inventory-read.ts", out: ".test-dist/src/services/inventory-read.js" },
   { in: "src/services/admin-orders-list.ts", out: ".test-dist/src/services/admin-orders-list.js" },
   { in: "src/services/checkout-payment-attempts.ts", out: ".test-dist/src/services/checkout-payment-attempts.js" },
   { in: "src/services/mood-quotes.ts", out: ".test-dist/src/services/mood-quotes.js" },
