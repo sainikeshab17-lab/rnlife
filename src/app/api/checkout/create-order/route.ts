@@ -4,7 +4,7 @@ import {
   createCheckoutRequestHash,
 } from "@/services/checkout-service";
 import { calculateConfiguredOrderPricing } from "@/services/configured-checkout-pricing";
-import { scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
+import { InventoryUnavailableError, scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
 import { createClient } from "@/lib/supabase/server";
 import { findRazorpayOrdersByReceipt, getRazorpayClient, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } from "@/lib/razorpay";
 import {
@@ -130,6 +130,7 @@ export async function POST(request: NextRequest) {
       replayed: stored.status === "replayed", attemptStatus: latest?.attempt_status,
     }, { status: stored.status === "created" ? 201 : 200 });
   } catch (error) {
+    if (error instanceof InventoryUnavailableError) return NextResponse.json({ error: error.message }, { status: 409 });
     console.error("Error in /api/checkout/create-order:", error);
     return NextResponse.json({ error: "Unable to initiate payment. Please retry the same checkout." }, { status: 500 });
   }

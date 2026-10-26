@@ -3,8 +3,8 @@ import { isIP } from "node:net";
 import { getDb, withTransaction, type DbConnection } from "@/lib/db/index";
 
 const WINDOW_MINUTES = 15;
-const EMAIL_ATTEMPT_LIMIT = 10;
-const IP_ATTEMPT_LIMIT = 60;
+const DEFAULT_EMAIL_ATTEMPT_LIMIT = 10;
+const DEFAULT_IP_ATTEMPT_LIMIT = 300;
 export const ADMIN_LOGIN_DEV_IP_HEADER = "x-rightnowlife-dev-client-ip";
 const ADMIN_LOGIN_DEV_IP = "127.0.0.1";
 
@@ -16,7 +16,22 @@ export type AdminLoginAttempt =
 
 export interface AdminLoginRateLimitDependencies {
   secret: string;
+  limits?: { emailAttemptLimit: number; ipAttemptLimit: number; windowMinutes: number };
   transaction<T>(callback: (db: DbConnection) => Promise<T>): Promise<T>;
+}
+
+function configuredInteger(value: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
+export function getAdminLoginRateLimitConfig(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    windowMinutes: configuredInteger(env.ADMIN_LOGIN_RATE_LIMIT_WINDOW_MINUTES, WINDOW_MINUTES, 1, 60),
+    emailAttemptLimit: configuredInteger(env.ADMIN_LOGIN_EMAIL_ATTEMPT_LIMIT, DEFAULT_EMAIL_ATTEMPT_LIMIT, 5, 50),
+    ipAttemptLimit: configuredInteger(env.ADMIN_LOGIN_IP_ATTEMPT_LIMIT, DEFAULT_IP_ATTEMPT_LIMIT, 60, 10_000),
+  };
 }
 
 export class AdminLoginRateLimitError extends Error {
@@ -139,9 +154,10 @@ export async function claimAdminLoginAttempt(
     throw new AdminLoginRateLimitError("configuration");
   }
 
+  const limits = dependencies.limits ?? getAdminLoginRateLimitConfig();
   const identities = [
-    { kind: "ip", value: clientIp, limit: IP_ATTEMPT_LIMIT },
-    ...(email === null ? [] : [{ kind: "email", value: email.trim().toLowerCase(), limit: EMAIL_ATTEMPT_LIMIT }]),
+    { kind: "ip", value: clientIp, limit: limits.ipAttemptLimit },
+    ...(email === null ? [] : [{ kind: "email", value: email.trim().toLowerCase(), limit: limits.emailAttemptLimit }]),
   ];
   const buckets = identities
     .map(({ kind, value, limit }) => ({
@@ -190,11 +206,11 @@ export async function claimAdminLoginAttempt(
           END AS retry_after_seconds
       `).get<{ blocked: boolean; retry_after_seconds: number }>(
         bucket.hash,
-        WINDOW_MINUTES,
-        WINDOW_MINUTES,
-        WINDOW_MINUTES,
+        limits.windowMinutes,
+        limits.windowMinutes,
+        limits.windowMinutes,
         bucket.limit,
-        WINDOW_MINUTES,
+        limits.windowMinutes,
       );
 
       if (!row) throw new Error("Admin login rate limiter did not return a bucket state.");

@@ -332,6 +332,7 @@ export default function CheckoutPage() {
           items: items.map((i) => ({
 
             productId: i.productId,
+            ...(i.gender ? { gender: i.gender } : {}),
 
             size: i.size,
 
@@ -492,7 +493,7 @@ export default function CheckoutPage() {
           customerPhone: addressForm.phone,
           idempotencyKey: await checkoutKeyFor("cod_advance"),
           address: { ...addressForm, country: "India" },
-          items: items.map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity, color: item.color, customization: item.customization })),
+          items: items.map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity, color: item.color, ...(item.gender ? { gender: item.gender } : {}), customization: item.customization })),
           promoCode: appliedPromo || promoInput || undefined,
         }),
       });

@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
 import { Heart, Plus, ShoppingBag } from "lucide-react";
-import { Product, TShirtSize } from "@/types";
+import { Product, ProductGender, TShirtSize } from "@/types";
 import { formatINR } from "@/lib/utils";
 import { useWishlist } from "@/context/wishlist-context";
 import { useCart } from "@/context/cart-context";
+import { confirmGenderSelection, genderDisplayLabel, isAvailableGender, parseGenderOptionsResponse } from "@/lib/gender-options";
 
 interface ProductCardProps {
   product: Product;
@@ -19,7 +21,17 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [showQuickSizes, setShowQuickSizes] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
-  const [availableSizes, setAvailableSizes] = useState<Record<string, number>>({});
+  const [availableSizes, setAvailableSizes] = useState<Record<string, number | null>>({});
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState(false);
+  const [genderOptions, setGenderOptions] = useState<ProductGender[]>(product.genders ?? []);
+  const [genderOptionsLoaded, setGenderOptionsLoaded] = useState(false);
+  const [genderOptionsError, setGenderOptionsError] = useState(false);
+  const [pendingSize, setPendingSize] = useState<TShirtSize | null>(null);
+  const [selectedGender, setSelectedGender] = useState<ProductGender | null>(null);
+  const [isGenderDialogOpen, setIsGenderDialogOpen] = useState(false);
+  const confirmingRef = useRef(false);
+  const firstGenderOptionRef = useRef<HTMLButtonElement>(null);
 
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { addToBag } = useCart();
@@ -29,14 +41,46 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
 
   useEffect(() => {
     let active = true;
+    setAvailabilityLoaded(false);
+    setAvailabilityError(false);
     fetch(`/api/products/${encodeURIComponent(product.id)}/inventory`, { cache: "no-store" })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("unavailable")))
-      .then((data: { sizes?: Array<{ size: string; available: number }> }) => {
-        if (active) setAvailableSizes(Object.fromEntries((data.sizes ?? []).map(({ size, available }) => [size, available])));
+      .then(async (response) => {
+        if (!response.ok) throw new Error("unavailable");
+        return response.json();
       })
-      .catch(() => { if (active) setAvailableSizes({}); });
+      .then((data: { sizes?: Array<{ size: string; available: number | null }> }) => {
+        if (active) {
+          setAvailableSizes(Object.fromEntries((data.sizes ?? []).map(({ size, available }) => [size, available])));
+          setAvailabilityLoaded(true);
+        }
+      })
+      .catch(() => { if (active) { setAvailableSizes({}); setAvailabilityError(true); setAvailabilityLoaded(true); } });
     return () => { active = false; };
   }, [product.id]);
+
+  useEffect(() => {
+    let active = true;
+    setGenderOptionsLoaded(false);
+    setGenderOptionsError(false);
+    fetch(`/api/product-genders/${encodeURIComponent(product.slug)}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("unavailable");
+        return response.json();
+      })
+      .then((data: unknown) => {
+        if (active) {
+          const configuration = parseGenderOptionsResponse(data);
+          setGenderOptions(configuration.productFound ? configuration.genders : []);
+          setGenderOptionsLoaded(true);
+        }
+      })
+      .catch(() => { if (active) { setGenderOptionsError(true); setGenderOptionsLoaded(true); } });
+    return () => { active = false; };
+  }, [product.id, product.slug, product.genders]);
+
+  useEffect(() => {
+    if (isGenderDialogOpen) firstGenderOptionRef.current?.focus();
+  }, [isGenderDialogOpen]);
 
   const primaryImage = currentColor?.images[0] || product.colors[0]?.images[0] || "";
   const hoverImage =
@@ -54,11 +98,23 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
   const handleQuickAdd = (size: TShirtSize, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!genderOptionsLoaded || genderOptionsError) return;
+    if (genderOptions.length > 0) {
+      setPendingSize(size);
+      setSelectedGender(genderOptions.length === 1 ? genderOptions[0] : null);
+      setIsGenderDialogOpen(true);
+      return;
+    }
+    commitQuickAdd(size);
+  };
+
+  const commitQuickAdd = (size: TShirtSize, gender?: ProductGender) => {
     addToBag({
       productId: product.id,
       productSlug: product.slug,
       productName: product.name,
       color: currentColor.name,
+      ...(gender ? { gender } : {}),
       size,
       price: product.price,
       image: primaryImage,
@@ -70,7 +126,20 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
     setTimeout(() => setJustAdded(false), 1800);
   };
 
+  const confirmQuickAddGender = () => {
+    if (confirmingRef.current || !pendingSize || !isAvailableGender(genderOptions, selectedGender)) return;
+    confirmingRef.current = true;
+    try {
+      confirmGenderSelection(genderOptions, selectedGender, (gender) => commitQuickAdd(pendingSize, gender));
+      setIsGenderDialogOpen(false);
+      setPendingSize(null);
+    } finally {
+      confirmingRef.current = false;
+    }
+  };
+
   return (
+    <>
     <div
       className="card-morph group relative flex flex-col bg-white"
       onMouseEnter={() => setIsHovered(true)}
@@ -166,13 +235,15 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
                   <button
                     key={size}
                     onClick={(e) => handleQuickAdd(size, e)}
-                    disabled={(availableSizes[size] ?? 0) <= 0}
+                    disabled={!availabilityLoaded || availabilityError || availableSizes[size] == null || availableSizes[size] <= 0 || !genderOptionsLoaded || genderOptionsError}
                     className="py-1.5 text-[11px] font-bold text-[#111111] bg-[#FFFFFF] hover:bg-[#FFB900] hover:text-[#111111] transition-colors border border-[#E5E5E5]"
                   >
-                    {size}{(availableSizes[size] ?? 0) > 0 && (availableSizes[size] ?? 0) <= 5 ? " · Low" : ""}
+                    {size}{availableSizes[size] != null && availableSizes[size] > 0 && availableSizes[size] <= 5 ? " · Low" : ""}
                   </button>
                 ))}
               </div>
+              {availabilityError && <p role="status" className="mt-2 text-center text-[10px] text-amber-700">Stock availability is unavailable. Refresh to retry.</p>}
+              {genderOptionsError && <p role="status" className="mt-2 text-center text-[10px] text-amber-700">Product options are unavailable. Refresh to retry.</p>}
             </div>
           ) : (
             <button
@@ -257,5 +328,21 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
         )}
       </div>
     </div>
+    {isGenderDialogOpen && typeof document !== "undefined" && createPortal(
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 px-4 py-6" onKeyDown={(event) => { if (event.key === "Escape" && !confirmingRef.current) { setIsGenderDialogOpen(false); setPendingSize(null); } }} onMouseDown={(event) => { if (event.target === event.currentTarget && !confirmingRef.current) { setIsGenderDialogOpen(false); setPendingSize(null); } }}>
+        <section role="dialog" aria-modal="true" aria-labelledby={`quick-gender-title-${product.id}`} className="w-full max-w-sm border border-neutral-200 bg-white p-5 shadow-2xl sm:p-6">
+          <h2 id={`quick-gender-title-${product.id}`} className="text-sm font-black uppercase tracking-widest">Select gender</h2>
+          <p className="mt-2 text-xs text-neutral-600">Choose an option for {product.name}.</p>
+          <div role="group" aria-label="Available gender options" className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {genderOptions.map((gender, index) => <button ref={index === 0 ? firstGenderOptionRef : undefined} key={gender} type="button" aria-label={genderDisplayLabel(gender)} aria-pressed={selectedGender === gender} onClick={() => setSelectedGender(gender)} className={`min-h-12 border px-4 py-3 text-xs font-bold uppercase tracking-wider ${selectedGender === gender ? "border-black bg-black text-white" : "border-neutral-300 hover:border-black"}`}>{genderDisplayLabel(gender)}</button>)}
+          </div>
+          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" onClick={() => { setIsGenderDialogOpen(false); setPendingSize(null); }} className="min-h-11 border border-neutral-300 px-5 text-xs font-bold uppercase">Cancel</button>
+            <button type="button" disabled={!isAvailableGender(genderOptions, selectedGender) || !genderOptionsLoaded || genderOptionsError} onClick={confirmQuickAddGender} className="min-h-11 bg-[#FFB900] px-5 text-xs font-black uppercase disabled:cursor-not-allowed disabled:opacity-50">Add to Cart</button>
+          </div>
+        </section>
+      </div>, document.body,
+    )}
+    </>
   );
 }

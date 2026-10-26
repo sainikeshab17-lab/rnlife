@@ -47,6 +47,7 @@ interface AdjustmentHistoryItem {
 export default function AdminInventoryPage() {
   const [inventory, setInventory] = useState<InventoryProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   // Edit modal / inline adjustment state
@@ -73,13 +74,15 @@ export default function AdminInventoryPage() {
 
   const fetchInventory = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetch("/api/admin/inventory");
-      if (!res.ok) throw new Error("Failed to load inventory");
+      const res = await fetch("/api/admin/inventory", { cache: "no-store" });
+      if (!res.ok) throw new Error("Inventory could not be loaded. Retry in a moment.");
       const data = await res.json();
       setInventory(data.inventory);
     } catch (err) {
       console.error(err);
+      setLoadError(err instanceof Error ? err.message : "Inventory could not be loaded. Retry in a moment.");
     } finally {
       setLoading(false);
     }
@@ -243,6 +246,10 @@ export default function AdminInventoryPage() {
               <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-neutral-400" />
               <p className="text-xs font-bold uppercase tracking-wider">Loading inventory matrix...</p>
             </div>
+          ) : loadError ? (
+            <div role="alert" className="p-10 text-center text-sm text-amber-800">{loadError}</div>
+          ) : filtered.length === 0 ? (
+            <div className="p-10 text-center text-sm text-neutral-500">{search ? "No inventory rows match this search." : "Inventory variants are not configured yet. No stock quantities have been created."}</div>
           ) : (
             <div className="divide-y divide-neutral-200">
               {filtered.map((item) => (

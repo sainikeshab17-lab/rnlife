@@ -19,10 +19,13 @@ import {
 } from "lucide-react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { formatINR } from "@/lib/utils";
+import { PRODUCTS } from "@/data/mock-data";
+import type { Product } from "@/types";
 
 interface AdminProduct {
   id: string;
   slug: string;
+  storefront_slug: string | null;
   name: string;
   sku: string;
   price: number;
@@ -38,6 +41,7 @@ interface AdminProduct {
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [productsLoadError, setProductsLoadError] = useState(false);
   const [search, setSearch] = useState("");
   const [fitFilter, setFitFilter] = useState("all");
 
@@ -46,9 +50,14 @@ export default function AdminProductsPage() {
   const [editDesc, setEditDesc] = useState("");
   const [savingDesc, setSavingDesc] = useState(false);
   const [savingGenderId, setSavingGenderId] = useState<string | null>(null);
+  const [savingMappingId, setSavingMappingId] = useState<string | null>(null);
+  const [creatingRecordId, setCreatingRecordId] = useState<string | null>(null);
+  const [pendingStorefrontSlug, setPendingStorefrontSlug] = useState<Record<string, string>>({});
+  const [candidateSelection, setCandidateSelection] = useState<Record<string, string>>({});
 
   const fetchProducts = async () => {
     setLoading(true);
+    setProductsLoadError(false);
     try {
       const res = await fetch("/api/admin/products");
       if (!res.ok) throw new Error("Failed to load products");
@@ -56,6 +65,7 @@ export default function AdminProductsPage() {
       setProducts(data.products);
     } catch (err) {
       console.error(err);
+      setProductsLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -111,6 +121,82 @@ export default function AdminProductsPage() {
       alert(error instanceof Error ? error.message : "Failed to update gender options.");
     } finally {
       setSavingGenderId(null);
+    }
+  };
+
+  const saveStorefrontMapping = async (product: AdminProduct) => {
+    const storefrontSlug = pendingStorefrontSlug[product.id] ?? product.storefront_slug ?? "";
+    if (storefrontSlug && !window.confirm(`Link database product ${product.name} (${product.slug}) to storefront slug ${storefrontSlug}? This changes only its storefront mapping.`)) return;
+    setSavingMappingId(product.id);
+    try {
+      const response = await fetch(`/api/admin/products?id=${encodeURIComponent(product.id)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storefront_slug: storefrontSlug || null }),
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Unable to save storefront mapping.");
+      }
+      await fetchProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to save storefront mapping.");
+    } finally {
+      setSavingMappingId(null);
+    }
+  };
+
+  const linkCandidate = async (storefrontProduct: Product, databaseProduct: AdminProduct) => {
+    if (!window.confirm(`Link ${databaseProduct.name} (${databaseProduct.slug}, SKU ${databaseProduct.sku}) to ${storefrontProduct.slug}? Only the storefront mapping will change.`)) return;
+    setSavingMappingId(databaseProduct.id);
+    try {
+      const response = await fetch(`/api/admin/products?id=${encodeURIComponent(databaseProduct.id)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storefront_slug: storefrontProduct.slug }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to link this product.");
+      await fetchProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to link this product.");
+    } finally {
+      setSavingMappingId(null);
+    }
+  };
+
+  const createStorefrontRecord = async (storefrontProduct: Product) => {
+    const candidates = products.filter((row) => row.slug === storefrontProduct.slug || row.storefront_slug === storefrontProduct.slug || row.sku?.toUpperCase() === storefrontProduct.sku.toUpperCase() || row.name.trim().toLowerCase() === storefrontProduct.name.trim().toLowerCase());
+    if (candidates.length) {
+      alert(`Possible existing database match found: ${candidates.map((row) => `${row.name} (${row.slug}, SKU ${row.sku})`).join("; ")}. Link that record instead of creating a duplicate.`);
+      return;
+    }
+    const confirmed = window.confirm(`Create an inactive database product record from the existing storefront details for ${storefrontProduct.name}?\n\nSlug: ${storefrontProduct.slug}\nSKU: ${storefrontProduct.sku}\nPrice: ${formatINR(storefrontProduct.price)}\n\nThis does not activate the record or change inventory or existing orders. Gender options remain empty until you configure them below.`);
+    if (!confirmed) return;
+    setCreatingRecordId(storefrontProduct.id);
+    try {
+      const response = await fetch("/api/admin/products", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: storefrontProduct.name, slug: storefrontProduct.slug, description: storefrontProduct.description,
+          category: storefrontProduct.category, sku: storefrontProduct.sku, price: storefrontProduct.price,
+          collection_slug: storefrontProduct.collectionSlug, tagline: storefrontProduct.tagline,
+          fit: storefrontProduct.fit, gsm: storefrontProduct.gsm, sleeve: storefrontProduct.sleeve,
+          neck: storefrontProduct.neck, fabric_composition: storefrontProduct.fabricComposition,
+          print_technique: storefrontProduct.printTechnique ?? null,
+          compare_at_price: storefrontProduct.compareAtPrice ?? null,
+          images: storefrontProduct.colors.flatMap((color) => color.images),
+          sizes: storefrontProduct.sizes, colors: storefrontProduct.colors.map((color) => color.name),
+          color_variants: storefrontProduct.colors.map((color) => ({ name: color.name, hex: color.hex })),
+          genders: [], stock: 0, is_active: false,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to create storefront record.");
+      setPendingStorefrontSlug((previous) => ({ ...previous, [result.product.id]: storefrontProduct.slug }));
+      await fetchProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to create storefront record.");
+    } finally {
+      setCreatingRecordId(null);
     }
   };
 
@@ -180,6 +266,32 @@ export default function AdminProductsPage() {
           </div>
         </div>
 
+        {loading ? <p role="status" className="border-b border-neutral-200 p-4 text-xs text-neutral-500">Checking database records before allowing product reconciliation…</p> : productsLoadError ? <p role="alert" className="border-b border-red-200 bg-red-50 p-4 text-xs text-red-800">Database products could not be loaded. Reconciliation and record creation are disabled until the list can be verified.</p> : <section aria-labelledby="storefront-reconciliation-title" className="border-b border-neutral-200 bg-amber-50/60 p-4 sm:p-5">
+          <h3 id="storefront-reconciliation-title" className="text-xs font-black uppercase tracking-widest text-neutral-900">Storefront product reconciliation</h3>
+          <p className="mt-1 max-w-4xl text-[11px] leading-relaxed text-neutral-600">Link an existing database row without changing its slug, price, images, inventory, or order history. If no matching row exists, an admin can create an inactive record from the canonical storefront details; this does not populate the inventory table.</p>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {PRODUCTS.map((storefrontProduct) => {
+              const linked = products.find((row) => row.slug === storefrontProduct.slug || row.storefront_slug === storefrontProduct.slug);
+              const candidates = products.filter((row) => row.slug !== storefrontProduct.slug && row.storefront_slug !== storefrontProduct.slug && (row.sku?.toUpperCase() === storefrontProduct.sku.toUpperCase() || row.name.trim().toLowerCase() === storefrontProduct.name.trim().toLowerCase()));
+              return <div key={storefrontProduct.id} className="flex flex-col gap-2 border border-neutral-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-bold text-neutral-900">{storefrontProduct.name}</p>
+                  <p className="mt-0.5 font-mono text-[10px] text-neutral-500">{storefrontProduct.slug} · {storefrontProduct.sku}</p>
+                  {linked ? <p className="mt-1 text-[10px] text-emerald-800">Linked to database slug: {linked.slug}</p> : candidates.length ? <p className="mt-1 text-[10px] text-amber-800">Possible match: {candidates.map((row) => `${row.name} (${row.slug})`).join(", ")}. Link the existing row below.</p> : <p className="mt-1 text-[10px] text-neutral-500">No exact slug, name, or SKU match found.</p>}
+                </div>
+                {!linked && candidates.length > 0 && <div className="flex shrink-0 items-center gap-1.5">
+                  <select aria-label={`Existing database match for ${storefrontProduct.name}`} value={candidateSelection[storefrontProduct.id] ?? ""} onChange={(event) => setCandidateSelection((previous) => ({ ...previous, [storefrontProduct.id]: event.target.value }))} className="max-w-56 border border-neutral-300 bg-white px-2 py-2 text-[10px]">
+                    <option value="">Choose existing record</option>
+                    {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.slug} · {candidate.sku}</option>)}
+                  </select>
+                  <button type="button" disabled={!candidateSelection[storefrontProduct.id] || savingMappingId === candidateSelection[storefrontProduct.id]} onClick={() => { const candidate = candidates.find((row) => row.id === candidateSelection[storefrontProduct.id]); if (candidate) void linkCandidate(storefrontProduct, candidate); }} className="border border-neutral-900 px-2 py-2 text-[10px] font-bold uppercase disabled:opacity-50">Link</button>
+                </div>}
+                {!linked && candidates.length === 0 && <button type="button" disabled={creatingRecordId === storefrontProduct.id} onClick={() => void createStorefrontRecord(storefrontProduct)} className="shrink-0 border border-neutral-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide disabled:opacity-50">{creatingRecordId === storefrontProduct.id ? "Creating…" : "Review & Create Draft Record"}</button>}
+              </div>;
+            })}
+          </div>
+        </section>}
+
         {/* Product Cards List */}
         {loading ? (
           <div className="py-16 text-center text-neutral-400">
@@ -229,6 +341,16 @@ export default function AdminProductsPage() {
                           return <button key={gender} type="button" disabled={savingGenderId === product.id} aria-pressed={selected} onClick={() => void toggleGender(product, gender)} className={`px-2 py-1 text-[10px] uppercase font-bold border ${selected ? "bg-black text-white border-black" : "bg-white text-neutral-700 border-neutral-300 hover:border-black"}`}>{gender}</button>;
                         })}
                         {(product.genders ?? []).length === 0 && <span className="text-[10px] text-neutral-500">No selector</span>}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="flex flex-col gap-1 text-[9px] font-bold uppercase tracking-wide text-neutral-500">
+                          Storefront product mapping
+                          <select aria-label={`Storefront mapping for ${product.name}`} value={pendingStorefrontSlug[product.id] ?? product.storefront_slug ?? (PRODUCTS.some((item) => item.slug === product.slug) ? product.slug : "")} onChange={(event) => setPendingStorefrontSlug((previous) => ({ ...previous, [product.id]: event.target.value }))} className="min-w-56 border border-neutral-300 bg-white px-2 py-1.5 text-[10px] font-medium text-neutral-900">
+                            <option value="">Not linked</option>
+                            {PRODUCTS.map((storefrontProduct) => <option key={storefrontProduct.id} value={storefrontProduct.slug} disabled={products.some((row) => row.id !== product.id && (row.slug === storefrontProduct.slug || row.storefront_slug === storefrontProduct.slug))}>{storefrontProduct.name} · {storefrontProduct.slug}</option>)}
+                          </select>
+                        </label>
+                        <button type="button" disabled={savingMappingId === product.id} onClick={() => void saveStorefrontMapping(product)} className="border border-neutral-300 px-2 py-1.5 text-[10px] font-bold uppercase disabled:opacity-50">{savingMappingId === product.id ? "Saving…" : "Save Mapping"}</button>
                       </div>
                     </div>
                   </div>

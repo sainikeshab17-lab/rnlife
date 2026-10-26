@@ -12,6 +12,7 @@ import {
 } from "../src/services/checkout-service.ts";
 import { PRODUCTS } from "../src/data/mock-data.ts";
 import fs from "node:fs";
+import { confirmGenderSelection, genderDisplayLabel, isAvailableGender } from "../src/lib/gender-options.ts";
 
 describe("Wear Your Mood and COD Advance pricing contracts", () => {
   test("configured gender is required, validated and persisted in trusted checkout items; legacy products stay optional", () => {
@@ -22,6 +23,9 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
     try {
       const base = { productId: product.id, size: "M", quantity: 1, color: product.colors[0].name };
       assert.equal(calculateTrustedOrderPricing([base]).success, false);
+      const selectedMen = calculateTrustedOrderPricing([{ ...base, gender: "Men" }]);
+      assert.equal(selectedMen.success, true);
+      if (selectedMen.success) assert.equal(selectedMen.pricing.items[0].gender, "Men");
       const selected = calculateTrustedOrderPricing([{ ...base, gender: "Women" }]);
       assert.equal(selected.success, true);
       if (selected.success) assert.equal(selected.pricing.items[0].gender, "Women");
@@ -38,8 +42,8 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
     const cart = fs.readFileSync("src/context/cart-context.tsx", "utf8");
     const checkout = fs.readFileSync("src/app/checkout/page.tsx", "utf8");
     const orders = fs.readFileSync("src/lib/db/orders.ts", "utf8");
-    assert.match(selector, /aria-pressed=\{selectedGender === gender\}/);
-    assert.match(selector, /genders\.length > 0 && !selectedGender/);
+    assert.match(selector, /role="dialog" aria-modal="true"/);
+    assert.match(selector, /disabled=\{!isAvailableGender\(genders, selectedGender\)/);
     assert.match(cart, /i\.gender === product\.gender/);
     assert.match(checkout, /gender: item\.gender/);
     assert.match(orders, /customization, gender/);
@@ -52,11 +56,50 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
     const admin = fs.readFileSync("src/app/admin/products/page.tsx", "utf8");
     const migration = fs.readFileSync("supabase/migrations/20261026130000_product_gender_variants.sql", "utf8");
     assert.match(route, /getConfiguredProductGenders\(product\.slug\)/);
-    assert.match(lookup, /select\("genders"\)\.eq\("slug", slug\)/);
+    assert.match(lookup, /select\("slug,storefront_slug,genders"\)[\s\S]*storefront_slug\.eq\.\$\{slug\}/);
+    assert.match(lookup, /if \(!data\?\.length\) return \{ productFound: false, genders: \[\] \}/);
+    assert.match(lookup, /Invalid gender configuration/);
     assert.match(configuredCheckout, /getConfiguredProductGenders\(product\.slug\)/);
     assert.match(admin, /toggleGender\(product, gender\)/);
     assert.match(migration, /ADD COLUMN IF NOT EXISTS genders TEXT\[\]/);
     assert.match(migration, /ADD COLUMN IF NOT EXISTS gender TEXT/);
+  });
+
+  test("gender chooser maps Male/Female labels, blocks empty selection and preserves Unisex", () => {
+    const options = ["Men", "Women"];
+    assert.equal(genderDisplayLabel("Men"), "Male");
+    assert.equal(genderDisplayLabel("Women"), "Female");
+    assert.equal(isAvailableGender(options, null), false);
+    assert.equal(isAvailableGender(options, "Unisex"), false);
+    assert.equal(isAvailableGender(options, "Men"), true);
+    assert.equal(isAvailableGender(options, "Women"), true);
+    assert.equal(genderDisplayLabel("Unisex"), "Unisex");
+    assert.equal(isAvailableGender(["Unisex"], "Unisex"), true);
+    const commits = [];
+    assert.equal(confirmGenderSelection(options, null, (gender) => commits.push(gender)), false);
+    assert.deepEqual(commits, []);
+    assert.equal(confirmGenderSelection(options, "Men", (gender) => commits.push(gender)), true);
+    assert.equal(confirmGenderSelection(options, "Women", (gender) => commits.push(gender)), true);
+    assert.deepEqual(commits, ["Men", "Women"]);
+  });
+
+  test("gender dialog confirms the actual cart action and both payment routes use configured validation", () => {
+    const selector = fs.readFileSync("src/components/product/VariantSelector.tsx", "utf8");
+    const cart = fs.readFileSync("src/context/cart-context.tsx", "utf8");
+    const drawer = fs.readFileSync("src/components/cart/CartDrawer.tsx", "utf8");
+    const cod = fs.readFileSync("src/app/api/checkout/cod/route.ts", "utf8");
+    const razorpay = fs.readFileSync("src/app/api/checkout/create-order/route.ts", "utf8");
+    const orderInsert = fs.readFileSync("src/lib/db/orders.ts", "utf8");
+    assert.match(selector, /role="dialog" aria-modal="true"/);
+    assert.match(selector, /disabled=\{!isAvailableGender\(genders, selectedGender\)/);
+    assert.match(selector, /onClick=\{handleConfirmGender\}/);
+    assert.match(selector, /confirmGenderSelection\(genders, selectedGender/);
+    assert.match(selector, /addSelectedProduct\(gender\)/);
+    assert.match(cart, /i\.gender === product\.gender/);
+    assert.match(drawer, /item\.gender/);
+    assert.match(cod, /await calculateConfiguredOrderPricing/);
+    assert.match(razorpay, /await calculateConfiguredOrderPricing/);
+    assert.match(orderInsert, /customization, gender/);
   });
 
   const customDetails = {

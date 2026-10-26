@@ -27,8 +27,15 @@ export default async function ProductPage({ params }: ProductPageProps) {
     notFound();
   }
 
-  const genders = await getConfiguredProductGenders(product.slug);
-  const storefrontProduct = { ...product, genders };
+  let genders: Awaited<ReturnType<typeof getConfiguredProductGenders>> = [];
+  let genderOptionsError = false;
+  try {
+    genders = await getConfiguredProductGenders(product.slug);
+  } catch (error) {
+    genderOptionsError = true;
+    console.error(`[product-page] Unable to load gender options for ${product.slug}.`, error);
+  }
+  const storefrontProduct = { ...product, genders, genderOptionsError };
 
   const relatedProducts = await productService.getRelatedProducts(product.id, 4);
 

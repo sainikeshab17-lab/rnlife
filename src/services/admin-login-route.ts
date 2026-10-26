@@ -57,9 +57,12 @@ export function createAdminLoginPost(deps: Dependencies = runtimeDependencies())
         console.error(`[admin/login] ${deps.getRateLimitDiagnostic(error)}`);
         return NextResponse.json({ error: "Admin login is temporarily unavailable." }, { status: 503 });
       }
-      if (!attempt.allowed) return NextResponse.json({ error: "Too many login attempts. Try again later." }, {
-        status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) },
-      });
+      if (!attempt.allowed) {
+        console.warn(`[admin/login] Login rate limit reached (identity bucket; retry after ${attempt.retryAfterSeconds}s).`);
+        return NextResponse.json({ error: "Too many login attempts. Try again later." }, {
+          status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) },
+        });
+      }
       if (!email || email.length > 254 || !password || Buffer.byteLength(password, "utf8") > 1024) {
         return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
       }

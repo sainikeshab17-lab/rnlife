@@ -3,6 +3,7 @@ import { getDb, type DbCheckoutPaymentAttempt, type DbConnection } from "@/lib/d
 import { withTransaction } from "@/lib/db";
 import {
   checkAndReserveInventory,
+  InventoryUnavailableError,
   lockInventoryVariants,
   createCodAdvanceAttempt,
   createPendingOrder,
@@ -40,7 +41,7 @@ export async function createCheckoutPaymentAttempt(params: {
     const stockItems = params.snapshot.items.filter((item) => item.fulfillmentType !== "made_to_order")
       .map((item) => ({ productId: item.productId, size: item.size, quantity: item.quantity }));
     const inventory = await checkAndReserveInventory(stockItems, db);
-    if (!inventory.ok) throw new Error(inventory.error || "Insufficient stock.");
+    if (!inventory.ok) throw new InventoryUnavailableError(inventory.error || "Insufficient stock.");
 
     const id = `cpa_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
     const guestToken = randomUUID();

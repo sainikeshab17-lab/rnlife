@@ -14,6 +14,7 @@ const filesToCompile = [
   { in: "src/types/index.ts", out: ".test-dist/src/types/index.js" },
   { in: "src/data/product-categories.ts", out: ".test-dist/src/data/product-categories.js" },
   { in: "src/data/mock-data.ts", out: ".test-dist/src/data/mock-data.js" },
+  { in: "src/lib/gender-options.ts", out: ".test-dist/src/lib/gender-options.js" },
   { in: "src/lib/policies.ts", out: ".test-dist/src/lib/policies.js" },
   { in: "src/lib/support-contact.ts", out: ".test-dist/src/lib/support-contact.js" },
   { in: "src/lib/shipping/provider.ts", out: ".test-dist/src/lib/shipping/provider.js" },
@@ -38,6 +39,7 @@ const filesToCompile = [
   { in: "src/services/shiprocket/shipment-preparation-route-handler.ts", out: ".test-dist/src/services/shiprocket/shipment-preparation-route-handler.js" },
   { in: "src/services/checkout-service.ts", out: ".test-dist/src/services/checkout-service.js" },
   { in: "src/services/inventory-product-catalog.ts", out: ".test-dist/src/services/inventory-product-catalog.js" },
+  { in: "src/services/product-inventory-availability.ts", out: ".test-dist/src/services/product-inventory-availability.js" },
   { in: "src/services/admin-orders-list.ts", out: ".test-dist/src/services/admin-orders-list.js" },
   { in: "src/services/checkout-payment-attempts.ts", out: ".test-dist/src/services/checkout-payment-attempts.js" },
   { in: "src/services/mood-quotes.ts", out: ".test-dist/src/services/mood-quotes.js" },
@@ -234,6 +236,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/admin-login-route\.ts["']/g, 'from "../src/services/admin-login-route.js"')
       .replace(/from\s+["']\.\.\/src\/services\/checkout-service\.ts["']/g, 'from "../src/services/checkout-service.js"')
       .replace(/from\s+["']\.\.\/src\/services\/inventory-product-catalog\.ts["']/g, 'from "../src/services/inventory-product-catalog.js"')
+      .replace(/from\s+["']\.\.\/src\/services\/product-inventory-availability\.ts["']/g, 'from "../src/services/product-inventory-availability.js"')
       .replace(/from\s+["']\.\.\/src\/services\/admin-orders-list\.ts["']/g, 'from "../src/services/admin-orders-list.js"')
       .replace(/from\s+["']\.\.\/src\/services\/checkout-payment-attempts\.ts["']/g, 'from "../src/services/checkout-payment-attempts.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/shiprocket\/client\.ts["']/g, 'from "../src/lib/shiprocket/client.js"')
@@ -263,6 +266,7 @@ for (const f of filesToCompile) {
       .replace(/from\s+["']\.\.\/src\/services\/razorpay\/refund-webhook-inbox\.ts["']/g, 'from "../src/services/razorpay/refund-webhook-inbox.js"')
       .replace(/from\s+["']\.\.\/src\/services\/admin-notification-route\.ts["']/g, 'from "../src/services/admin-notification-route.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/policies\.ts["']/g, 'from "../src/lib/policies.js"')
+      .replace(/from\s+["']\.\.\/src\/lib\/gender-options\.ts["']/g, 'from "../src/lib/gender-options.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/support-contact\.ts["']/g, 'from "../src/lib/support-contact.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/shipping\/provider\.ts["']/g, 'from "../src/lib/shipping/provider.js"')
       .replace(/from\s+["']\.\.\/src\/lib\/razorpay\.ts["']/g, 'from "../src/lib/razorpay.js"')

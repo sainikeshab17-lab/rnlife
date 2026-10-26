@@ -62,9 +62,9 @@ export async function GET(req: NextRequest) {
       productMap[row.product_id].total_available += available;
     }
 
-    return NextResponse.json({ inventory: Object.values(productMap) });
+    return NextResponse.json({ inventory: Object.values(productMap) }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     console.error("[admin/inventory]", err);
-    return NextResponse.json({ error: "Failed to load inventory." }, { status: 500 });
+    return NextResponse.json({ error: "Failed to load inventory." }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }

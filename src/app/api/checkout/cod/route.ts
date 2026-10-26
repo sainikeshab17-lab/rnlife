@@ -5,7 +5,7 @@ import {
   calculateCodAdvanceAmounts, createCheckoutRequestHash,
 } from "@/services/checkout-service";
 import { calculateConfiguredOrderPricing } from "@/services/configured-checkout-pricing";
-import { scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
+import { InventoryUnavailableError, scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
 import { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, getRazorpayClient, findRazorpayOrdersByReceipt } from "@/lib/razorpay";
 import {
   attachCheckoutProviderOrder, claimCheckoutProviderOrder, createCheckoutPaymentAttempt,
@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
       pricing: { subtotal: pricing.subtotal, shipping: pricing.shipping, discount: pricing.discount, total: pricing.total },
       replayed: stored.status === "replayed" }, { status: stored.status === "created" ? 201 : 200 });
   } catch (error) {
+    if (error instanceof InventoryUnavailableError) return NextResponse.json({ success: false, error: error.message }, { status: 409 });
     console.error("[COD Advance] Checkout initialization failed.", error);
     return NextResponse.json({ success: false, error: "Unable to initialize COD Advance. Please retry the same checkout." }, { status: 500 });
   }

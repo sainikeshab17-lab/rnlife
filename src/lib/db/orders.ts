@@ -26,25 +26,21 @@ export function orderInventoryVariants<T extends { productId: string; size: stri
   );
 }
 
+export class InventoryUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InventoryUnavailableError";
+  }
+}
+
 export async function lockInventoryVariants(
   db: DbConnection,
-  variants: Array<{ productId: string; size: string }>,
-  createMissing = false
+  variants: Array<{ productId: string; size: string }>
 ): Promise<Array<{ productId: string; size: string }>> {
   const ordered = orderInventoryVariants(
     [...new Map(variants.map((variant) => [`${variant.productId}\0${variant.size}`, variant])).values()]
   );
   if (!ordered.length) return ordered;
-
-  if (createMissing) {
-    for (const variant of ordered) {
-      await db.prepare(`
-        INSERT INTO inventory (product_id, size, stock, reserved)
-        VALUES (?, ?, 20, 0)
-        ON CONFLICT (product_id, size) DO NOTHING
-      `).run(variant.productId, variant.size);
-    }
-  }
 
   const tupleList = ordered.map(() => "(?, ?)").join(", ");
   const parameters = ordered.flatMap((variant) => [variant.productId, variant.size]);
@@ -91,7 +87,15 @@ export async function checkAndReserveInventory(
     }
 
     const orderedQuantities = orderInventoryVariants([...quantities.values()]);
-    const lockedVariants = await lockInventoryVariants(db, orderedQuantities, true);
+    let lockedVariants: Array<{ productId: string; size: string }>;
+    try {
+      lockedVariants = await lockInventoryVariants(db, orderedQuantities);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Inventory row missing while locking stock variants.") {
+        return { ok: false, error: "Stock is not configured for one or more selected sizes." };
+      }
+      throw error;
+    }
     const lockedRows: Array<{ item: (typeof orderedQuantities)[number]; available: number }> = [];
     for (const item of lockedVariants) {
       const quantity = quantities.get(`${item.productId}\0${item.size}`);

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { getInventoryProductLabel } from "@/services/inventory-product-catalog";
+import { calculateSizeAvailability } from "@/services/product-inventory-availability";
 
 export const dynamic = "force-dynamic";
 
@@ -10,20 +12,23 @@ export async function GET(
   { params }: { params: Promise<{ productId: string }> }
 ) {
   const { productId } = await params;
+  if (!getInventoryProductLabel(productId)) {
+    return NextResponse.json({ error: "Product inventory is not available." }, { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
   try {
     const rows = await getDb().prepare(
       "SELECT size, stock, reserved FROM inventory WHERE product_id = ?"
     ).all<{ size: string; stock: number; reserved: number }>(productId);
-    const bySize = new Map(rows.map((row) => [row.size, row]));
+    if (rows.length === 0) {
+      console.error(`[products/inventory] No inventory variants are configured for product ${productId}.`);
+      return NextResponse.json({ error: "Inventory is not configured for this product." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
     return NextResponse.json({
-      sizes: SIZES.map((size) => {
-        const row = bySize.get(size);
-        const available = row ? Math.max(0, row.stock - row.reserved) : 0;
-        return { size, available, status: !row || available === 0 ? "sold_out" : available <= 5 ? "low_stock" : "in_stock" };
-      }),
+      sizes: calculateSizeAvailability(SIZES, rows),
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    console.error("[products/inventory] Unable to read availability.", error);
-    return NextResponse.json({ error: "Availability is temporarily unavailable." }, { status: 503 });
+    const databaseCode = error && typeof error === "object" && "code" in error ? String(error.code) : "unknown";
+    console.error(`[products/inventory] Unable to read availability (database code ${databaseCode}).`);
+    return NextResponse.json({ error: "Availability is temporarily unavailable." }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }

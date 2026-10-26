@@ -8,6 +8,7 @@ import {
   claimAdminLoginAttempt,
   getAdminLoginProxyHeaders,
   getAdminLoginRateLimitDiagnostic,
+  getAdminLoginRateLimitConfig,
   getTrustedAdminLoginClientIp,
   resolveTrustedAdminLoginClientIp,
 } from "../src/lib/auth/admin-login-rate-limit.ts";
@@ -72,6 +73,18 @@ function memoryDependencies(database = new MemoryRateLimitDatabase()) {
 }
 
 describe("admin login rate limiting", () => {
+  test("uses a modest per-account brute-force limit and configurable higher shared-IP allowance", () => {
+    assert.deepEqual(getAdminLoginRateLimitConfig({}), {
+      windowMinutes: 15, emailAttemptLimit: 10, ipAttemptLimit: 300,
+    });
+    assert.deepEqual(getAdminLoginRateLimitConfig({
+      ADMIN_LOGIN_RATE_LIMIT_WINDOW_MINUTES: "20",
+      ADMIN_LOGIN_EMAIL_ATTEMPT_LIMIT: "8",
+      ADMIN_LOGIN_IP_ATTEMPT_LIMIT: "600",
+    }), { windowMinutes: 20, emailAttemptLimit: 8, ipAttemptLimit: 600 });
+    assert.equal(getAdminLoginRateLimitConfig({ ADMIN_LOGIN_IP_ATTEMPT_LIMIT: "999999" }).ipAttemptLimit, 300);
+  });
+
   test("uses only a configured, single-IP ingress header and rejects spoofable fallbacks", () => {
     const headers = new Headers({
       "x-forwarded-for": "198.51.100.7",
@@ -145,6 +158,16 @@ describe("admin login rate limiting", () => {
     assert.ok([...database.buckets.keys()].every((key) => /^[a-f0-9]{64}$/.test(key)));
   });
 
+  test("configured high-volume shared IP allowance protects legitimate admin logins while accounts stay throttled", async () => {
+    const { dependencies } = memoryDependencies();
+    for (let index = 0; index < 299; index += 1) {
+      const attempt = await claimAdminLoginAttempt(`admin-${index}@example.test`, "198.51.100.88", dependencies);
+      assert.equal(attempt.allowed, true);
+    }
+    const ipLimit = await claimAdminLoginAttempt("admin-299@example.test", "198.51.100.88", dependencies);
+    assert.equal(ipLimit.allowed, false);
+  });
+
   test("successful login releases only its reserved slots", async () => {
     const { dependencies, database } = memoryDependencies();
     const attempt = await claimAdminLoginAttempt("valid@example.test", "198.51.100.20", dependencies);
@@ -207,6 +230,23 @@ describe("admin login rate limiting", () => {
     assert.doesNotMatch(source, /req\.headers\.get\(["']x-forwarded-for|req\.headers\.get\(["']x-real-ip/i);
     assert.match(source, /status: 429/);
     assert.match(source, /status: 503/);
+  });
+
+  test("authenticated product and inventory admin routes rely on session authorization, not login throttling", async () => {
+    const products = await readFile("src/app/api/admin/products/route.ts", "utf8");
+    const inventory = await readFile("src/app/api/admin/inventory/route.ts", "utf8");
+    assert.match(products, /requireAdminAuth/);
+    assert.match(inventory, /requireAdminAuth/);
+    assert.doesNotMatch(products, /claimAdminLoginAttempt|status:\s*429/);
+    assert.doesNotMatch(inventory, /claimAdminLoginAttempt|status:\s*429/);
+  });
+
+  test("Next proxy skips unnecessary Supabase Auth claims refresh for custom admin routes", async () => {
+    const proxy = await readFile("src/proxy.ts", "utf8");
+    const limiter = await readFile("src/lib/auth/admin-login-rate-limit.ts", "utf8");
+    assert.match(proxy, /usesCustomAdminSession[\s\S]*if \(usesCustomAdminSession\) return response/);
+    assert.match(limiter, /pathname === "\/api\/admin\/login"/);
+    assert.match(proxy, /each protected handler still authorizes[\s\S]*the admin session itself/i);
   });
 
   databaseTest("PostgreSQL serializes concurrent claims and persists throttling across connections", async () => {

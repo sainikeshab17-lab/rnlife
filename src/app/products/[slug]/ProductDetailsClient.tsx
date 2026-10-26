@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 interface ProductDetailsClientProps {
-  product: Product;
+  product: Product & { genderOptionsError?: boolean };
   relatedProducts: Product[];
 }
 
@@ -144,6 +144,7 @@ export function ProductDetailsClient({
           <div className="py-6">
             <VariantSelector
               product={product}
+              genderOptionsError={product.genderOptionsError}
               selectedColorIdx={selectedColorIdx}
               onSelectColor={setSelectedColorIdx}
             />

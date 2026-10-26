@@ -12,6 +12,16 @@ export async function proxy(request: NextRequest) {
   );
   let response = NextResponse.next({ request: { headers: requestHeaders } });
 
+  const pathname = request.nextUrl.pathname;
+  const usesCustomAdminSession = pathname === "/admin" || pathname.startsWith("/admin/") ||
+    pathname === "/api/admin" || pathname.startsWith("/api/admin/");
+
+  // Admin pages and their APIs use the server-side RIGHTNOWLIFE admin session,
+  // not Supabase Auth. Avoid an Auth claims/refresh request for every admin
+  // asset, navigation, and API call; each protected handler still authorizes
+  // the admin session itself.
+  if (usesCustomAdminSession) return response;
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 

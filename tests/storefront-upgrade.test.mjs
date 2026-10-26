@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PRODUCTS, SIZE_CHART_OVERSIZED, SIZE_CHART_RELAXED, SIZE_CHART_REGULAR, SIZE_CHART_INDUSTRY_REFERENCE, getVisibleProductCategories } from "../src/data/mock-data.js";
+import { calculateSizeAvailability } from "../src/services/product-inventory-availability.js";
+import { confirmGenderSelection, genderDisplayLabel, parseGenderOptionsResponse } from "../src/lib/gender-options.js";
 
 test("eight canonical designs keep their configured IDs and prices with distinct descriptions", () => {
   assert.deepEqual(PRODUCTS.map((p) => p.id), Array.from({ length: 8 }, (_, i) => `rnl-design-0${i + 1}`));
@@ -32,6 +34,77 @@ test("inventory migration initializes each design-size at zero and leaves existi
   assert.match(migration, /SELECT product_id, size, 0, 0/);
   assert.match(migration, /ON CONFLICT \(product_id, size\) DO NOTHING/);
   assert.match(migration, /ARRAY\['XS', 'S', 'M', 'L', 'XL', 'XXL'\]/);
+});
+
+test("size stock distinguishes sellable, sold-out, unconfigured, and invalid inventory", () => {
+  assert.deepEqual(calculateSizeAvailability(["S", "M", "L"], [
+    { size: "S", stock: 8, reserved: 3 },
+    { size: "M", stock: 0, reserved: 0 },
+  ]), [
+    { size: "S", available: 5, status: "low_stock" },
+    { size: "M", available: 0, status: "sold_out" },
+    { size: "L", available: null, status: "unconfigured" },
+  ]);
+  assert.throws(() => calculateSizeAvailability(["S"], [{ size: "S", stock: -1, reserved: 0 }]), /invalid stock values/i);
+});
+
+test("inventory query errors are shown as unavailable and never turn missing stock into positive stock", async () => {
+  const api = await readFile("src/app/api/products/[productId]/inventory/route.ts", "utf8");
+  const detail = await readFile("src/components/product/VariantSelector.tsx", "utf8");
+  const card = await readFile("src/components/product/ProductCard.tsx", "utf8");
+  const reservation = await readFile("src/lib/db/orders.ts", "utf8");
+  assert.match(api, /rows\.length === 0[\s\S]*status: 503/);
+  assert.match(api, /calculateSizeAvailability/);
+  assert.match(detail, /availabilityError[\s\S]*Stock availability could not be checked/);
+  assert.match(card, /availabilityError[\s\S]*Stock availability is unavailable/);
+  assert.doesNotMatch(reservation, /VALUES \(\?, \?, 20, 0\)/);
+  assert.match(reservation, /Stock is not configured for one or more selected sizes/);
+});
+
+test("product-card quick add uses configured genders and does not bypass confirmation", async () => {
+  const card = await readFile("src/components/product/ProductCard.tsx", "utf8");
+  const genderApi = await readFile("src/app/api/product-genders/[slug]/route.ts", "utf8");
+  const detail = await readFile("src/components/product/VariantSelector.tsx", "utf8");
+  const productRoute = await readFile("src/app/products/[slug]/page.tsx", "utf8");
+  const adminProducts = await readFile("src/app/api/admin/products/route.ts", "utf8");
+  const adminDashboard = await readFile("src/app/admin/products/page.tsx", "utf8");
+  const mappingMigration = await readFile("supabase/migrations/20261026140000_product_storefront_mapping.sql", "utf8");
+  assert.match(card, /api\/product-genders/);
+  assert.match(card, /genderOptions\.length > 0[\s\S]*setIsGenderDialogOpen\(true\)/);
+  assert.match(card, /confirmGenderSelection\(genderOptions, selectedGender/);
+  assert.match(card, /role="dialog" aria-modal="true"/);
+  assert.match(card, /parseGenderOptionsResponse\(data\)/);
+  assert.doesNotMatch(card, /data\.genders \?\? product\.genders/);
+  assert.match(detail, /genders\.length > 0[\s\S]*setIsGenderDialogOpen\(true\)/);
+  assert.match(detail, /genderDisplayLabel\(gender\)/);
+  assert.match(productRoute, /getConfiguredProductGenders\(product\.slug\)/);
+  assert.match(genderApi, /getProductGenderConfiguration\(slug\)/);
+  assert.match(adminProducts, /genders: input\.genders \?\? \[\]/);
+  assert.match(adminDashboard, /Review & Create Draft Record/);
+  assert.match(adminDashboard, /Link that record instead of creating a duplicate/);
+  assert.match(adminDashboard, /Only the storefront mapping will change/);
+  assert.match(adminDashboard, /genders: \[\], stock: 0, is_active: false/);
+  assert.match(adminProducts, /matching database product already exists/);
+  assert.match(adminProducts, /storefront_slug: z\.string\(\)/);
+  assert.match(mappingMigration, /ADD COLUMN IF NOT EXISTS storefront_slug TEXT/);
+  assert.match(mappingMigration, /CREATE UNIQUE INDEX IF NOT EXISTS products_storefront_slug_unique/);
+});
+
+test("gender API contract distinguishes an unconfigured slug and rejects malformed or invalid options", () => {
+  assert.deepEqual(parseGenderOptionsResponse({ productFound: true, genders: ["Men", "Women"] }), { productFound: true, genders: ["Men", "Women"] });
+  assert.deepEqual(parseGenderOptionsResponse({ productFound: true, genders: ["Unisex"] }), { productFound: true, genders: ["Unisex"] });
+  assert.deepEqual(parseGenderOptionsResponse({ productFound: false, genders: [] }), { productFound: false, genders: [] });
+  assert.throws(() => parseGenderOptionsResponse({ genders: [] }), /Invalid product gender options response/);
+  assert.throws(() => parseGenderOptionsResponse({ productFound: true, genders: ["Other"] }), /Invalid product gender options response/);
+
+  const added = [];
+  assert.equal(confirmGenderSelection(["Men", "Women"], null, (gender) => added.push(gender)), false);
+  assert.equal(confirmGenderSelection(["Men", "Women"], "Men", (gender) => added.push(gender)), true);
+  assert.equal(confirmGenderSelection(["Men", "Women"], "Women", (gender) => added.push(gender)), true);
+  assert.equal(genderDisplayLabel("Men"), "Male");
+  assert.equal(genderDisplayLabel("Women"), "Female");
+  assert.equal(genderDisplayLabel("Unisex"), "Unisex");
+  assert.deepEqual(added, ["Men", "Women"]);
 });
 
 test("reviews are hidden below five approved verified purchases and moderation requires admin auth", async () => {
