@@ -131,7 +131,8 @@ export function calculateCodAdvanceAmounts(orderTotal: number): { success: true;
  */
 export function calculateTrustedOrderPricing(
   itemsInput: z.infer<typeof CheckoutItemSchema>[],
-  _promoCodeInput?: string
+  _promoCodeInput?: string,
+  configuredGenderOptions: Record<string, Array<"Men" | "Women" | "Unisex">> = {}
 ): { success: true; pricing: CalculatedOrderPricing } | { success: false; error: string } {
   if (!itemsInput || itemsInput.length === 0) {
     return { success: false, error: "Cart is empty" };
@@ -182,7 +183,7 @@ export function calculateTrustedOrderPricing(
         error: `Size ${item.size} is not available for ${trustedProduct.name}`,
       };
     }
-    const configuredGenders = trustedProduct.genders ?? [];
+    const configuredGenders = configuredGenderOptions[trustedProduct.id] ?? trustedProduct.genders ?? [];
     if (configuredGenders.length > 0 && !item.gender) {
       return { success: false, error: `Please select a gender for ${trustedProduct.name}.` };
     }

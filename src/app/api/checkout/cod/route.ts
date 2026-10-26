@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   CheckoutIdempotencyKeySchema, CreateCheckoutOrderSchema,
-  calculateCodAdvanceAmounts, calculateTrustedOrderPricing, createCheckoutRequestHash,
+  calculateCodAdvanceAmounts, createCheckoutRequestHash,
 } from "@/services/checkout-service";
+import { calculateConfiguredOrderPricing } from "@/services/configured-checkout-pricing";
 import { scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
 import { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, getRazorpayClient, findRazorpayOrdersByReceipt } from "@/lib/razorpay";
 import {
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     const parsed = RequestSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ success: false, error: "Invalid checkout details.", details: parsed.error.flatten().fieldErrors }, { status: 400 });
     const { customerName, customerPhone, address, items, promoCode, idempotencyKey: requestKey } = parsed.data;
-    const priced = calculateTrustedOrderPricing(items, promoCode);
+    const priced = await calculateConfiguredOrderPricing(items, promoCode);
     if (!priced.success) return NextResponse.json({ success: false, error: priced.error }, { status: 400 });
     const pricing = priced.pricing;
     const amounts = calculateCodAdvanceAmounts(pricing.total);

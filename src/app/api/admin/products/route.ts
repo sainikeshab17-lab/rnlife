@@ -16,6 +16,7 @@ const ProductSchema = z.object({
   compare_at_price: z.coerce.number().finite().min(0).nullable().optional(),
   images: z.array(z.string().url()).max(20).optional(),
   sizes: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
+  genders: z.array(z.enum(["Men", "Women", "Unisex"])).max(3).optional(),
   colors: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
   stock: z.coerce.number().int().min(0).max(100000).optional(),
   is_active: z.boolean().optional(),

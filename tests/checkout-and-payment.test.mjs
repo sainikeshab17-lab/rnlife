@@ -45,6 +45,20 @@ describe("Wear Your Mood and COD Advance pricing contracts", () => {
     assert.match(orders, /customization, gender/);
   });
 
+  test("storefront reads configured gender choices by slug and admin can configure them", () => {
+    const route = fs.readFileSync("src/app/products/[slug]/page.tsx", "utf8");
+    const lookup = fs.readFileSync("src/services/product-genders.ts", "utf8");
+    const configuredCheckout = fs.readFileSync("src/services/configured-checkout-pricing.ts", "utf8");
+    const admin = fs.readFileSync("src/app/admin/products/page.tsx", "utf8");
+    const migration = fs.readFileSync("supabase/migrations/20261026130000_product_gender_variants.sql", "utf8");
+    assert.match(route, /getConfiguredProductGenders\(product\.slug\)/);
+    assert.match(lookup, /select\("genders"\)\.eq\("slug", slug\)/);
+    assert.match(configuredCheckout, /getConfiguredProductGenders\(product\.slug\)/);
+    assert.match(admin, /toggleGender\(product, gender\)/);
+    assert.match(migration, /ADD COLUMN IF NOT EXISTS genders TEXT\[\]/);
+    assert.match(migration, /ADD COLUMN IF NOT EXISTS gender TEXT/);
+  });
+
   const customDetails = {
     type: "quote_tshirt", mood: "confident", quote: "I choose my own way", quoteStyle: "deep",
     font: "serif", printColor: "ocean", placement: "center",

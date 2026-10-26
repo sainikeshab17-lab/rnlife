@@ -78,6 +78,7 @@ model OrderItem {
   productSlug String @map("product_slug")
   productName String @map("product_name")
   color       String
+  gender      String?
   size        String
   price       Int
   quantity    Int

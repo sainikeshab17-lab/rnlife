@@ -30,6 +30,7 @@ interface AdminProduct {
   image: string;
   description: string;
   is_active: boolean;
+  genders?: Array<"Men" | "Women" | "Unisex">;
   updated_by: string | null;
   updated_at: string | null;
 }
@@ -44,6 +45,7 @@ export default function AdminProductsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDesc, setEditDesc] = useState("");
   const [savingDesc, setSavingDesc] = useState(false);
+  const [savingGenderId, setSavingGenderId] = useState<string | null>(null);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -92,6 +94,23 @@ export default function AdminProductsPage() {
       alert(err?.message || "Failed to update description");
     } finally {
       setSavingDesc(false);
+    }
+  };
+
+  const toggleGender = async (product: AdminProduct, gender: "Men" | "Women" | "Unisex") => {
+    setSavingGenderId(product.id);
+    const current = product.genders ?? [];
+    const genders = current.includes(gender) ? current.filter((value) => value !== gender) : [...current, gender];
+    try {
+      const response = await fetch(`/api/admin/products?id=${encodeURIComponent(product.id)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ genders }),
+      });
+      if (!response.ok) throw new Error("Failed to update gender options. Apply the gender migration first.");
+      await fetchProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update gender options.");
+    } finally {
+      setSavingGenderId(null);
     }
   };
 
@@ -203,6 +222,14 @@ export default function AdminProductsPage() {
                       <span className="text-xs font-mono font-bold text-black block mt-1">
                         Locked Retail Price: {formatINR(product.price)}
                       </span>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label={`Gender options for ${product.name}`}>
+                        <span className="text-[10px] font-bold uppercase tracking-wider mr-1">Gender</span>
+                        {(["Men", "Women", "Unisex"] as const).map((gender) => {
+                          const selected = (product.genders ?? []).includes(gender);
+                          return <button key={gender} type="button" disabled={savingGenderId === product.id} aria-pressed={selected} onClick={() => void toggleGender(product, gender)} className={`px-2 py-1 text-[10px] uppercase font-bold border ${selected ? "bg-black text-white border-black" : "bg-white text-neutral-700 border-neutral-300 hover:border-black"}`}>{gender}</button>;
+                        })}
+                        {(product.genders ?? []).length === 0 && <span className="text-[10px] text-neutral-500">No selector</span>}
+                      </div>
                     </div>
                   </div>
 

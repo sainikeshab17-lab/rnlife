@@ -5,6 +5,9 @@ import { productService } from "@/services/product-service";
 import { StoreLayout } from "@/components/layout/StoreLayout";
 import { Breadcrumbs } from "@/components/common/Breadcrumbs";
 import { ProductDetailsClient } from "./ProductDetailsClient";
+import { getConfiguredProductGenders } from "@/services/product-genders";
+
+export const dynamic = "force-dynamic";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
@@ -24,6 +27,9 @@ export default async function ProductPage({ params }: ProductPageProps) {
     notFound();
   }
 
+  const genders = await getConfiguredProductGenders(product.slug);
+  const storefrontProduct = { ...product, genders };
+
   const relatedProducts = await productService.getRelatedProducts(product.id, 4);
 
   return (
@@ -33,14 +39,14 @@ export default async function ProductPage({ params }: ProductPageProps) {
           items={[
             { label: "Shop", href: "/shop" },
             {
-              label: product.fit + " Tees",
-              href: `/shop?fit=${encodeURIComponent(product.fit)}`,
+              label: storefrontProduct.fit + " Tees",
+              href: `/shop?fit=${encodeURIComponent(storefrontProduct.fit)}`,
             },
-            { label: product.name },
+            { label: storefrontProduct.name },
           ]}
         />
 
-        <ProductDetailsClient product={product} relatedProducts={relatedProducts} />
+        <ProductDetailsClient product={storefrontProduct} relatedProducts={relatedProducts} />
       </div>
     </StoreLayout>
   );

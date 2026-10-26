@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   CheckoutIdempotencyKeySchema, CreateCheckoutOrderSchema,
-  calculateTrustedOrderPricing, createCheckoutRequestHash,
+  createCheckoutRequestHash,
 } from "@/services/checkout-service";
+import { calculateConfiguredOrderPricing } from "@/services/configured-checkout-pricing";
 import { scopeCheckoutIdempotencyKey } from "@/lib/db/orders";
 import { createClient } from "@/lib/supabase/server";
 import { findRazorpayOrdersByReceipt, getRazorpayClient, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET } from "@/lib/razorpay";
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
     const { data } = await supabase.auth.getUser();
     const customerEmail = data.user?.email ?? submittedEmail;
     const userId = data.user?.id ?? null;
-    const priced = calculateTrustedOrderPricing(items, promoCode);
+    const priced = await calculateConfiguredOrderPricing(items, promoCode);
     if (!priced.success) return NextResponse.json({ error: priced.error }, { status: 400 });
     const pricing = priced.pricing;
     const amountPaisa = Math.round(pricing.total * 100);
