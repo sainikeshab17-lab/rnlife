@@ -58,11 +58,28 @@ export function toPostgresPlaceholders(sql: string): string {
 
 export function safePostgresDiagnostic(sql: string, error: unknown): {
   code: string;
+  severity: string;
+  category: "capacity" | "authentication" | "connection" | "sql" | "server" | "unknown";
+  causeCode: string | null;
   missingRelation: string | null;
   statement: string;
 } {
-  const record = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : {};
+  const record = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; severity?: unknown; cause?: unknown } : {};
   const message = typeof record.message === "string" ? record.message : "";
+  const code = typeof record.code === "string" ? record.code : "unknown";
+  const cause = record.cause && typeof record.cause === "object" ? record.cause as { code?: unknown } : null;
+  const causeCode = cause && typeof cause.code === "string" ? cause.code : null;
+  const category = /EMAXCONNSESSION|max clients reached in session mode/i.test(message) || code === "53300"
+    ? "capacity"
+    : code === "28P01" || code === "28000"
+      ? "authentication"
+      : code.startsWith("08") || ["ECONNRESET", "ETIMEDOUT", "EPIPE"].includes(code) || (causeCode?.startsWith("08") ?? false)
+        ? "connection"
+        : code.startsWith("42") || code.startsWith("23")
+          ? "sql"
+          : code.startsWith("XX")
+            ? "server"
+            : "unknown";
   const relation = message.match(/relation\s+["']([^"']+)["']\s+does not exist/i)?.[1] ?? null;
   const statement = sql
     .replace(/'(?:''|[^'])*'/g, "'[redacted]'")
@@ -70,7 +87,10 @@ export function safePostgresDiagnostic(sql: string, error: unknown): {
     .trim()
     .slice(0, 1000);
   return {
-    code: typeof record.code === "string" ? record.code : "unknown",
+    code,
+    severity: typeof record.severity === "string" ? record.severity : "unknown",
+    category,
+    causeCode,
     missingRelation: relation,
     statement,
   };

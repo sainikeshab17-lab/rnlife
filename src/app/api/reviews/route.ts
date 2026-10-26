@@ -3,8 +3,18 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getDb } from "@/lib/db";
+import { isTransientDatabaseCapacityError } from "@/services/inventory-read";
+import { safePostgresDiagnostic } from "@/lib/db/sql";
 
 export const dynamic = "force-dynamic";
+async function retryCapacityRead<T>(read: () => Promise<T>): Promise<T> {
+  try { return await read(); }
+  catch (error) {
+    if (!isTransientDatabaseCapacityError(error)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return read();
+  }
+}
 const ReviewInput = z.object({
   productId: z.string().regex(/^rnl-design-0[1-8]$/),
   orderItemId: z.string().min(1).max(100),
@@ -17,14 +27,16 @@ export async function GET(request: Request) {
   if (!productId || !/^rnl-design-0[1-8]$/.test(productId)) return NextResponse.json({ error: "Invalid product." }, { status: 400 });
   try {
     const db = getDb();
-    const summary = await db.prepare(`SELECT COUNT(*)::int AS count, AVG(rating)::float AS average
-      FROM product_reviews WHERE product_id = ? AND status = 'approved' AND verified_purchase = TRUE`).get<{ count: number; average: number | null }>(productId);
+    const summaryQuery = db.prepare(`SELECT COUNT(*)::int AS count, AVG(rating)::float AS average
+      FROM product_reviews WHERE product_id = ? AND status = 'approved' AND verified_purchase = TRUE`);
+    const summary = await retryCapacityRead(() => summaryQuery.get<{ count: number; average: number | null }>(productId));
     if (!summary || summary.count < 5) return NextResponse.json({ visible: false });
-    const reviews = await db.prepare(`SELECT rating, body, created_at FROM product_reviews
-      WHERE product_id = ? AND status = 'approved' AND verified_purchase = TRUE ORDER BY created_at DESC`).all<{ rating: number; body: string; created_at: string }>(productId);
+    const reviewsQuery = db.prepare(`SELECT rating, body, created_at FROM product_reviews
+      WHERE product_id = ? AND status = 'approved' AND verified_purchase = TRUE ORDER BY created_at DESC`);
+    const reviews = await retryCapacityRead(() => reviewsQuery.all<{ rating: number; body: string; created_at: string }>(productId));
     return NextResponse.json({ visible: true, count: summary.count, average: summary.average, reviews });
   } catch (error) {
-    console.error("[reviews] Unable to load approved reviews.", error);
+    console.error("[reviews] Unable to load approved reviews.", JSON.stringify(safePostgresDiagnostic("SELECT approved verified reviews", error)));
     return NextResponse.json({ error: "Reviews are temporarily unavailable." }, { status: 503 });
   }
 }
@@ -51,7 +63,7 @@ export async function POST(request: Request) {
     if (error && typeof error === "object" && "code" in error && (error as { code: unknown }).code === "23505") {
       return NextResponse.json({ error: "A review for this purchased item has already been submitted." }, { status: 409 });
     }
-    console.error("[reviews] Unable to save review.", error);
+    console.error("[reviews] Unable to save review.", JSON.stringify(safePostgresDiagnostic("INSERT verified product review", error)));
     return NextResponse.json({ error: "Review submission is temporarily unavailable." }, { status: 503 });
   }
 }

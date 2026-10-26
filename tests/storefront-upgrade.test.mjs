@@ -59,6 +59,8 @@ test("inventory reads retry only once for transient pool capacity failures", asy
   assert.equal(calls, 2);
   assert.deepEqual(rows, [{ size: "S", stock: 10, reserved: 2 }]);
   assert.equal(isTransientDatabaseCapacityError(Object.assign(new Error("denied"), { code: "53300" })), true);
+  assert.equal(isTransientDatabaseCapacityError(Object.assign(new Error("internal error"), { code: "XX000" })), false);
+  assert.equal(isTransientDatabaseCapacityError(Object.assign(new Error("socket closed"), { code: "ECONNRESET" })), false);
 
   calls = 0;
   await assert.rejects(readInventoryWithRetry(async () => {
@@ -73,6 +75,20 @@ test("inventory reads retry only once for transient pool capacity failures", asy
     throw Object.assign(new Error("column reserved does not exist"), { code: "42703" });
   }), /column reserved/);
   assert.equal(calls, 1);
+});
+
+test("PostgreSQL pool is process-reused, conservative, and releases transaction clients", async () => {
+  const db = await readFile("src/lib/db/index.ts", "utf8");
+  const diagnostics = await readFile("src/lib/db/sql.ts", "utf8");
+  assert.match(db, /globalThis\.rightnowlifePostgresPool/);
+  assert.match(db, /max,\s*idleTimeoutMillis: 5_000,\s*connectionTimeoutMillis: 5_000/);
+  assert.match(db, /Math\.min\(configuredMax, 2\)/);
+  assert.match(db, /finally\s*\{\s*client\.release\(\)/);
+  assert.match(diagnostics, /severity: typeof record\.severity/);
+  assert.match(diagnostics, /code === "28P01"/);
+  assert.match(diagnostics, /code\.startsWith\("08"\)/);
+  assert.match(diagnostics, /code\.startsWith\("XX"\)/);
+  assert.match(diagnostics, /category: "capacity"/);
 });
 
 test("inventory query errors are shown as unavailable and never turn missing stock into positive stock", async () => {
