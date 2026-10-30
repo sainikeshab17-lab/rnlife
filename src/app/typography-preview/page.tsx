@@ -84,10 +84,8 @@ export default function TypographyPreviewPage() {
               <div className={styles.brand}>
                 <BrandLogo
                   size="lg"
-                  showWordmark={false}
                   className={styles.logo}
                 />
-                <span className={styles.brandName}>RIGHTNOWLIFE</span>
               </div>
 
               <div className={styles.hero}>

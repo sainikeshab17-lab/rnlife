@@ -383,7 +383,7 @@ export default function CheckoutPage() {
 
           description: "RIGHTNOWLIFE order payment",
 
-          image: "/brand/rightnowlife-logo.jpg",
+          image: "/rightnowlife-logo.png",
 
           order_id: data.razorpayOrderId,
 
@@ -505,6 +505,7 @@ export default function CheckoutPage() {
       const rzp = new window.Razorpay({
         key: data.keyId, amount: data.amount, currency: data.currency, name: "RIGHTNOWLIFE",
         description: "₹200 COD Advance",
+        image: "/rightnowlife-logo.png",
         order_id: data.razorpayOrderId,
         theme: { color: "#FFB900" },
         modal: { ondismiss: () => { setIsProcessing(false); setPaymentError("Payment window closed. The order remains unconfirmed; retry the same checkout after checking payment status."); } },

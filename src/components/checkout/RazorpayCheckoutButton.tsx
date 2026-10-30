@@ -20,6 +20,7 @@ type RazorpayOptions = {
   currency: string;
   name: string;
   description: string;
+  image?: string;
   order_id: string;
   handler: (response: RazorpaySuccess) => void | Promise<void>;
   modal: {
@@ -118,6 +119,7 @@ export default function RazorpayCheckoutButton({
         currency: orderData.currency,
         name: "RIGHTNOWLIFE",
         description: "Streetwear purchase",
+        image: "/rightnowlife-logo.png",
         order_id: orderData.razorpayOrderId,
         theme: {
           color: "#111111",

@@ -83,7 +83,7 @@ export function Footer() {
 
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 md:grid-cols-[1.5fr_1fr_1fr] lg:px-8">
         <div>
-          <BrandLogo size="sm" tone="light" />
+          <BrandLogo size="sm" />
           <p className="mt-3 max-w-sm text-xs leading-5 text-neutral-400">{BRAND_INFO.manifesto}</p>
           <a href={`mailto:${BRAND_INFO.supportEmail}`} className="mt-3 inline-block text-xs text-white underline underline-offset-4 hover:text-[#FFB900]">
             {BRAND_INFO.supportEmail}

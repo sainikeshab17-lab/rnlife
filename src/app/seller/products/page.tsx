@@ -219,7 +219,7 @@ export default function SellerProductsPage() {
                   const imageSrc =
                     p.images && p.images.length > 0
                       ? p.images[0]
-                      : "/brand/rightnowlife-logo.jpg";
+                      : "/rightnowlife-logo.png";
 
                   return (
                     <tr key={p.id} className="hover:bg-neutral-50">

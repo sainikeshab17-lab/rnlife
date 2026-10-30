@@ -75,7 +75,7 @@ export function EditProductClient({ initialProduct }: { initialProduct: Product 
   };
 
   const imageSrc =
-    initialProduct.colors[0]?.images[0] || "/brand/rightnowlife-logo.jpg";
+    initialProduct.colors[0]?.images[0] || "/rightnowlife-logo.png";
 
   return (
     <SellerLayout

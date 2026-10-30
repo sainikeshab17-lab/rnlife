@@ -17,6 +17,7 @@ type RetryPaymentOptions = {
   currency: string;
   name: string;
   description: string;
+  image?: string;
   order_id: string;
   handler: (response: PaymentResponse) => void | Promise<void>;
   modal: { ondismiss: () => void };
@@ -86,6 +87,7 @@ export function RetryPendingPayment({ orderId, isAdvance, guestToken }: { orderI
         currency: data.currency,
         name: "RIGHTNOWLIFE",
         description: isAdvance ? "COD advance payment" : "RIGHTNOWLIFE order payment",
+        image: "/rightnowlife-logo.png",
         order_id: data.razorpayOrderId,
         theme: { color: "#FFB900" },
         modal: { ondismiss: () => {

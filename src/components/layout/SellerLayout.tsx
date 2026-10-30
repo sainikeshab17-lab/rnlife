@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
@@ -56,9 +57,7 @@ export function SellerLayout({
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2">
-              <span className="font-mono font-black text-sm tracking-widest text-[#B8FF3B]">
-                RIGHTNOWLIFE
-              </span>
+              <Image src="/rightnowlife-logo.png" alt="RIGHTNOWLIFE logo" width={40} height={40} className="h-10 w-10 object-contain" />
               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 bg-neutral-800 text-neutral-300">
                 STAFF SELLER PORTAL
               </span>

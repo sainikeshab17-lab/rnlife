@@ -45,9 +45,7 @@ export default function AdminLoginPage() {
     <div className="min-h-screen bg-[#F5F4F0] flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <Link href="/" className="inline-block mb-4">
-          <span className="font-mono font-black text-2xl tracking-widest text-[#111111]">
-            RIGHTNOWLIFE
-          </span>
+          <Image src="/rightnowlife-logo.png" alt="RIGHTNOWLIFE logo" width={112} height={112} className="h-28 w-28 object-contain" />
         </Link>
         <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#111111] text-[#B8FF3B] text-[10px] uppercase font-bold tracking-widest mb-3">
           <ShieldCheck className="w-3.5 h-3.5" />

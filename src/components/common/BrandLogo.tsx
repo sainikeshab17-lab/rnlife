@@ -6,29 +6,19 @@ import Image from "next/image";
 
 interface BrandLogoProps {
   size?: "sm" | "md" | "lg";
-  showWordmark?: boolean;
   className?: string;
   iconClassName?: string;
-  tone?: "dark" | "light";
 }
 
 export function BrandLogo({
   size = "md",
-  showWordmark = true,
   className = "",
   iconClassName = "",
-  tone = "dark",
 }: BrandLogoProps) {
   const iconSizes = {
-    sm: "w-6 h-6",
-    md: "w-8 h-8",
-    lg: "w-10 h-10",
-  }[size];
-
-  const textSizes = {
-    sm: "text-base tracking-widest",
-    md: "text-lg sm:text-xl tracking-widest",
-    lg: "text-2xl tracking-widest",
+    sm: "w-8 h-8",
+    md: "w-10 h-10",
+    lg: "w-12 h-12",
   }[size];
 
   return (
@@ -39,29 +29,20 @@ export function BrandLogo({
     >
       <div className={`relative ${iconSizes} shrink-0 ${iconClassName}`}>
         <Image
-          src="/brand/rightnowlife-logo.jpg"
-          alt="RIGHTNOWLIFE — Right Now Life"
-          width={1080}
-          height={1080}
+          src="/rightnowlife-logo.png"
+          alt="RIGHTNOWLIFE logo"
+          width={500}
+          height={500}
           sizes={
             size === "lg"
               ? "(max-width: 640px) 64px, 80px"
               : size === "md"
-                ? "32px"
-                : "24px"
+                ? "40px"
+                : "32px"
           }
           className="h-full w-full object-contain"
         />
       </div>
-
-      {showWordmark && (
-        <span
-          className={`font-mono font-black uppercase tracking-widest-custom ${tone === "light" ? "text-white" : "text-[#111111]"} ${textSizes}`}
-          style={{ letterSpacing: "0.14em" }}
-        >
-          RIGHTNOWLIFE
-        </span>
-      )}
     </Link>
   );
 }

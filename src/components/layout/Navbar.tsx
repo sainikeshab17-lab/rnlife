@@ -151,7 +151,7 @@ export function Navbar() {
 
             {/* Brand Logo with official RIGHTNOWLIFE emblem */}
             <div className="flex-1 lg:flex-none flex items-center justify-center lg:justify-start">
-              <BrandLogo size="lg" showWordmark={false} iconClassName="h-16 w-16 sm:h-20 sm:w-20" />
+              <BrandLogo size="lg" iconClassName="h-16 w-16 sm:h-20 sm:w-20" />
             </div>
 
             {/* Desktop Navigation Links */}
@@ -302,7 +302,7 @@ export function Navbar() {
             />
             <div ref={mobileMenuPanelRef} role="dialog" aria-modal="true" aria-label="Main navigation" className="absolute inset-y-0 left-0 z-10 flex h-[100dvh] max-h-[100dvh] w-4/5 max-w-xs flex-col overflow-hidden bg-white px-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-xl animate-in slide-in-from-left duration-250">
               <div className="flex items-center justify-between pb-5 border-b border-neutral-200">
-                <BrandLogo size="lg" showWordmark={false} iconClassName="h-16 w-16" />
+                <BrandLogo size="lg" iconClassName="h-16 w-16" />
                 <button
                   onClick={closeMobileMenu}
                   className="p-1 text-neutral-500 hover:text-black"
